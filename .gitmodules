@@ -1,0 +1,3 @@
+[submodule "net-probe/lib/Atmosphere-libs"]
+	path = net-probe/lib/Atmosphere-libs
+	url = git@github.com:chrisbraucker/Atmosphere-libs.git

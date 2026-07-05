@@ -1,0 +1,41 @@
+{
+    "name": "NX Reversing Dev",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".",
+        "options": ["-t", "chrisbraucker/nx-reverse-dev"]
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-extension-pack",
+                "streetsidesoftware.code-spell-checker",
+                "ms-vscode.makefile-tools",
+                "ms-python.python",
+                "redhat.vscode-yaml"
+            ]
+        }
+    },
+    "features": {
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "v24.15.0"
+        }
+    },
+    "containerEnv": {
+        "WORKSPACE_FOLDER": "${containerWorkspaceFolder}",
+        "NX_REVERSE_TOOLCHAIN_PREFIX": "/opt/toolchain"
+    },
+    "forwardPorts": [28771],
+    "mounts": [
+        {"source": "codex-data", "target": "/codex", "type": "volume"},
+        {"source": "nx-reverse-history", "target": "/history", "type": "volume"}
+    ],
+    "overrideCommand": true,
+    "remoteEnv": {
+        "PATH": "/opt/toolchain/bin:/opt/toolchain/cargo/bin:${containerEnv:PATH}"
+    },
+    "initializeCommand": ".devcontainer/initialize.sh",
+    "postStartCommand": ".devcontainer/postStart.sh",
+    "remoteUser": "devcontainer"
+}

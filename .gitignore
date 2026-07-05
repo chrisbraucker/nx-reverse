@@ -1,0 +1,20 @@
+.DS_Store
+__pycache__/
+*.pyc
+.tmp/
+
+net-probe/build/
+net-probe/out/
+
+*.o
+*.d
+*.lst
+*.map
+*.a
+*.gch
+
+# Local-only reversing workspace
+workspace/*
+!workspace/.gitkeep
+!workspace/README.md
+traces/**/local/
