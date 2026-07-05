@@ -5,6 +5,8 @@ __pycache__/
 
 net-probe/build/
 net-probe/out/
+requester/build/
+requester/out/
 
 *.o
 *.d
