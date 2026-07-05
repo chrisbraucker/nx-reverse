@@ -31,14 +31,14 @@ RUN adduser --disabled-password "$CUSER" \
  && mkdir -p "$TOOLCHAIN_PREFIX" /src \
  && chown -R "$CUSER:$CUSER" "$TOOLCHAIN_PREFIX" /src
 
-COPY toolchain /src/toolchain
-
 USER ${CUSER}
 ENV HOME=/home/${CUSER}
 ENV NX_REVERSE_TOOLCHAIN_PREFIX=${TOOLCHAIN_PREFIX}
 
+COPY ./toolchain/ /src/toolchain/
+
 WORKDIR /src
-RUN bash toolchain/install.sh \
+RUN toolchain/install.sh \
  && rm -rf \
     "${TOOLCHAIN_PREFIX}/cache" \
     "${TOOLCHAIN_PREFIX}/src" \

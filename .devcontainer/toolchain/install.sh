@@ -6,6 +6,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 PATCH_DIR="${NX_REVERSE_PATCH_DIR:-$SCRIPT_DIR/patches}"
 TOOLCHAIN_PREFIX="${NX_REVERSE_TOOLCHAIN_PREFIX:-/opt/toolchain}"
+GHIDRA_CLI_REPO="${NX_REVERSE_GHIDRA_CLI_REPO:-https://github.com/akiselev/ghidra-cli.git}"
+GHIDRA_CLI_REV="${NX_REVERSE_GHIDRA_CLI_REV:-8ab7220e13737bd399bc7e2bafd44fb571ac54a3}"
+GHIDRA_SWITCH_LOADER_REPO="${NX_REVERSE_GHIDRA_SWITCH_LOADER_REPO:-https://github.com/adubbz/ghidra-switch-loader.git}"
+GHIDRA_SWITCH_LOADER_REV="${NX_REVERSE_GHIDRA_SWITCH_LOADER_REV:-183b0a0b8dca2dff23ab1c650fd77277297360ff}"
 
 GHIDRA_VERSION="12.1.2"
 GHIDRA_BUILD="20260605"
@@ -115,12 +119,16 @@ install_rustup() {
 build_ghidra_cli() {
     local repo="${SRC_DIR}/ghidra-cli"
     rm -rf "$repo"
-    git clone --depth 1 https://github.com/akiselev/ghidra-cli.git "$repo" >/dev/null
+    git clone "${GHIDRA_CLI_REPO}" "$repo" >/dev/null
+    (
+        cd "$repo"
+        git checkout --detach "${GHIDRA_CLI_REV}" >/dev/null
+    )
     apply_patch_if_needed "$repo" "${PATCH_DIR}/ghidra-cli-g12.patch"
 
     # shellcheck disable=SC1090
     . "${CARGO_HOME}/env"
-    CARGO_INCREMENTAL=0 cargo install --path "$repo" --locked -j1
+    CARGO_INCREMENTAL=0 cargo install --path "$repo" -j1
     if [[ -x "${CARGO_HOME}/bin/ghidra" ]]; then
         rm -f "${CARGO_HOME}/bin/ghidra-cli-bin"
         mv -f "${CARGO_HOME}/bin/ghidra" "${CARGO_HOME}/bin/ghidra-cli-bin"
@@ -130,7 +138,11 @@ build_ghidra_cli() {
 build_switch_loader() {
     local repo="${SRC_DIR}/ghidra-switch-loader"
     rm -rf "$repo"
-    git clone --depth 1 https://github.com/adubbz/ghidra-switch-loader.git "$repo" >/dev/null
+    git clone "${GHIDRA_SWITCH_LOADER_REPO}" "$repo" >/dev/null
+    (
+        cd "$repo"
+        git checkout --detach "${GHIDRA_SWITCH_LOADER_REV}" >/dev/null
+    )
     apply_patch_if_needed "$repo" "${PATCH_DIR}/ghidra-switch-loader-g12.patch"
 
     (
@@ -214,6 +226,8 @@ echo "  CARGO_HOME:   ${CARGO_HOME}"
 echo "  RUSTUP_HOME:  ${RUSTUP_HOME}"
 echo "  Cache:        ${CACHE_DIR}"
 echo "  Sources:      ${SRC_DIR}"
+echo "  ghidra-cli:   ${GHIDRA_CLI_REPO} @ ${GHIDRA_CLI_REV}"
+echo "  switch-loader:${GHIDRA_SWITCH_LOADER_REPO} @ ${GHIDRA_SWITCH_LOADER_REV}"
 echo
 echo "Next:"
 echo "  bash .devcontainer/toolchain/init-workspace.sh"

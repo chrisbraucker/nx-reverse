@@ -1,22 +1,23 @@
 diff --git a/src/main/java/adubbz/nx/analyzer/IPCAnalyzer.java b/src/main/java/adubbz/nx/analyzer/IPCAnalyzer.java
-index b2f9f10..e85d539 100644
+index b4a275c..22f7115 100644
 --- a/src/main/java/adubbz/nx/analyzer/IPCAnalyzer.java
 +++ b/src/main/java/adubbz/nx/analyzer/IPCAnalyzer.java
-@@ -51,8 +51,8 @@ import org.apache.commons.lang3.tuple.Pair;
- import org.apache.commons.lang3.tuple.Triple;
- import org.python.google.common.collect.Lists;
- import org.python.google.common.collect.Multimap;
+@@ -51,8 +51,8 @@ import ghidra.util.exception.DuplicateNameException;
+ import ghidra.util.exception.InvalidInputException;
+ import ghidra.util.task.TaskMonitor;
+ import org.apache.commons.compress.utils.Lists;
 -import org.python.google.common.collect.HashBiMap;
 -import org.python.google.common.collect.Sets;
 +import com.google.common.collect.HashBiMap;
 +import com.google.common.collect.Sets;
  
- public class IPCAnalyzer extends AbstractAnalyzer {
+ import java.io.IOException;
+ import java.io.File;
 diff --git a/src/main/java/adubbz/nx/loader/nxo/NXOAdapter.java b/src/main/java/adubbz/nx/loader/nxo/NXOAdapter.java
-index 2bf17df..14b7d9f 100644
+index 2f17104..af5ab64 100644
 --- a/src/main/java/adubbz/nx/loader/nxo/NXOAdapter.java
 +++ b/src/main/java/adubbz/nx/loader/nxo/NXOAdapter.java
-@@ -118,18 +118,10 @@ public abstract class NXOAdapter extends BinaryReader {
+@@ -121,16 +121,7 @@ public abstract class NXOAdapter
              return this.elfProvider;
          
          long baseAddress = program.getImageBase().getOffset();
@@ -34,6 +35,3 @@ index 2bf17df..14b7d9f 100644
  
          this.elfProvider = new ElfCompatibilityProvider(program, new LegacyByteProviderWrapper(this.getMemoryProvider(), -baseAddress, memoryProviderLength), this.isAarch32());
          
-         return this.elfProvider;
-     }
- }
