@@ -94,9 +94,11 @@ line before it runs, for example:
 - `Running NIFM status check`
 - `Running DNS resolve for example.com`
 - `Connecting TCP to 192.168.0.1:80`
+- `Holding idle TCP socket to 192.168.0.1:80 for 1500 ms`
 - `Running HTTP GET for http://192.168.0.1/`
 - `Running HTTPS GET for https://example.com/`
 - `Running UDP echo to 192.168.0.2:9000`
+- `Running 3 concurrent TCP sessions to 192.168.0.1:80`
 
 At the end it should print:
 
@@ -138,6 +140,28 @@ The text log should include:
 The requester log is the client-side intent log. It does not replace the
 service traces produced by `net-probe`.
 
+## Host Harness
+
+Two helper scripts should be used with the requester:
+
+- `tools/requester_harness.py`
+  - starts one plain TCP endpoint, one HTTP endpoint, one HTTPS endpoint, and
+    one UDP endpoint at the same time
+  - keeps all listening ports as top-level constants so retargeting is trivial
+- `tools/generate_requester_https_certs.sh`
+  - creates a minimal self-signed keypair for the HTTPS listener
+  - defaults to writing under `workspace/requester-harness/tls/`
+
+Important caveat:
+
+- the current requester HTTPS scenario uses Horizon `ssl` with normal peer and
+  hostname verification enabled
+- a self-signed certificate is therefore expected to fail validation unless the
+  requester is later adjusted to relax verification or a trusted certificate is
+  used instead
+- this is still useful for trace generation because the `ssl:*` handshake path
+  is exercised in a deterministic way
+
 ## Initial Scenario Set
 
 The first revision should stay narrow and cover the paths we care about most.
@@ -170,14 +194,14 @@ Purpose:
 - identify the plain resolver path in `bsd:*`
 - verify whether resolver traffic is visible where expected
 
-### Scenario 3: Plain TCP connect
+### Scenario 3: Plain TCP round trip
 
 Actions:
 
 - open `AF_INET` `SOCK_STREAM`
 - connect to configured host and port
-- optionally send a tiny marker payload
-- read a short reply if available
+- send a tiny marker payload
+- read a short reply
 - close cleanly
 
 Purpose:
@@ -185,7 +209,21 @@ Purpose:
 - produce a minimal non-TLS TCP sequence
 - correlate `socket`, `fcntl`, `connect`, `send`, `recv`, and `close`
 
-### Scenario 4: HTTP GET
+### Scenario 4: Idle TCP hold
+
+Actions:
+
+- open `AF_INET` `SOCK_STREAM`
+- connect to configured host and port
+- hold the socket open without sending payload data for a short fixed interval
+- close cleanly
+
+Purpose:
+
+- identify what purely connected-but-idle TCP state looks like in `bsd:*`
+- distinguish connect lifecycle from payload-bearing traffic
+
+### Scenario 5: HTTP GET
 
 Actions:
 
@@ -198,7 +236,7 @@ Purpose:
 - verify where plain HTTP appears
 - compare with earlier browser/applet ambiguity
 
-### Scenario 5: HTTPS GET
+### Scenario 6: HTTPS GET
 
 Actions:
 
@@ -210,7 +248,7 @@ Purpose:
 - correlate the handoff between `bsd:*` and `ssl:*`
 - compare with the existing `sphaira` observations
 
-### Scenario 6: UDP echo
+### Scenario 7: UDP echo
 
 Actions:
 
@@ -223,6 +261,21 @@ Purpose:
 
 - exercise the non-TCP path directly
 - give us a clean reference for future tunnel-oriented work
+
+### Scenario 8: Concurrent TCP burst
+
+Actions:
+
+- open several `AF_INET` `SOCK_STREAM` sockets to the same target
+- keep them open briefly at the same time
+- send a small per-socket marker payload on each connection
+- read a short reply from each socket
+- close all sockets cleanly
+
+Purpose:
+
+- reveal whether `bsd:*` bookkeeping changes once multiple active sessions overlap
+- provide a clean baseline for future throughput and multiplexing experiments
 
 ## Host Harness Expectations
 

@@ -23,12 +23,63 @@ namespace requester {
 namespace {
 
 constexpr std::size_t Ipv4StringCapacity = 16;
+constexpr std::size_t SslVerifyErrorCapacity = 8;
 
 struct ResolvedEndpoint {
     sockaddr_storage addr {};
     socklen_t addr_len = 0;
     std::string ip;
 };
+
+struct ConnectedTcpSocket {
+    int sockfd = -1;
+    std::string ip;
+};
+
+bool ResolveIpv4(
+    AppContext& ctx,
+    const char *host,
+    std::uint16_t port,
+    int socktype,
+    ResolvedEndpoint& out_endpoint,
+    std::string& detail);
+
+std::string CollectSslVerifyDiagnostics(SslConnection& ssl_connection) {
+    std::array<Result, SslVerifyErrorCapacity> verify_errors {};
+    std::uint32_t reported_error_count = 0;
+    std::uint32_t copied_error_count = 0;
+
+    const Result verify_errors_rc = sslConnectionGetVerifyCertErrors(
+        &ssl_connection,
+        &reported_error_count,
+        &copied_error_count,
+        verify_errors.data(),
+        static_cast<std::uint32_t>(verify_errors.size()));
+    const Result verify_error_rc = sslConnectionGetVerifyCertError(&ssl_connection);
+
+    std::string detail =
+        " verify_cert_error=" + FormatResult(verify_error_rc) +
+        " verify_errors_rc=" + FormatResult(verify_errors_rc) +
+        " verify_errors_reported=" + std::to_string(reported_error_count) +
+        " verify_errors_copied=" + std::to_string(copied_error_count);
+
+    if (R_SUCCEEDED(verify_errors_rc) && reported_error_count > 0) {
+        const std::size_t count = std::min<std::size_t>(reported_error_count, verify_errors.size());
+        detail += " verify_errors=[";
+        for (std::size_t i = 0; i < count; ++i) {
+            if (i > 0) {
+                detail += ",";
+            }
+            detail += FormatResult(verify_errors[i]);
+        }
+        if (reported_error_count > verify_errors.size()) {
+            detail += ",...";
+        }
+        detail += "]";
+    }
+
+    return detail;
+}
 
 void SetSocketTimeouts(int sockfd) {
     const struct timeval timeout {
@@ -38,6 +89,68 @@ void SetSocketTimeouts(int sockfd) {
 
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+}
+
+bool ConnectResolvedTcp(
+    AppContext& ctx,
+    const char *host,
+    std::uint16_t port,
+    ConnectedTcpSocket& out_socket,
+    std::string& detail) {
+    ResolvedEndpoint endpoint {};
+    if (!ResolveIpv4(ctx, host, port, SOCK_STREAM, endpoint, detail)) {
+        return false;
+    }
+
+    const int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sockfd < 0) {
+        detail = "socket failed: " + FormatErrno(errno);
+        return false;
+    }
+
+    SetSocketTimeouts(sockfd);
+
+    if (connect(sockfd, reinterpret_cast<const struct sockaddr *>(&endpoint.addr), endpoint.addr_len) != 0) {
+        detail = "connect failed: " + FormatErrno(errno);
+        close(sockfd);
+        return false;
+    }
+
+    out_socket.sockfd = sockfd;
+    out_socket.ip = endpoint.ip;
+    detail = "connected_ip=" + endpoint.ip;
+    return true;
+}
+
+bool SendTcpPayload(
+    int sockfd,
+    const void *payload,
+    std::size_t payload_size,
+    std::size_t& bytes_sent,
+    std::string& detail) {
+    const ssize_t send_rc = send(sockfd, payload, payload_size, 0);
+    if (send_rc < 0) {
+        detail = "send failed: " + FormatErrno(errno);
+        return false;
+    }
+
+    bytes_sent = static_cast<std::size_t>(send_rc);
+    return true;
+}
+
+bool ReceiveTcpPayload(
+    int sockfd,
+    std::array<char, config::ReadBufferSize>& buffer,
+    std::size_t& bytes_received,
+    std::string& detail) {
+    const ssize_t recv_rc = recv(sockfd, buffer.data(), buffer.size(), 0);
+    if (recv_rc < 0) {
+        detail = "recv failed: " + FormatErrno(errno);
+        return false;
+    }
+
+    bytes_received = static_cast<std::size_t>(recv_rc);
+    return true;
 }
 
 bool ResolveIpv4(
@@ -182,30 +295,61 @@ ScenarioResult RunPlainTcpConnect(AppContext& ctx) {
     ScenarioResult result { .name = "plain_tcp_connect" };
     logger::Status(ctx, "Connecting TCP to %s:%u", config::TcpHost, config::TcpPort);
 
-    ResolvedEndpoint endpoint {};
-    if (!ResolveIpv4(ctx, config::TcpHost, config::TcpPort, SOCK_STREAM, endpoint, result.detail)) {
+    ConnectedTcpSocket connection {};
+    if (!ConnectResolvedTcp(ctx, config::TcpHost, config::TcpPort, connection, result.detail)) {
         return result;
     }
 
-    const int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sockfd < 0) {
+    std::array<char, config::ReadBufferSize> buffer {};
+    if (!SendTcpPayload(
+            connection.sockfd,
+            config::TcpPayload,
+            std::strlen(config::TcpPayload),
+            result.bytes_sent,
+            result.detail)) {
         result.err = errno;
-        result.detail = "socket failed: " + FormatErrno(errno);
+        close(connection.sockfd);
         return result;
     }
 
-    SetSocketTimeouts(sockfd);
-
-    if (connect(sockfd, reinterpret_cast<const struct sockaddr *>(&endpoint.addr), endpoint.addr_len) != 0) {
+    if (!ReceiveTcpPayload(connection.sockfd, buffer, result.bytes_received, result.detail)) {
         result.err = errno;
-        result.detail = "connect failed: " + FormatErrno(errno);
-        close(sockfd);
+        close(connection.sockfd);
         return result;
+    }
+
+    result.success = result.bytes_received > 0;
+    result.detail =
+        "connected_ip=" + connection.ip +
+        " request_preview=" + EscapePreview(config::TcpPayload, std::strlen(config::TcpPayload), 96) +
+        " response_preview=" + EscapePreview(buffer.data(), result.bytes_received, 160);
+    close(connection.sockfd);
+    return result;
+}
+
+ScenarioResult RunIdleTcpHold(AppContext& ctx) {
+    ScenarioResult result { .name = "tcp_idle_hold" };
+    logger::Status(
+        ctx,
+        "Holding idle TCP socket to %s:%u for %u ms",
+        config::TcpHost,
+        config::TcpPort,
+        config::IdleSocketHoldMs);
+
+    ConnectedTcpSocket connection {};
+    if (!ConnectResolvedTcp(ctx, config::TcpHost, config::TcpPort, connection, result.detail)) {
+        return result;
+    }
+
+    if (config::IdleSocketHoldMs > 0) {
+        SleepMilliseconds(config::IdleSocketHoldMs);
     }
 
     result.success = true;
-    result.detail = "connected_ip=" + endpoint.ip;
-    close(sockfd);
+    result.detail =
+        "connected_ip=" + connection.ip +
+        " hold_ms=" + std::to_string(config::IdleSocketHoldMs);
+    close(connection.sockfd);
     return result;
 }
 
@@ -213,24 +357,8 @@ ScenarioResult RunHttpGet(AppContext& ctx) {
     ScenarioResult result { .name = "http_get" };
     logger::Status(ctx, "Running HTTP GET for http://%s%s", config::HttpHost, config::HttpPath);
 
-    ResolvedEndpoint endpoint {};
-    if (!ResolveIpv4(ctx, config::HttpHost, config::HttpPort, SOCK_STREAM, endpoint, result.detail)) {
-        return result;
-    }
-
-    const int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sockfd < 0) {
-        result.err = errno;
-        result.detail = "socket failed: " + FormatErrno(errno);
-        return result;
-    }
-
-    SetSocketTimeouts(sockfd);
-
-    if (connect(sockfd, reinterpret_cast<const struct sockaddr *>(&endpoint.addr), endpoint.addr_len) != 0) {
-        result.err = errno;
-        result.detail = "connect failed: " + FormatErrno(errno);
-        close(sockfd);
+    ConnectedTcpSocket connection {};
+    if (!ConnectResolvedTcp(ctx, config::HttpHost, config::HttpPort, connection, result.detail)) {
         return result;
     }
 
@@ -243,36 +371,36 @@ ScenarioResult RunHttpGet(AppContext& ctx) {
         config::HttpHost);
     if (request_len <= 0 || static_cast<std::size_t>(request_len) >= sizeof(request)) {
         result.detail = "request formatting failed";
-        close(sockfd);
+        close(connection.sockfd);
         return result;
     }
 
-    const ssize_t send_rc = send(sockfd, request, static_cast<std::size_t>(request_len), 0);
+    const ssize_t send_rc = send(connection.sockfd, request, static_cast<std::size_t>(request_len), 0);
     if (send_rc < 0) {
         result.err = errno;
         result.detail = "send failed: " + FormatErrno(errno);
-        close(sockfd);
+        close(connection.sockfd);
         return result;
     }
     result.bytes_sent = static_cast<std::size_t>(send_rc);
 
     std::array<char, config::ReadBufferSize> buffer {};
-    const ssize_t recv_rc = recv(sockfd, buffer.data(), buffer.size(), 0);
+    const ssize_t recv_rc = recv(connection.sockfd, buffer.data(), buffer.size(), 0);
     if (recv_rc < 0) {
         result.err = errno;
         result.detail = "recv failed: " + FormatErrno(errno);
-        close(sockfd);
+        close(connection.sockfd);
         return result;
     }
 
     result.bytes_received = static_cast<std::size_t>(recv_rc);
     result.success = recv_rc > 0;
     result.detail =
-        "connected_ip=" + endpoint.ip +
+        "connected_ip=" + connection.ip +
         " request_preview=" + EscapePreview(request, static_cast<std::size_t>(request_len), 96) +
         " response_preview=" + EscapePreview(buffer.data(), result.bytes_received, 160);
 
-    close(sockfd);
+    close(connection.sockfd);
     return result;
 }
 
@@ -398,7 +526,8 @@ ScenarioResult RunHttpsGet(AppContext& ctx) {
     rc = sslConnectionDoHandshake(&ssl_connection, nullptr, nullptr, nullptr, 0);
     if (R_FAILED(rc)) {
         result.rc = rc;
-        result.detail = "sslConnectionDoHandshake failed: " + FormatResult(rc);
+        result.detail = "sslConnectionDoHandshake failed: " + FormatResult(rc) +
+            CollectSslVerifyDiagnostics(ssl_connection);
         if (connection_created) {
             sslConnectionClose(&ssl_connection);
         }
@@ -546,6 +675,94 @@ ScenarioResult RunUdpEcho(AppContext& ctx) {
     return result;
 }
 
+ScenarioResult RunConcurrentTcpBurst(AppContext& ctx) {
+    ScenarioResult result { .name = "tcp_multi_connect" };
+    logger::Status(
+        ctx,
+        "Running %u concurrent TCP sessions to %s:%u",
+        config::ConcurrentSocketCount,
+        config::TcpHost,
+        config::TcpPort);
+
+    std::vector<int> sockets;
+    sockets.reserve(config::ConcurrentSocketCount);
+    std::string first_ip;
+
+    for (std::uint32_t i = 0; i < config::ConcurrentSocketCount; ++i) {
+        ConnectedTcpSocket connection {};
+        std::string detail;
+        if (!ConnectResolvedTcp(ctx, config::TcpHost, config::TcpPort, connection, detail)) {
+            result.err = errno;
+            result.detail =
+                "connect_index=" + std::to_string(i) + " " + detail;
+            for (int sockfd : sockets) {
+                close(sockfd);
+            }
+            return result;
+        }
+
+        if (first_ip.empty()) {
+            first_ip = connection.ip;
+        }
+        sockets.push_back(connection.sockfd);
+    }
+
+    if (config::ConcurrentSocketHoldMs > 0) {
+        SleepMilliseconds(config::ConcurrentSocketHoldMs);
+    }
+
+    for (std::size_t i = 0; i < sockets.size(); ++i) {
+        char payload[64];
+        const int payload_len = std::snprintf(
+            payload,
+            sizeof(payload),
+            "nxrv-requester-tcp-%zu",
+            i);
+        if (payload_len <= 0 || static_cast<std::size_t>(payload_len) >= sizeof(payload)) {
+            result.detail = "payload formatting failed";
+            for (int sockfd : sockets) {
+                close(sockfd);
+            }
+            return result;
+        }
+
+        std::size_t sent = 0;
+        std::string detail;
+        if (!SendTcpPayload(sockets[i], payload, static_cast<std::size_t>(payload_len), sent, detail)) {
+            result.err = errno;
+            result.detail = "send_index=" + std::to_string(i) + " " + detail;
+            for (int sockfd : sockets) {
+                close(sockfd);
+            }
+            return result;
+        }
+        result.bytes_sent += sent;
+
+        std::array<char, config::ReadBufferSize> buffer {};
+        std::size_t received = 0;
+        if (!ReceiveTcpPayload(sockets[i], buffer, received, detail)) {
+            result.err = errno;
+            result.detail = "recv_index=" + std::to_string(i) + " " + detail;
+            for (int sockfd : sockets) {
+                close(sockfd);
+            }
+            return result;
+        }
+        result.bytes_received += received;
+    }
+
+    for (int sockfd : sockets) {
+        close(sockfd);
+    }
+
+    result.success = true;
+    result.detail =
+        "connected_ip=" + first_ip +
+        " sockets=" + std::to_string(sockets.size()) +
+        " hold_ms=" + std::to_string(config::ConcurrentSocketHoldMs);
+    return result;
+}
+
 void LogScenarioResult(AppContext& ctx, const ScenarioResult& result) {
     logger::Log(
         ctx,
@@ -560,29 +777,39 @@ void LogScenarioResult(AppContext& ctx, const ScenarioResult& result) {
         result.detail.c_str());
 }
 
+template <typename ScenarioFn>
+void RunScenarioStep(
+    AppContext& ctx,
+    std::vector<ScenarioResult>& results,
+    const char *next_name,
+    ScenarioFn&& scenario_fn) {
+    results.push_back(scenario_fn(ctx));
+    LogScenarioResult(ctx, results.back());
+
+    if (next_name != nullptr && config::ScenarioStepDelayMs > 0) {
+        logger::Log(
+            ctx,
+            "scenario_pause next=%s duration_ms=%u",
+            next_name,
+            config::ScenarioStepDelayMs);
+        SleepMilliseconds(config::ScenarioStepDelayMs);
+    }
+}
+
 } // namespace
 
 std::vector<ScenarioResult> RunScenarios(AppContext& ctx) {
     std::vector<ScenarioResult> results;
-    results.reserve(6);
+    results.reserve(8);
 
-    results.push_back(RunEnvironmentSnapshot(ctx));
-    LogScenarioResult(ctx, results.back());
-
-    results.push_back(RunDnsResolve(ctx));
-    LogScenarioResult(ctx, results.back());
-
-    results.push_back(RunPlainTcpConnect(ctx));
-    LogScenarioResult(ctx, results.back());
-
-    results.push_back(RunHttpGet(ctx));
-    LogScenarioResult(ctx, results.back());
-
-    results.push_back(RunHttpsGet(ctx));
-    LogScenarioResult(ctx, results.back());
-
-    results.push_back(RunUdpEcho(ctx));
-    LogScenarioResult(ctx, results.back());
+    RunScenarioStep(ctx, results, "dns_resolve", RunEnvironmentSnapshot);
+    RunScenarioStep(ctx, results, "plain_tcp_connect", RunDnsResolve);
+    RunScenarioStep(ctx, results, "tcp_idle_hold", RunPlainTcpConnect);
+    RunScenarioStep(ctx, results, "http_get", RunIdleTcpHold);
+    RunScenarioStep(ctx, results, "https_get", RunHttpGet);
+    RunScenarioStep(ctx, results, "udp_echo", RunHttpsGet);
+    RunScenarioStep(ctx, results, "tcp_multi_connect", RunUdpEcho);
+    RunScenarioStep(ctx, results, nullptr, RunConcurrentTcpBurst);
 
     return results;
 }
