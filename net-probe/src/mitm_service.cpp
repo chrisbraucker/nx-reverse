@@ -32,6 +32,7 @@ constinit bool g_mitm_object_allocator_ready = false;
 constinit ::ams::os::EventType g_shutdown_requested_event = {};
 constinit ::ams::os::EventType g_control_thread_ready_event = {};
 constinit ::ams::os::EventType g_mitm_thread_ready_event = {};
+constinit ::ams::os::EventType g_boot_watch_thread_ready_event = {};
 constinit bool g_shutdown_event_initialized = false;
 constinit bool g_thread_ready_events_initialized = false;
 constinit bool g_shutdown_requested = false;
@@ -345,9 +346,20 @@ alignas(::ams::os::ThreadStackAlignment) constinit u8 g_mitm_server_thread_stack
 constinit ::ams::os::ThreadType g_mitm_server_thread;
 alignas(::ams::os::ThreadStackAlignment) constinit u8 g_control_server_thread_stack[8 * 1024];
 constinit ::ams::os::ThreadType g_control_server_thread;
+alignas(::ams::os::ThreadStackAlignment) constinit u8 g_boot_watch_thread_stack[8 * 1024];
+constinit ::ams::os::ThreadType g_boot_watch_thread;
 constinit bool g_mitm_thread_started = false;
 constinit bool g_control_thread_started = false;
+constinit bool g_boot_watch_thread_started = false;
 constinit bool g_servers_started = false;
+
+constexpr const char *g_boot_watch_services[] = {
+    "sfdnsres",
+    "dns:priv",
+    "nsd:u",
+};
+constexpr auto BootWatchSampleInterval = ::ams::TimeSpan::FromSeconds(10);
+constexpr size_t BootWatchSampleCount = 6;
 
 void MitmServerThreadMain(void *) {
     ::ams::os::SignalEvent(std::addressof(g_mitm_thread_ready_event));
@@ -379,6 +391,103 @@ void LogAllHasMitmStates(const char *phase) {
     }
 }
 
+void LogResolverHasMitmStates(const char *phase) {
+    for (const char *service_name : g_boot_watch_services) {
+        LogHasMitmState(service_name, phase);
+    }
+}
+
+void BootWatchThreadMain(void *) {
+    ::ams::os::SignalEvent(std::addressof(g_boot_watch_thread_ready_event));
+    wgnx::net_probe::logger::Log(
+        "BootWatch thread started: samples=%zu interval_ms=%lld",
+        BootWatchSampleCount,
+        static_cast<long long>(BootWatchSampleInterval.GetMilliSeconds()));
+
+    for (size_t sample_index = 0; sample_index < BootWatchSampleCount; ++sample_index) {
+        char phase[64];
+        std::snprintf(
+            phase,
+            sizeof(phase),
+            "boot_watch_%zu_t+%us",
+            sample_index,
+            static_cast<unsigned>(sample_index * BootWatchSampleInterval.GetSeconds()));
+        LogResolverHasMitmStates(phase);
+
+        if (sample_index + 1 == BootWatchSampleCount) {
+            break;
+        }
+
+        if (::ams::os::TimedWaitEvent(std::addressof(g_shutdown_requested_event), BootWatchSampleInterval)) {
+            wgnx::net_probe::logger::Log("BootWatch thread exiting early due to shutdown request");
+            return;
+        }
+    }
+
+    wgnx::net_probe::logger::Log("BootWatch thread completed");
+}
+
+void ClearResidualMitmState(const char *service_name, const char *phase) {
+    const auto encoded_service_name = ::ams::sm::ServiceName::Encode(service_name);
+
+    bool has_mitm = false;
+    ::ams::Result has_mitm_rc = ::ams::sm::mitm::HasMitm(std::addressof(has_mitm), encoded_service_name);
+    if (R_SUCCEEDED(has_mitm_rc)) {
+        wgnx::net_probe::logger::Log(
+            "ClearResidualMitmState(%s) %s: has_mitm=%u",
+            service_name,
+            phase,
+            has_mitm ? 1u : 0u);
+    } else {
+        wgnx::net_probe::logger::Log(
+            "ClearResidualMitmState(%s) %s: HasMitm failed rc=0x%08X",
+            service_name,
+            phase,
+            has_mitm_rc.GetValue());
+    }
+
+    if (R_SUCCEEDED(has_mitm_rc) && has_mitm) {
+        const ::ams::Result uninstall_rc = ::ams::sm::mitm::UninstallMitm(encoded_service_name);
+        wgnx::net_probe::logger::Log(
+            "ClearResidualMitmState(%s) %s: UninstallMitm rc=0x%08X",
+            service_name,
+            phase,
+            uninstall_rc.GetValue());
+    }
+
+    const ::ams::Result clear_future_rc = ::ams::sm::mitm::ClearFutureMitm(encoded_service_name);
+    wgnx::net_probe::logger::Log(
+        "ClearResidualMitmState(%s) %s: ClearFutureMitm rc=0x%08X",
+        service_name,
+        phase,
+        clear_future_rc.GetValue());
+
+    has_mitm = false;
+    has_mitm_rc = ::ams::sm::mitm::HasMitm(std::addressof(has_mitm), encoded_service_name);
+    if (R_SUCCEEDED(has_mitm_rc)) {
+        wgnx::net_probe::logger::Log(
+            "ClearResidualMitmState(%s) %s: final_has_mitm=%u",
+            service_name,
+            phase,
+            has_mitm ? 1u : 0u);
+    } else {
+        wgnx::net_probe::logger::Log(
+            "ClearResidualMitmState(%s) %s: final HasMitm failed rc=0x%08X",
+            service_name,
+            phase,
+            has_mitm_rc.GetValue());
+    }
+}
+
+void ClearAllResidualMitmStates(const char *phase) {
+    for (const auto &target : g_mitm_target_configs) {
+        if (!target.enabled) {
+            continue;
+        }
+        ClearResidualMitmState(target.service_name, phase);
+    }
+}
+
 void EnsureShutdownEventInitialized() {
     if (AMS_LIKELY(g_shutdown_event_initialized)) {
         return;
@@ -395,6 +504,7 @@ void EnsureThreadReadyEventsInitialized() {
 
     ::ams::os::InitializeEvent(std::addressof(g_control_thread_ready_event), false, ::ams::os::EventClearMode_ManualClear);
     ::ams::os::InitializeEvent(std::addressof(g_mitm_thread_ready_event), false, ::ams::os::EventClearMode_ManualClear);
+    ::ams::os::InitializeEvent(std::addressof(g_boot_watch_thread_ready_event), false, ::ams::os::EventClearMode_ManualClear);
     g_thread_ready_events_initialized = true;
 }
 
@@ -422,11 +532,28 @@ void StopAndDestroyControlServerManager() {
     wgnx::net_probe::logger::Log("StopAndDestroyControlServerManager: stopping control server");
     g_control_server_manager->RequestStopProcessing();
     if (g_control_thread_started) {
+        wgnx::net_probe::logger::Log("StopAndDestroyControlServerManager: waiting for control thread");
         ::ams::os::WaitThread(std::addressof(g_control_server_thread));
+        ::ams::os::DestroyThread(std::addressof(g_control_server_thread));
         g_control_thread_started = false;
+        wgnx::net_probe::logger::Log("StopAndDestroyControlServerManager: control thread stopped");
     }
+    wgnx::net_probe::logger::Log("StopAndDestroyControlServerManager: destroying control server manager");
     std::destroy_at(g_control_server_manager);
     g_control_server_manager = nullptr;
+    wgnx::net_probe::logger::Log("StopAndDestroyControlServerManager: complete");
+}
+
+void StopBootWatchThread() {
+    if (!g_boot_watch_thread_started) {
+        return;
+    }
+
+    wgnx::net_probe::logger::Log("StopBootWatchThread: waiting for boot watch thread");
+    ::ams::os::WaitThread(std::addressof(g_boot_watch_thread));
+    ::ams::os::DestroyThread(std::addressof(g_boot_watch_thread));
+    g_boot_watch_thread_started = false;
+    wgnx::net_probe::logger::Log("StopBootWatchThread: boot watch thread stopped");
 }
 
 void StopAndDestroyMitmServerManager(bool log_snapshots) {
@@ -442,21 +569,29 @@ void StopAndDestroyMitmServerManager(bool log_snapshots) {
     wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: stopping MITM server");
     g_mitm_server_manager->RequestStopProcessing();
     if (g_mitm_thread_started) {
+        wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: waiting for MITM thread");
         ::ams::os::WaitThread(std::addressof(g_mitm_server_thread));
+        ::ams::os::DestroyThread(std::addressof(g_mitm_server_thread));
         g_mitm_thread_started = false;
+        wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: MITM thread stopped");
     }
 
     if (log_snapshots) {
         mitm_trace::LogSessionSnapshot("after_stop_wait");
     }
 
+    wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: destroying MITM server manager");
     std::destroy_at(g_mitm_server_manager);
     g_mitm_server_manager = nullptr;
+    wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: destroyed MITM server manager");
 
     if (log_snapshots) {
         LogAllHasMitmStates("after_stop");
         mitm_trace::LogSessionSnapshot("after_stop");
     }
+
+    ClearAllResidualMitmStates("after_destroy");
+    wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: complete");
 }
 
 } // namespace
@@ -476,10 +611,12 @@ bool StartServers() {
     ::ams::os::ClearEvent(std::addressof(g_shutdown_requested_event));
     ::ams::os::ClearEvent(std::addressof(g_control_thread_ready_event));
     ::ams::os::ClearEvent(std::addressof(g_mitm_thread_ready_event));
+    ::ams::os::ClearEvent(std::addressof(g_boot_watch_thread_ready_event));
     g_shutdown_requested = false;
 
     mitm_trace::Initialize();
     mitm_trace::RegisterMonitorHooks();
+    LogResolverHasMitmStates("pre_register");
 
     wgnx::net_probe::logger::Log("StartServers: constructing control server manager");
     g_control_server_manager = ::ams::util::ConstructAt(g_control_server_manager_storage);
@@ -579,6 +716,23 @@ bool StartServers() {
     }
 
     g_servers_started = true;
+    wgnx::net_probe::logger::Log("StartServers: creating boot watch thread");
+    const ::ams::Result boot_watch_thread_rc = ::ams::os::CreateThread(
+        std::addressof(g_boot_watch_thread),
+        BootWatchThreadMain,
+        nullptr,
+        g_boot_watch_thread_stack,
+        sizeof(g_boot_watch_thread_stack),
+        20);
+    if (R_FAILED(boot_watch_thread_rc)) {
+        wgnx::net_probe::logger::Log("CreateThread(wgnx-boot-watch) failed rc=0x%08X", boot_watch_thread_rc.GetValue());
+    } else {
+        ::ams::os::SetThreadNamePointer(std::addressof(g_boot_watch_thread), "wgnx-boot-watch");
+        ::ams::os::StartThread(std::addressof(g_boot_watch_thread));
+        g_boot_watch_thread_started = true;
+        static_cast<void>(WaitForThreadReady("wgnx-boot-watch", std::addressof(g_boot_watch_thread_ready_event), ThreadReadyTimeout));
+    }
+
     wgnx::net_probe::logger::Log("StartServers: complete");
     return true;
 }
@@ -609,10 +763,19 @@ void StopServers() {
         return;
     }
 
-    StopAndDestroyControlServerManager();
+    wgnx::net_probe::logger::Log("StopServers: begin");
+    StopBootWatchThread();
     StopAndDestroyMitmServerManager(true);
+    StopAndDestroyControlServerManager();
+
+    ::ams::os::ClearEvent(std::addressof(g_shutdown_requested_event));
+    ::ams::os::ClearEvent(std::addressof(g_control_thread_ready_event));
+    ::ams::os::ClearEvent(std::addressof(g_mitm_thread_ready_event));
+    ::ams::os::ClearEvent(std::addressof(g_boot_watch_thread_ready_event));
+    g_shutdown_requested = false;
 
     g_servers_started = false;
+    wgnx::net_probe::logger::Log("StopServers: complete");
 }
 
 } // namespace wgnx::net_probe::mitm

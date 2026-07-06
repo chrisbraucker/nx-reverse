@@ -12,8 +12,9 @@ namespace wgnx::net_probe::logger {
 
 namespace {
 
-constexpr const char *LogDirectory = "sdmc:/wgnx";
-constexpr const char *LogFilePath = "sdmc:/wgnx/net-probe.log";
+constexpr const char *LogRootDirectory = "sdmc:/nxrv";
+constexpr const char *LogDirectory = "sdmc:/nxrv/probe";
+constexpr const char *LogFilePath = "sdmc:/nxrv/probe/net-probe.log";
 constexpr size_t QueueEntryCapacity = 896;
 constexpr size_t BinaryQueueEntryCapacity = 96;
 constexpr size_t MaxQueuedPathLength = 96;
@@ -87,6 +88,12 @@ void EnsureFileBackendInitialized() {
     }
 
     ams::Result rc = fs_runtime::EnsureReady();
+    if (R_FAILED(rc)) {
+        g_file_backend_state = FileBackendState::Disabled;
+        return;
+    }
+
+    rc = fs_runtime::EnsureDirectoryExists(LogRootDirectory);
     if (R_FAILED(rc)) {
         g_file_backend_state = FileBackendState::Disabled;
         return;

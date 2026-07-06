@@ -14,16 +14,17 @@ namespace wgnx::net_probe::mitm_trace {
 
 namespace {
 
-constexpr const char *TraceDirectory = "/wgnx";
-constexpr const char *NifmTracePath = "sdmc:/wgnx/probe-mitm-nifm.jsonl";
-constexpr const char *NifmMetaPath = "sdmc:/wgnx/probe-mitm-nifm-meta.json";
-constexpr const char *NifmBinaryPath = "sdmc:/wgnx/probe-mitm-nifm.bin";
-constexpr const char *BsdTracePath = "sdmc:/wgnx/probe-mitm-bsd.jsonl";
-constexpr const char *BsdMetaPath = "sdmc:/wgnx/probe-mitm-bsd-meta.json";
-constexpr const char *BsdBinaryPath = "sdmc:/wgnx/probe-mitm-bsd.bin";
-constexpr const char *SslTracePath = "sdmc:/wgnx/probe-mitm-ssl.jsonl";
-constexpr const char *SslMetaPath = "sdmc:/wgnx/probe-mitm-ssl-meta.json";
-constexpr const char *SslBinaryPath = "sdmc:/wgnx/probe-mitm-ssl.bin";
+constexpr const char *TraceRootDirectory = "/nxrv";
+constexpr const char *TraceDirectory = "/nxrv/probe";
+constexpr const char *NifmTracePath = "sdmc:/nxrv/probe/probe-mitm-nifm.jsonl";
+constexpr const char *NifmMetaPath = "sdmc:/nxrv/probe/probe-mitm-nifm-meta.json";
+constexpr const char *NifmBinaryPath = "sdmc:/nxrv/probe/probe-mitm-nifm.bin";
+constexpr const char *BsdTracePath = "sdmc:/nxrv/probe/probe-mitm-bsd.jsonl";
+constexpr const char *BsdMetaPath = "sdmc:/nxrv/probe/probe-mitm-bsd-meta.json";
+constexpr const char *BsdBinaryPath = "sdmc:/nxrv/probe/probe-mitm-bsd.bin";
+constexpr const char *SslTracePath = "sdmc:/nxrv/probe/probe-mitm-ssl.jsonl";
+constexpr const char *SslMetaPath = "sdmc:/nxrv/probe/probe-mitm-ssl-meta.json";
+constexpr const char *SslBinaryPath = "sdmc:/nxrv/probe/probe-mitm-ssl.bin";
 constexpr u32 InHeaderMagic = ::ams::util::FourCC<'S', 'F', 'C', 'I'>::Code;
 constexpr u32 OutHeaderMagic = ::ams::util::FourCC<'S', 'F', 'C', 'O'>::Code;
 constexpr u32 BinaryTraceMagic = ::ams::util::FourCC<'W', 'G', 'T', 'B'>::Code;
@@ -3644,6 +3645,9 @@ void Initialize() {
     if (g_initialized) {
         return;
     }
+
+    static_cast<void>(wgnx::net_probe::fs_runtime::EnsureDirectoryExists(TraceRootDirectory));
+    static_cast<void>(wgnx::net_probe::fs_runtime::EnsureDirectoryExists(TraceDirectory));
 
     g_initialized = true;
     g_run_tick = static_cast<u64>(svcGetSystemTick());

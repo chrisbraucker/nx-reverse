@@ -10,13 +10,10 @@ import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-REPORTS_DIR = REPO_ROOT / "reports"
-SYSMODULE_META = REPO_ROOT / "sysmodule" / "res" / "module.json"
-SYSMODULE_NSP = REPO_ROOT / "sysmodule" / "out" / "wireguard-nx.nsp"
+REPORTS_DIR = REPO_ROOT / "workspace" / "reports"
 PROBE_META = REPO_ROOT / "net-probe" / "res" / "module.json"
 PROBE_NSP = REPO_ROOT / "net-probe" / "out" / "net-probe.nsp"
-OVERLAY_OVL = REPO_ROOT / "overlay" / "out" / "wireguard-nx.ovl"
-MANAGER_NRO = REPO_ROOT / "manager" / "out" / "wireguard-nx.nro"
+REQUESTER_NRO = REPO_ROOT / "requester" / "out" / "requester.nro"
 
 
 def load_title_id(meta_path) -> str:
@@ -24,22 +21,19 @@ def load_title_id(meta_path) -> str:
         data = json.load(handle)
     return str(data["program_id"]).removeprefix("0x").upper()
 
-
-SYSMODULE_TITLE_ID = load_title_id(SYSMODULE_META)
 PROBE_TITLE_ID = load_title_id(PROBE_META)
 
-REMOTE_SYSMODULE = PurePosixPath(f"/sdmc:/atmosphere/contents/{SYSMODULE_TITLE_ID}/exefs.nsp")
-REMOTE_PROBE = PurePosixPath(f"/sdmc:/atmosphere/contents/{PROBE_TITLE_ID}/exefs.nsp")
-REMOTE_OVERLAY = PurePosixPath("/sdmc:/switch/.overlays/wireguard-nx.ovl")
-REMOTE_MANAGER = PurePosixPath("/sdmc:/switch/wireguard-nx.nro")
-REMOTE_FATAL_DIR = PurePosixPath("/sdmc:/atmosphere/fatal_errors")
-REMOTE_CRASH_DIR = PurePosixPath("/sdmc:/atmosphere/crash_reports")
-REMOTE_WGNX_DIR = PurePosixPath("/sdmc:/wgnx")
+REMOTE_PROBE = PurePosixPath(f"sdmc:/atmosphere/contents/{PROBE_TITLE_ID}/exefs.nsp")
+REMOTE_REQUESTER = PurePosixPath("sdmc:/switch/requester.nro")
+REMOTE_FATAL_ERROR_DIR = PurePosixPath("sdmc:/atmosphere/fatal_errors")
+REMOTE_FATAL_REPORT_DIR = PurePosixPath("sdmc:/atmosphere/fatal_reports")
+REMOTE_CRASH_DIR = PurePosixPath("sdmc:/atmosphere/crash_reports")
+REMOTE_PROBE_LOG_DIR = PurePosixPath("sdmc:/nxrv")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Push WireGuard-NX artifacts to a Switch over FTP and fetch logs/fatal reports.",
+        description="Push NX artifacts to a Switch over FTP and fetch logs/fatal reports.",
         epilog="Pull actions and general flags use upper case shorthands, push actions lower case.",
     )
     parser.add_argument("host", help="FTP host or IP address")
@@ -48,13 +42,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--password", default="", help="FTP password")
     parser.add_argument("--timeout", type=float, default=10.0, help="FTP timeout in seconds")
 
-    parser.add_argument("-s", "--push-sysmodule", action="store_true", help="Upload sysmodule NSP to Atmosphere contents")
     parser.add_argument("-p", "--push-probe", action="store_true", help="Upload probe NSP to Atmosphere contents")
-    parser.add_argument("-o", "--push-overlay", action="store_true", help="Upload overlay OVL to /switch/.overlay/")
-    parser.add_argument("-m", "--push-manager", action="store_true", help="Upload manager NRO to /switch/")
-    parser.add_argument("-F", "--pull-fatals", action="store_true", help="Download all files from /atmosphere/fatal_errors/")
+    parser.add_argument("-r", "--push-requester", action="store_true", help="Upload requester NRO to /switch/")
+    parser.add_argument("-E", "--pull-fatal-errors", action="store_true", help="Download all files from /atmosphere/fatal_errors/")
+    parser.add_argument("-F", "--pull-fatal-reports", action="store_true", help="Download all files from /atmosphere/fatal_reports/")
     parser.add_argument("-C", "--pull-crashes", action="store_true", help="Download all files from /atmosphere/crash_reports/")
-    parser.add_argument("-L", "--pull-logs", action="store_true", help="Download all files from /sdmc:/wgnx/")
+    parser.add_argument("-L", "--pull-logs", action="store_true", help="Download all files from sdmc:/nxrv/ recursively")
     parser.add_argument("-A", "--all", action="store_true", help="Run every push and pull action")
     parser.add_argument(
         "--clean",
@@ -70,20 +63,18 @@ def parse_args() -> argparse.Namespace:
 
     args = parser.parse_args()
     if args.all:
-        args.push_sysmodule = True
         args.push_probe = True
-        args.push_overlay = True
-        args.push_manager = True
-        args.pull_fatals = True
+        args.push_requester = True
+        args.pull_fatal_errors = True
+        args.pull_fatal_reports = True
         args.pull_crashes = True
         args.pull_logs = True
 
     if not any((
-        args.push_sysmodule,
         args.push_probe,
-        args.push_overlay,
-        args.push_manager,
-        args.pull_fatals,
+        args.push_requester,
+        args.pull_fatal_errors,
+        args.pull_fatal_reports,
         args.pull_crashes,
         args.pull_logs,
     )):
@@ -128,7 +119,13 @@ def download_file(ftp: ftplib.FTP, remote_path: PurePosixPath, local_path: Path,
 
 def list_remote_files(ftp: ftplib.FTP, remote_dir: PurePosixPath) -> list[str]:
     files: list[str] = []
-    ftp.retrlines(f"NLST {remote_dir}", files.append)
+    try:
+        ftp.retrlines(f"NLST {remote_dir}", files.append)
+    except ftplib.error_temp:
+        pass
+    except ftplib.error_perm as exc:
+        if not str(exc).startswith("550"):
+            raise
     return files
 
 
@@ -156,21 +153,31 @@ def is_remote_dir(ftp: ftplib.FTP, remote_path: PurePosixPath) -> bool:
     return True
 
 
+def remote_dir_exists(ftp: ftplib.FTP, remote_path: PurePosixPath) -> bool:
+    return is_remote_dir(ftp, remote_path)
+
+
 def pull_remote_tree(
     ftp: ftplib.FTP,
     remote_dir: PurePosixPath,
     local_dir: Path,
     *,
     delete_remote: bool = False,
-) -> None:
-    local_dir.mkdir(parents=True, exist_ok=True)
+) -> int:
+    downloaded = 0
 
     for remote_path in list_remote_entries(ftp, remote_dir):
         if remote_path == remote_dir:
             continue
 
         if is_remote_dir(ftp, remote_path):
-            pull_remote_tree(ftp, remote_path, local_dir / remote_path.name, delete_remote=delete_remote)
+            child_downloaded = pull_remote_tree(
+                ftp,
+                remote_path,
+                local_dir / remote_path.name,
+                delete_remote=delete_remote,
+            )
+            downloaded += child_downloaded
             if delete_remote:
                 try:
                     ftp.rmd(str(remote_path))
@@ -179,58 +186,26 @@ def pull_remote_tree(
                     pass
             continue
 
+        local_dir.mkdir(parents=True, exist_ok=True)
         download_file(ftp, remote_path, local_dir / remote_path.name, delete_remote=delete_remote)
+        downloaded += 1
+
+    return downloaded
 
 
-def pull_fatals(ftp: ftplib.FTP, reports_dir: Path, *, delete_remote: bool = False) -> None:
-    try:
-        list_remote_files(ftp, REMOTE_FATAL_DIR)
-    except ftplib.error_perm as exc:
-        if str(exc).startswith("550"):
-            print(f"no remote fatal reports in {REMOTE_FATAL_DIR}")
-            return
-        raise
+def pull_path(ftp: ftplib.FTP, path: PurePosixPath, reports_dir: Path, *, delete_remote: bool = False) -> None:
+    if not remote_dir_exists(ftp, path):
+        print(f"'{path}' absent, skipping.")
+        return
 
-    pull_remote_tree(
+    downloaded = pull_remote_tree(
         ftp,
-        REMOTE_FATAL_DIR,
-        reports_dir / REMOTE_FATAL_DIR.name,
+        path,
+        reports_dir / path.name,
         delete_remote=delete_remote,
     )
-
-
-def pull_crashes(ftp: ftplib.FTP, reports_dir: Path, *, delete_remote: bool = False) -> None:
-    try:
-        list_remote_files(ftp, REMOTE_CRASH_DIR)
-    except ftplib.error_perm as exc:
-        if str(exc).startswith("550"):
-            print(f"no remote fatal reports in {REMOTE_CRASH_DIR}")
-            return
-        raise
-
-    pull_remote_tree(
-        ftp,
-        REMOTE_CRASH_DIR,
-        reports_dir / REMOTE_CRASH_DIR.name,
-        delete_remote=delete_remote,
-    )
-
-
-def pull_logs(ftp: ftplib.FTP, reports_dir: Path, *, delete_remote: bool = False) -> None:
-    try:
-        remote_entries = list_remote_files(ftp, REMOTE_WGNX_DIR)
-    except ftplib.error_perm as exc:
-        if str(exc).startswith("550"):
-            print(f"no remote WGNX logs in {REMOTE_WGNX_DIR}")
-            return
-        raise
-
-    for entry in remote_entries:
-        remote_path = PurePosixPath(entry)
-        if remote_path.parent != REMOTE_WGNX_DIR:
-            remote_path = REMOTE_WGNX_DIR / remote_path.name
-        local_path = reports_dir / remote_path.name
-        download_file(ftp, remote_path, local_path, delete_remote=delete_remote)
+    if downloaded == 0:
+        print(f"'{path}' empty, skipping.")
 
 
 def main() -> int:
@@ -242,20 +217,18 @@ def main() -> int:
         ftp.connect(args.host, args.port, timeout=args.timeout)
         ftp.login(args.user, args.password)
 
-        if args.push_sysmodule:
-            upload_file(ftp, SYSMODULE_NSP, REMOTE_SYSMODULE)
         if args.push_probe:
             upload_file(ftp, PROBE_NSP, REMOTE_PROBE)
-        if args.push_overlay:
-            upload_file(ftp, OVERLAY_OVL, REMOTE_OVERLAY)
-        if args.push_manager:
-            upload_file(ftp, MANAGER_NRO, REMOTE_MANAGER)
-        if args.pull_fatals:
-            pull_fatals(ftp, reports_dir, delete_remote=args.clean)
+        if args.push_requester:
+            upload_file(ftp, REQUESTER_NRO, REMOTE_REQUESTER)
+        if args.pull_fatal_errors:
+            pull_path(ftp, REMOTE_FATAL_ERROR_DIR, reports_dir, delete_remote=args.clean)
+        if args.pull_fatal_reports:
+            pull_path(ftp, REMOTE_FATAL_REPORT_DIR, reports_dir, delete_remote=args.clean)
         if args.pull_crashes:
-            pull_crashes(ftp, reports_dir, delete_remote=args.clean)
+            pull_path(ftp, REMOTE_CRASH_DIR, reports_dir, delete_remote=args.clean)
         if args.pull_logs:
-            pull_logs(ftp, reports_dir, delete_remote=args.clean)
+            pull_path(ftp, REMOTE_PROBE_LOG_DIR, reports_dir, delete_remote=args.clean)
 
     return 0
 

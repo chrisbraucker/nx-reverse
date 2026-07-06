@@ -17,6 +17,7 @@ void Main() {
 
     if (!wgnx::net_probe::mitm::StartServers()) {
         wgnx::net_probe::logger::Log("Failed to start passive MITM services; exiting net-probe");
+        wgnx::net_probe::logger::Shutdown();
         return;
     }
     wgnx::net_probe::logger::Log("Passive MITM active; legacy probe entrypoint disabled");
