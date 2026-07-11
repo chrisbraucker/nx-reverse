@@ -33,6 +33,8 @@ constexpr size_t SemanticPayloadBytes = 64;
 constexpr size_t MaxTrackedDomainPaths = 256;
 constexpr size_t MaxDomainPathLength = 96;
 constexpr size_t MaxTrackedSessions = 64;
+constexpr size_t MaxTrackedSessionHandles = 128;
+constexpr size_t MaxTrackedCloneHandles = 128;
 constexpr size_t BinaryPayloadChunkBytes = 1536;
 constexpr u32 BsdCommandPoll = 6;
 constexpr u16 BsdAddressFamilyInet = 2;
@@ -47,11 +49,17 @@ bool g_initialized = false;
 u64 g_run_tick = 0;
 ams::os::SdkMutex g_trace_lock;
 ams::os::SdkMutex g_state_lock;
+ams::os::SdkMutex g_snapshot_lock;
 
 struct DomainPathEntry {
     bool used{false};
     u64 session_id{0};
     u32 object_id{0};
+    u32 parent_object_id{0};
+    u32 creator_command_id{0};
+    u64 created_ts_ns{0};
+    u64 close_seen_ts_ns{0};
+    bool close_observed{false};
     char relative_path[MaxDomainPathLength]{};
 };
 
@@ -62,8 +70,36 @@ struct SessionEntry {
     u64 session_id{0};
 };
 
+struct SessionHandleEntry {
+    bool used{false};
+    u64 session_id{0};
+    s32 session_handle{-1};
+    s32 peer_handle{-1};
+    s32 forward_handle{-1};
+    bool has_forward_handle{false};
+    bool is_clone{false};
+    u64 created_ts_ns{0};
+    u64 close_seen_ts_ns{0};
+    bool close_observed{false};
+};
+
+struct CloneHandleEntry {
+    bool used{false};
+    u64 session_id{0};
+    s32 handle{-1};
+    s32 server_handle{-1};
+    s32 forward_handle{-1};
+    bool has_forward_handle{false};
+    bool clone_registered{false};
+    u32 manager_command_id{0};
+    u64 created_ts_ns{0};
+    u64 close_seen_ts_ns{0};
+    bool close_observed{false};
+};
+
 struct ResponseDecodeDetails;
 bool StartsWith(const char *value, const char *prefix);
+const SessionEntry *FindSessionEntryLocked(u64 session_id);
 void GetNifmObjectKindAndCommandName(
     const char *object_path,
     u32 command_id,
@@ -148,6 +184,10 @@ static_assert(sizeof(BinaryTraceRecordHeader) == 80);
 
 std::array<DomainPathEntry, MaxTrackedDomainPaths> g_domain_paths = {};
 std::array<SessionEntry, MaxTrackedSessions> g_sessions = {};
+std::array<SessionHandleEntry, MaxTrackedSessionHandles> g_session_handles = {};
+std::array<DomainPathEntry, MaxTrackedDomainPaths> g_snapshot_domain_paths = {};
+std::array<SessionEntry, MaxTrackedSessions> g_snapshot_sessions = {};
+std::array<CloneHandleEntry, MaxTrackedCloneHandles> g_clone_handles = {};
 
 int ClampLength(int written, size_t capacity) {
     if (written <= 0) {
@@ -340,6 +380,126 @@ const char *GetSmLifecyclePhase(ams::sf::hipc::mitm_monitor::SmLifecycleEventTyp
     }
 }
 
+const char *GetAcceptOperation(ams::sf::hipc::mitm_monitor::AcceptTraceEventType event_type) {
+    using EventType = ams::sf::hipc::mitm_monitor::AcceptTraceEventType;
+    switch (event_type) {
+        case EventType::ProcessMitmServerBegin:
+        case EventType::ProcessMitmServerEnd:
+            return "process_mitm_server";
+        case EventType::MitmServerDeferredLink:
+        case EventType::MitmServerWaitSelected:
+        case EventType::MitmServerDeferredPromoted:
+            return "mitm_server_wait";
+        case EventType::ServerAcknowledgeBegin:
+        case EventType::ServerAcknowledgeServiceReady:
+        case EventType::ServerAcknowledgeEnd:
+            return "server_acknowledge";
+        case EventType::AcceptMitmSessionBegin:
+        case EventType::AcceptMitmSessionAccepted:
+        case EventType::AcceptMitmSessionEnd:
+            return "accept_mitm_session";
+        case EventType::RegisterMitmSessionBegin:
+        case EventType::RegisterMitmSessionEnd:
+            return "register_mitm_session";
+        AMS_UNREACHABLE_DEFAULT_CASE();
+    }
+}
+
+const char *GetAcceptPhase(ams::sf::hipc::mitm_monitor::AcceptTraceEventType event_type) {
+    using EventType = ams::sf::hipc::mitm_monitor::AcceptTraceEventType;
+    switch (event_type) {
+        case EventType::ProcessMitmServerBegin:
+        case EventType::ServerAcknowledgeBegin:
+        case EventType::AcceptMitmSessionBegin:
+        case EventType::RegisterMitmSessionBegin:
+            return "begin";
+        case EventType::ProcessMitmServerEnd:
+        case EventType::ServerAcknowledgeEnd:
+        case EventType::AcceptMitmSessionEnd:
+        case EventType::RegisterMitmSessionEnd:
+            return "end";
+        case EventType::MitmServerDeferredLink:
+            return "queued";
+        case EventType::MitmServerWaitSelected:
+            return "selected";
+        case EventType::MitmServerDeferredPromoted:
+            return "promoted";
+        case EventType::ServerAcknowledgeServiceReady:
+            return "service_ready";
+        case EventType::AcceptMitmSessionAccepted:
+            return "accepted";
+        AMS_UNREACHABLE_DEFAULT_CASE();
+    }
+}
+
+bool ShouldMirrorMonitorEventToMainLog(const char *service_name) {
+    return service_name != nullptr && std::strcmp(service_name, "bsd:s") == 0;
+}
+
+void MirrorSmLifecycleToMainLog(
+    const char *service_name,
+    const ams::sf::hipc::mitm_monitor::SmLifecycleTraceContext &ctx) {
+    if (!ShouldMirrorMonitorEventToMainLog(service_name)) {
+        return;
+    }
+
+    char client_program_id[32] = "unknown";
+    char result_text[16] = "n/a";
+    if (ctx.has_client_info) {
+        FormatProgramId(client_program_id, sizeof(client_program_id), ctx.client_info.program_id);
+    }
+    if (ctx.has_result) {
+        std::snprintf(result_text, sizeof(result_text), "0x%08X", ctx.result.GetValue());
+    }
+
+    logger::Log(
+        "monitor.sm service=%s op=%s phase=%s rc=%s has_mitm=%d client_pid=0x%016llx client_program_id=%s port=%d query=%d",
+        service_name,
+        GetSmLifecycleOperation(ctx.event_type),
+        GetSmLifecyclePhase(ctx.event_type),
+        result_text,
+        ctx.has_bool_out ? static_cast<int>(ctx.bool_out) : -1,
+        ctx.has_client_info ? static_cast<unsigned long long>(ctx.client_info.process_id.value) : 0ULL,
+        ctx.has_client_info ? client_program_id : "unknown",
+        ctx.port_handle,
+        ctx.query_handle);
+}
+
+void MirrorAcceptTraceToMainLog(
+    const char *service_name,
+    const ams::sf::hipc::mitm_monitor::AcceptTraceContext &ctx) {
+    if (!ShouldMirrorMonitorEventToMainLog(service_name)) {
+        return;
+    }
+
+    char client_program_id[32] = "unknown";
+    char result_text[16] = "n/a";
+    if (ctx.has_client_info) {
+        FormatProgramId(client_program_id, sizeof(client_program_id), ctx.client_info.program_id);
+    }
+    if (ctx.has_result) {
+        std::snprintf(result_text, sizeof(result_text), "0x%08X", ctx.result.GetValue());
+    }
+
+    logger::Log(
+        "monitor.accept service=%s op=%s phase=%s rc=%s client_pid=0x%016llx client_program_id=%s tracked_session=%llu port=%d session=%d forward=%d detail=[%u,%u,%u,%u,%u]",
+        service_name,
+        GetAcceptOperation(ctx.event_type),
+        GetAcceptPhase(ctx.event_type),
+        result_text,
+        ctx.has_client_info ? static_cast<unsigned long long>(ctx.client_info.process_id.value) : 0ULL,
+        ctx.has_client_info ? client_program_id : "unknown",
+        ctx.has_session_id ? static_cast<unsigned long long>(ctx.session_id) : 0ULL,
+        ctx.port_handle,
+        ctx.session_handle,
+        ctx.has_forward_handle ? ctx.forward_handle : -1,
+        ctx.detail_code,
+        ctx.detail_value0,
+        ctx.detail_value1,
+        ctx.detail_value2,
+        ctx.detail_value3);
+}
+
 const char *GetDispatchEventName(ams::sf::hipc::mitm_monitor::DispatchTraceEventType event_type) {
     using EventType = ams::sf::hipc::mitm_monitor::DispatchTraceEventType;
     switch (event_type) {
@@ -413,6 +573,39 @@ void ResetDomainPathState() {
     }
 }
 
+void ResetCloneHandleState() {
+    std::scoped_lock lk(g_state_lock);
+    for (auto &entry : g_clone_handles) {
+        entry.used = false;
+        entry.session_id = 0;
+        entry.handle = -1;
+        entry.server_handle = -1;
+        entry.forward_handle = -1;
+        entry.has_forward_handle = false;
+        entry.clone_registered = false;
+        entry.manager_command_id = 0;
+        entry.created_ts_ns = 0;
+        entry.close_seen_ts_ns = 0;
+        entry.close_observed = false;
+    }
+}
+
+void ResetSessionHandleState() {
+    std::scoped_lock lk(g_state_lock);
+    for (auto &entry : g_session_handles) {
+        entry.used = false;
+        entry.session_id = 0;
+        entry.session_handle = -1;
+        entry.peer_handle = -1;
+        entry.forward_handle = -1;
+        entry.has_forward_handle = false;
+        entry.is_clone = false;
+        entry.created_ts_ns = 0;
+        entry.close_seen_ts_ns = 0;
+        entry.close_observed = false;
+    }
+}
+
 void ResetSessionState() {
     std::scoped_lock lk(g_state_lock);
     for (auto &entry : g_sessions) {
@@ -429,7 +622,47 @@ void ForgetDomainPathsForSessionLocked(u64 session_id) {
             entry.used = false;
             entry.session_id = 0;
             entry.object_id = 0;
+            entry.parent_object_id = 0;
+            entry.creator_command_id = 0;
+            entry.created_ts_ns = 0;
+            entry.close_seen_ts_ns = 0;
+            entry.close_observed = false;
             entry.relative_path[0] = '\0';
+        }
+    }
+}
+
+void ForgetCloneHandlesForSessionLocked(u64 session_id) {
+    for (auto &entry : g_clone_handles) {
+        if (entry.used && entry.session_id == session_id) {
+            entry.used = false;
+            entry.session_id = 0;
+            entry.handle = -1;
+            entry.server_handle = -1;
+            entry.forward_handle = -1;
+            entry.has_forward_handle = false;
+            entry.clone_registered = false;
+            entry.manager_command_id = 0;
+            entry.created_ts_ns = 0;
+            entry.close_seen_ts_ns = 0;
+            entry.close_observed = false;
+        }
+    }
+}
+
+void ForgetSessionHandlesForSessionLocked(u64 session_id) {
+    for (auto &entry : g_session_handles) {
+        if (entry.used && entry.session_id == session_id) {
+            entry.used = false;
+            entry.session_id = 0;
+            entry.session_handle = -1;
+            entry.peer_handle = -1;
+            entry.forward_handle = -1;
+            entry.has_forward_handle = false;
+            entry.is_clone = false;
+            entry.created_ts_ns = 0;
+            entry.close_seen_ts_ns = 0;
+            entry.close_observed = false;
         }
     }
 }
@@ -442,6 +675,108 @@ size_t CountTrackedSessionsLocked() {
         }
     }
     return count;
+}
+
+size_t CountTrackedCloneHandlesForSessionLocked(u64 session_id) {
+    size_t count = 0;
+    for (const auto &entry : g_clone_handles) {
+        if (entry.used && entry.session_id == session_id && !entry.close_observed) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+size_t CopyTrackedCloneHandlesForSessionLocked(u64 session_id, CloneHandleEntry *out_entries, size_t max_entries) {
+    size_t cursor = 0;
+    for (const auto &entry : g_clone_handles) {
+        if (!entry.used || entry.session_id != session_id || entry.close_observed) {
+            continue;
+        }
+        if (out_entries != nullptr && cursor < max_entries) {
+            out_entries[cursor] = entry;
+        }
+        ++cursor;
+    }
+    return cursor;
+}
+
+size_t CountTrackedSessionHandlesForSessionLocked(u64 session_id, bool active_only) {
+    size_t count = 0;
+    for (const auto &entry : g_session_handles) {
+        if (!entry.used || entry.session_id != session_id) {
+            continue;
+        }
+        if (active_only && entry.close_observed) {
+            continue;
+        }
+        ++count;
+    }
+    return count;
+}
+
+size_t CopyTrackedSessionsLocked(SessionEntry *out_entries, size_t max_entries) {
+    size_t cursor = 0;
+    for (const auto &entry : g_sessions) {
+        if (!entry.used) {
+            continue;
+        }
+        if (out_entries != nullptr && cursor < max_entries) {
+            out_entries[cursor] = entry;
+        }
+        ++cursor;
+    }
+    return cursor;
+}
+
+size_t CopyTrackedDomainPathsLocked(DomainPathEntry *out_entries, size_t max_entries) {
+    size_t cursor = 0;
+    for (const auto &entry : g_domain_paths) {
+        if (!entry.used) {
+            continue;
+        }
+        if (out_entries != nullptr && cursor < max_entries) {
+            out_entries[cursor] = entry;
+        }
+        ++cursor;
+    }
+    return cursor;
+}
+
+size_t CopyTrackedDomainPathsForSessionLocked(u64 session_id, DomainPathEntry *out_entries, size_t max_entries, SessionEntry *out_session_entry) {
+    if (out_session_entry != nullptr) {
+        *out_session_entry = {};
+        if (const auto *session_entry = FindSessionEntryLocked(session_id); session_entry != nullptr) {
+            *out_session_entry = *session_entry;
+        }
+    }
+
+    size_t cursor = 0;
+    for (const auto &entry : g_domain_paths) {
+        if (!entry.used || entry.session_id != session_id) {
+            continue;
+        }
+
+        if (out_entries != nullptr && cursor < max_entries) {
+            out_entries[cursor] = entry;
+        }
+        ++cursor;
+    }
+    return cursor;
+}
+
+const SessionEntry *FindCapturedSessionEntry(const SessionEntry *entries, size_t entry_count, u64 session_id) {
+    if (entries == nullptr) {
+        return nullptr;
+    }
+
+    for (size_t i = 0; i < entry_count; ++i) {
+        if (entries[i].used && entries[i].session_id == session_id) {
+            return std::addressof(entries[i]);
+        }
+    }
+
+    return nullptr;
 }
 
 size_t RememberSessionLocked(const ams::sm::ServiceName &service_name, u64 session_id, const ams::sm::MitmProcessInfo &client_info) {
@@ -460,6 +795,8 @@ size_t RememberSessionLocked(const ams::sm::ServiceName &service_name, u64 sessi
     if (free_entry == nullptr) {
         free_entry = std::addressof(g_sessions[0]);
         ForgetDomainPathsForSessionLocked(free_entry->session_id);
+        ForgetSessionHandlesForSessionLocked(free_entry->session_id);
+        ForgetCloneHandlesForSessionLocked(free_entry->session_id);
     }
 
     free_entry->used = true;
@@ -480,6 +817,8 @@ bool ForgetSessionLocked(u64 session_id, SessionEntry *out_entry, size_t *out_re
             entry.client_info = {};
             entry.session_id = 0;
             ForgetDomainPathsForSessionLocked(session_id);
+            ForgetSessionHandlesForSessionLocked(session_id);
+            ForgetCloneHandlesForSessionLocked(session_id);
             if (out_remaining_count != nullptr) {
                 *out_remaining_count = CountTrackedSessionsLocked();
             }
@@ -488,6 +827,8 @@ bool ForgetSessionLocked(u64 session_id, SessionEntry *out_entry, size_t *out_re
     }
 
     ForgetDomainPathsForSessionLocked(session_id);
+    ForgetSessionHandlesForSessionLocked(session_id);
+    ForgetCloneHandlesForSessionLocked(session_id);
     if (out_remaining_count != nullptr) {
         *out_remaining_count = CountTrackedSessionsLocked();
     }
@@ -496,20 +837,10 @@ bool ForgetSessionLocked(u64 session_id, SessionEntry *out_entry, size_t *out_re
 
 size_t CopyTrackedSessions(SessionEntry *out_entries, size_t max_entries) {
     std::scoped_lock lk(g_state_lock);
-    size_t cursor = 0;
-    for (const auto &entry : g_sessions) {
-        if (!entry.used) {
-            continue;
-        }
-        if (out_entries != nullptr && cursor < max_entries) {
-            out_entries[cursor] = entry;
-        }
-        ++cursor;
-    }
-    return cursor;
+    return CopyTrackedSessionsLocked(out_entries, max_entries);
 }
 
-void RememberDomainPath(u64 session_id, u32 object_id, const char *relative_path) {
+void RememberDomainPath(u64 session_id, u32 object_id, const char *relative_path, u32 parent_object_id, u32 creator_command_id) {
     if (object_id == 0 || relative_path == nullptr || relative_path[0] == '\0') {
         return;
     }
@@ -519,6 +850,11 @@ void RememberDomainPath(u64 session_id, u32 object_id, const char *relative_path
     for (auto &entry : g_domain_paths) {
         if (entry.used && entry.session_id == session_id && entry.object_id == object_id) {
             std::snprintf(entry.relative_path, sizeof(entry.relative_path), "%s", relative_path);
+            entry.parent_object_id = parent_object_id;
+            entry.creator_command_id = creator_command_id;
+            if (entry.created_ts_ns == 0) {
+                entry.created_ts_ns = GetMonotonicNs();
+            }
             return;
         }
         if (!entry.used && free_entry == nullptr) {
@@ -533,7 +869,234 @@ void RememberDomainPath(u64 session_id, u32 object_id, const char *relative_path
     free_entry->used = true;
     free_entry->session_id = session_id;
     free_entry->object_id = object_id;
+    free_entry->parent_object_id = parent_object_id;
+    free_entry->creator_command_id = creator_command_id;
+    free_entry->created_ts_ns = GetMonotonicNs();
+    free_entry->close_seen_ts_ns = 0;
+    free_entry->close_observed = false;
     std::snprintf(free_entry->relative_path, sizeof(free_entry->relative_path), "%s", relative_path);
+}
+
+CloneHandleEntry RememberCloneHandleLocked(u64 session_id, s32 handle, u32 manager_command_id) {
+    CloneHandleEntry *free_entry = nullptr;
+    for (auto &entry : g_clone_handles) {
+        if (entry.used && entry.session_id == session_id && entry.handle == handle) {
+            entry.manager_command_id = manager_command_id;
+            if (entry.created_ts_ns == 0) {
+                entry.created_ts_ns = GetMonotonicNs();
+            }
+            entry.close_observed = false;
+            entry.close_seen_ts_ns = 0;
+            return entry;
+        }
+        if (!entry.used && free_entry == nullptr) {
+            free_entry = std::addressof(entry);
+        }
+    }
+
+    if (free_entry == nullptr) {
+        free_entry = std::addressof(g_clone_handles[0]);
+    }
+
+    free_entry->used = true;
+    free_entry->session_id = session_id;
+    free_entry->handle = handle;
+    free_entry->server_handle = -1;
+    free_entry->forward_handle = -1;
+    free_entry->has_forward_handle = false;
+    free_entry->clone_registered = false;
+    free_entry->manager_command_id = manager_command_id;
+    free_entry->created_ts_ns = GetMonotonicNs();
+    free_entry->close_seen_ts_ns = 0;
+    free_entry->close_observed = false;
+    return *free_entry;
+}
+
+SessionHandleEntry RememberSessionHandleLocked(
+    u64 session_id,
+    s32 session_handle,
+    s32 peer_handle,
+    s32 forward_handle,
+    bool has_forward_handle,
+    bool is_clone) {
+    SessionHandleEntry *free_entry = nullptr;
+    for (auto &entry : g_session_handles) {
+        if (entry.used && entry.session_id == session_id && entry.session_handle == session_handle) {
+            entry.peer_handle = peer_handle;
+            entry.forward_handle = forward_handle;
+            entry.has_forward_handle = has_forward_handle;
+            entry.is_clone = is_clone;
+            if (entry.created_ts_ns == 0) {
+                entry.created_ts_ns = GetMonotonicNs();
+            }
+            entry.close_observed = false;
+            entry.close_seen_ts_ns = 0;
+            return entry;
+        }
+        if (!entry.used && free_entry == nullptr) {
+            free_entry = std::addressof(entry);
+        }
+    }
+
+    if (free_entry == nullptr) {
+        free_entry = std::addressof(g_session_handles[0]);
+    }
+
+    free_entry->used = true;
+    free_entry->session_id = session_id;
+    free_entry->session_handle = session_handle;
+    free_entry->peer_handle = peer_handle;
+    free_entry->forward_handle = forward_handle;
+    free_entry->has_forward_handle = has_forward_handle;
+    free_entry->is_clone = is_clone;
+    free_entry->created_ts_ns = GetMonotonicNs();
+    free_entry->close_seen_ts_ns = 0;
+    free_entry->close_observed = false;
+    return *free_entry;
+}
+
+bool MarkSessionHandleCloseObservedLocked(
+    u64 session_id,
+    s32 session_handle,
+    SessionHandleEntry *out_entry,
+    size_t *out_remaining_active_handle_count,
+    size_t *out_total_handle_count) {
+    bool found = false;
+    for (auto &entry : g_session_handles) {
+        if (entry.used && entry.session_id == session_id && entry.session_handle == session_handle) {
+            entry.close_observed = true;
+            entry.close_seen_ts_ns = GetMonotonicNs();
+            if (out_entry != nullptr) {
+                *out_entry = entry;
+            }
+            found = true;
+            break;
+        }
+    }
+
+    if (out_remaining_active_handle_count != nullptr) {
+        *out_remaining_active_handle_count = CountTrackedSessionHandlesForSessionLocked(session_id, true);
+    }
+    if (out_total_handle_count != nullptr) {
+        *out_total_handle_count = CountTrackedSessionHandlesForSessionLocked(session_id, false);
+    }
+    return found;
+}
+
+bool NoteCloneRegisteredLocked(
+    u64 session_id,
+    s32 client_handle,
+    s32 server_handle,
+    s32 forward_handle,
+    bool has_forward_handle,
+    CloneHandleEntry *out_entry,
+    size_t *out_active_clone_count) {
+    CloneHandleEntry *target = nullptr;
+    for (auto &entry : g_clone_handles) {
+        if (entry.used && entry.session_id == session_id && entry.handle == client_handle) {
+            target = std::addressof(entry);
+            break;
+        }
+    }
+
+    if (target == nullptr) {
+        CloneHandleEntry remembered = RememberCloneHandleLocked(session_id, client_handle, 0);
+        for (auto &entry : g_clone_handles) {
+            if (entry.used && entry.session_id == remembered.session_id && entry.handle == remembered.handle) {
+                target = std::addressof(entry);
+                break;
+            }
+        }
+    }
+
+    if (target == nullptr) {
+        if (out_active_clone_count != nullptr) {
+            *out_active_clone_count = CountTrackedCloneHandlesForSessionLocked(session_id);
+        }
+        return false;
+    }
+
+    target->server_handle = server_handle;
+    target->forward_handle = forward_handle;
+    target->has_forward_handle = has_forward_handle;
+    target->clone_registered = true;
+    target->close_observed = false;
+    target->close_seen_ts_ns = 0;
+    if (out_entry != nullptr) {
+        *out_entry = *target;
+    }
+    if (out_active_clone_count != nullptr) {
+        *out_active_clone_count = CountTrackedCloneHandlesForSessionLocked(session_id);
+    }
+    return true;
+}
+
+bool MarkCloneClosedByServerHandleLocked(
+    u64 session_id,
+    s32 server_handle,
+    CloneHandleEntry *out_entry,
+    size_t *out_active_clone_count) {
+    bool found = false;
+    for (auto &entry : g_clone_handles) {
+        if (entry.used && entry.session_id == session_id && entry.server_handle == server_handle && !entry.close_observed) {
+            entry.close_observed = true;
+            entry.close_seen_ts_ns = GetMonotonicNs();
+            if (out_entry != nullptr) {
+                *out_entry = entry;
+            }
+            found = true;
+            break;
+        }
+    }
+
+    if (out_active_clone_count != nullptr) {
+        *out_active_clone_count = CountTrackedCloneHandlesForSessionLocked(session_id);
+    }
+    return found;
+}
+
+bool MarkDomainPathCloseObserved(u64 session_id, u32 object_id, DomainPathEntry *out_entry) {
+    if (object_id == 0) {
+        return false;
+    }
+
+    std::scoped_lock lk(g_state_lock);
+    for (auto &entry : g_domain_paths) {
+        if (entry.used && entry.session_id == session_id && entry.object_id == object_id) {
+            entry.close_observed = true;
+            entry.close_seen_ts_ns = GetMonotonicNs();
+            if (out_entry != nullptr) {
+                *out_entry = entry;
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool GetTrackedDomainPath(u64 session_id, u32 object_id, DomainPathEntry *out_entry) {
+    std::scoped_lock lk(g_state_lock);
+    for (const auto &entry : g_domain_paths) {
+        if (entry.used && entry.session_id == session_id && entry.object_id == object_id) {
+            if (out_entry != nullptr) {
+                *out_entry = entry;
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
+const SessionEntry *FindSessionEntryLocked(u64 session_id) {
+    for (const auto &entry : g_sessions) {
+        if (entry.used && entry.session_id == session_id) {
+            return std::addressof(entry);
+        }
+    }
+
+    return nullptr;
 }
 
 void GetRelativeDomainPath(char *out, size_t out_size, u64 session_id, u32 object_id) {
@@ -2568,7 +3131,7 @@ void RememberReturnedDomainObjects(u64 session_id, u32 parent_object_id, u32 com
             parent_relative_path,
             command_id,
             i);
-        RememberDomainPath(session_id, child_object_id, child_relative_path);
+        RememberDomainPath(session_id, child_object_id, child_relative_path, parent_object_id, command_id);
     }
 }
 
@@ -2579,6 +3142,117 @@ void AppendJsonLine(TraceFamily family, const char *json) {
 
 void AppendJsonLineForService(const char *service_name, const char *json) {
     AppendJsonLine(GetTraceFamilyForServiceName(service_name), json);
+}
+
+void LogDomainObjectState(
+    const char *service_name,
+    const ams::sm::MitmProcessInfo &client_info,
+    u64 session_id,
+    const char *phase,
+    const DomainPathEntry &entry) {
+    char client_program_id[32] = {};
+    char object_path[160] = {};
+    FormatProgramId(client_program_id, sizeof(client_program_id), client_info.program_id);
+    FormatObjectPath(object_path, sizeof(object_path), service_name, session_id, entry.object_id);
+
+    char line[1408];
+    const int written = std::snprintf(
+        line,
+        sizeof(line),
+        "{\"schema_version\":1,\"run_id\":\"tick-%llu\",\"scenario\":\"unknown\",\"event\":\"domain_object_state\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"object_id\":%u,\"object_path\":\"%s\",\"request_id\":0,\"phase\":\"%s\",\"relative_path\":\"%s\",\"parent_object_id\":%u,\"creator_command_id\":%u,\"created_ts_monotonic_ns\":%llu,\"close_observed\":%s,\"close_seen_ts_monotonic_ns\":%llu}\n",
+        static_cast<unsigned long long>(g_run_tick),
+        static_cast<unsigned long long>(GetMonotonicNs()),
+        service_name,
+        static_cast<unsigned long long>(client_info.process_id.value),
+        client_program_id,
+        static_cast<unsigned long long>(session_id),
+        entry.object_id,
+        object_path,
+        phase != nullptr ? phase : "unknown",
+        entry.relative_path,
+        entry.parent_object_id,
+        entry.creator_command_id,
+        static_cast<unsigned long long>(entry.created_ts_ns),
+        entry.close_observed ? "true" : "false",
+        static_cast<unsigned long long>(entry.close_seen_ts_ns));
+    if (written > 0) {
+        AppendJsonLineForService(service_name, line);
+    }
+}
+
+void LogCloneHandleState(
+    const char *service_name,
+    const ams::sm::MitmProcessInfo &client_info,
+    u64 session_id,
+    const char *phase,
+    const CloneHandleEntry &entry,
+    size_t outstanding_clone_count) {
+    char client_program_id[32] = {};
+    FormatProgramId(client_program_id, sizeof(client_program_id), client_info.program_id);
+
+    char line[1024];
+    const int written = std::snprintf(
+        line,
+        sizeof(line),
+        "{\"schema_version\":1,\"run_id\":\"tick-%llu\",\"scenario\":\"unknown\",\"event\":\"clone_handle_state\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"object_id\":0,\"request_id\":0,\"phase\":\"%s\",\"manager_command_id\":%u,\"cloned_handle\":%d,\"server_session_handle\":%d,\"forward_handle\":%d,\"has_forward_handle\":%s,\"clone_registered\":%s,\"close_observed\":%s,\"created_ts_monotonic_ns\":%llu,\"close_seen_ts_monotonic_ns\":%llu,\"outstanding_clone_count\":%zu}\n",
+        static_cast<unsigned long long>(g_run_tick),
+        static_cast<unsigned long long>(GetMonotonicNs()),
+        service_name,
+        static_cast<unsigned long long>(client_info.process_id.value),
+        client_program_id,
+        static_cast<unsigned long long>(session_id),
+        phase != nullptr ? phase : "unknown",
+        entry.manager_command_id,
+        entry.handle,
+        entry.server_handle,
+        entry.forward_handle,
+        entry.has_forward_handle ? "true" : "false",
+        entry.clone_registered ? "true" : "false",
+        entry.close_observed ? "true" : "false",
+        static_cast<unsigned long long>(entry.created_ts_ns),
+        static_cast<unsigned long long>(entry.close_seen_ts_ns),
+        outstanding_clone_count);
+    if (written > 0) {
+        AppendJsonLineForService(service_name, line);
+    }
+}
+
+void LogSessionHandleState(
+    const char *service_name,
+    const ams::sm::MitmProcessInfo &client_info,
+    u64 session_id,
+    const char *phase,
+    const SessionHandleEntry &entry,
+    size_t active_handle_count,
+    size_t total_handle_count) {
+    char client_program_id[32] = {};
+    FormatProgramId(client_program_id, sizeof(client_program_id), client_info.program_id);
+
+    char line[1280];
+    const int written = std::snprintf(
+        line,
+        sizeof(line),
+        "{\"schema_version\":1,\"run_id\":\"tick-%llu\",\"scenario\":\"unknown\",\"event\":\"session_handle_state\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"object_id\":0,\"request_id\":0,\"phase\":\"%s\",\"session_handle\":%d,\"peer_handle\":%d,\"forward_handle\":%d,\"has_forward_handle\":%s,\"role\":\"%s\",\"close_observed\":%s,\"created_ts_monotonic_ns\":%llu,\"close_seen_ts_monotonic_ns\":%llu,\"active_handle_count\":%zu,\"total_handle_count\":%zu}\n",
+        static_cast<unsigned long long>(g_run_tick),
+        static_cast<unsigned long long>(GetMonotonicNs()),
+        service_name,
+        static_cast<unsigned long long>(client_info.process_id.value),
+        client_program_id,
+        static_cast<unsigned long long>(session_id),
+        phase != nullptr ? phase : "unknown",
+        entry.session_handle,
+        entry.peer_handle,
+        entry.forward_handle,
+        entry.has_forward_handle ? "true" : "false",
+        entry.is_clone ? "clone" : "root",
+        entry.close_observed ? "true" : "false",
+        static_cast<unsigned long long>(entry.created_ts_ns),
+        static_cast<unsigned long long>(entry.close_seen_ts_ns),
+        active_handle_count,
+        total_handle_count);
+    if (written > 0) {
+        AppendJsonLineForService(service_name, line);
+    }
 }
 
 void EmitBufferRecord(
@@ -3448,6 +4122,19 @@ void OnForwardRequestTrace(const ams::sf::hipc::mitm_monitor::ForwardRequestTrac
         have_response);
 
     RememberReturnedDomainObjects(ctx.session_id, request_info.object_id, request_info.command_id, response_decode);
+    if (response_decode.out_object_ids_valid && response_decode.out_object_id_count > 0) {
+        for (u32 i = 0; i < response_decode.out_object_id_count; ++i) {
+            const u32 child_object_id = response_decode.out_object_ids[i];
+            if (child_object_id == 0) {
+                continue;
+            }
+
+            DomainPathEntry created_entry = {};
+            if (GetTrackedDomainPath(ctx.session_id, child_object_id, std::addressof(created_entry))) {
+                LogDomainObjectState(service_name, ctx.client_info, ctx.session_id, "response_out_object", created_entry);
+            }
+        }
+    }
 
     if (ctx.has_response) {
         if (have_request) {
@@ -3635,7 +4322,19 @@ void OnDomainTrace(const ams::sf::hipc::mitm_monitor::DomainTraceContext &ctx) {
     if (ctx.event_type == ams::sf::hipc::mitm_monitor::DomainTraceEventType::ConvertCurrentObjectToDomain &&
         ctx.num_out_objects > 0 &&
         ctx.object_ids[0] != 0) {
-        RememberDomainPath(ctx.session_id, ctx.object_ids[0], "root");
+        RememberDomainPath(ctx.session_id, ctx.object_ids[0], "root", ctx.request_object_id, 0);
+        DomainPathEntry created_entry = {};
+        if (GetTrackedDomainPath(ctx.session_id, ctx.object_ids[0], std::addressof(created_entry))) {
+            LogDomainObjectState(service_name, ctx.client_info, ctx.session_id, "convert_root", created_entry);
+        }
+    }
+
+    if (ctx.event_type == ams::sf::hipc::mitm_monitor::DomainTraceEventType::DispatchClose &&
+        ctx.request_object_id != 0) {
+        DomainPathEntry closed_entry = {};
+        if (MarkDomainPathCloseObserved(ctx.session_id, ctx.request_object_id, std::addressof(closed_entry))) {
+            LogDomainObjectState(service_name, ctx.client_info, ctx.session_id, "dispatch_close", closed_entry);
+        }
     }
 }
 
@@ -3652,6 +4351,8 @@ void Initialize() {
     g_initialized = true;
     g_run_tick = static_cast<u64>(svcGetSystemTick());
     ResetDomainPathState();
+    ResetSessionHandleState();
+    ResetCloneHandleState();
     ResetSessionState();
     for (const auto &sink : g_trace_sinks) {
         WriteMetaFile(sink);
@@ -3678,6 +4379,7 @@ void LogSmLifecycle(const ams::sf::hipc::mitm_monitor::SmLifecycleTraceContext &
 
     char service_name_text[ams::sm::ServiceName::MaxLength + 8] = {};
     EncodeServiceName(service_name_text, sizeof(service_name_text), ctx.service_name);
+    MirrorSmLifecycleToMainLog(service_name_text, ctx);
 
     char extra[320];
     extra[0] = '\0';
@@ -3747,6 +4449,105 @@ void LogSmLifecycle(const ams::sf::hipc::mitm_monitor::SmLifecycleTraceContext &
     }
 }
 
+void LogAcceptTrace(const ams::sf::hipc::mitm_monitor::AcceptTraceContext &ctx) {
+    Initialize();
+
+    char service_name_text[ams::sm::ServiceName::MaxLength + 8] = {};
+    EncodeServiceName(service_name_text, sizeof(service_name_text), ctx.service_name);
+    MirrorAcceptTraceToMainLog(service_name_text, ctx);
+
+    char extra[512];
+    extra[0] = '\0';
+    size_t cursor = 0;
+
+    if (ctx.has_result) {
+        const int written = std::snprintf(
+            extra + cursor,
+            sizeof(extra) - cursor,
+            ",\"rc\":\"0x%08X\"",
+            ctx.result.GetValue());
+        cursor += static_cast<size_t>(ClampLength(written, sizeof(extra) - cursor));
+    }
+
+    if (ctx.has_client_info && cursor < sizeof(extra)) {
+        char client_program_id[32] = {};
+        FormatProgramId(client_program_id, sizeof(client_program_id), ctx.client_info.program_id);
+        const int written = std::snprintf(
+            extra + cursor,
+            sizeof(extra) - cursor,
+            ",\"client_pid\":%llu,\"client_program_id\":\"%s\"",
+            static_cast<unsigned long long>(ctx.client_info.process_id.value),
+            client_program_id);
+        cursor += static_cast<size_t>(ClampLength(written, sizeof(extra) - cursor));
+    }
+
+    if (ctx.has_session_id && cursor < sizeof(extra)) {
+        const int written = std::snprintf(
+            extra + cursor,
+            sizeof(extra) - cursor,
+            ",\"tracked_session_id\":%llu",
+            static_cast<unsigned long long>(ctx.session_id));
+        cursor += static_cast<size_t>(ClampLength(written, sizeof(extra) - cursor));
+    }
+
+    if (ctx.port_handle != ams::os::InvalidNativeHandle && cursor < sizeof(extra)) {
+        const int written = std::snprintf(
+            extra + cursor,
+            sizeof(extra) - cursor,
+            ",\"port_handle\":%d",
+            ctx.port_handle);
+        cursor += static_cast<size_t>(ClampLength(written, sizeof(extra) - cursor));
+    }
+
+    if (ctx.session_handle != ams::os::InvalidNativeHandle && cursor < sizeof(extra)) {
+        const int written = std::snprintf(
+            extra + cursor,
+            sizeof(extra) - cursor,
+            ",\"session_handle\":%d",
+            ctx.session_handle);
+        cursor += static_cast<size_t>(ClampLength(written, sizeof(extra) - cursor));
+    }
+
+    if (ctx.has_forward_handle && cursor < sizeof(extra)) {
+        const int written = std::snprintf(
+            extra + cursor,
+            sizeof(extra) - cursor,
+            ",\"forward_handle\":%d,\"forward_own_handle\":%s,\"forward_pointer_buffer_size\":%u",
+            ctx.forward_handle,
+            ctx.forward_own_handle ? "true" : "false",
+            ctx.forward_pointer_buffer_size);
+        cursor += static_cast<size_t>(ClampLength(written, sizeof(extra) - cursor));
+    }
+
+    if (ctx.has_detail && cursor < sizeof(extra)) {
+        const int written = std::snprintf(
+            extra + cursor,
+            sizeof(extra) - cursor,
+            ",\"detail_code\":%u,\"detail_value0\":%u,\"detail_value1\":%u,\"detail_value2\":%u,\"detail_value3\":%u",
+            ctx.detail_code,
+            ctx.detail_value0,
+            ctx.detail_value1,
+            ctx.detail_value2,
+            ctx.detail_value3);
+        cursor += static_cast<size_t>(ClampLength(written, sizeof(extra) - cursor));
+    }
+
+    char line[1200];
+    const int written = std::snprintf(
+        line,
+        sizeof(line),
+        "{\"schema_version\":1,\"run_id\":\"tick-%llu\",\"scenario\":\"unknown\",\"event\":\"mitm_accept\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"operation\":\"%s\",\"phase\":\"%s\",\"client_program_id\":\"0x010000000000EAD1\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":0,\"object_id\":0,\"request_id\":0%s}\n",
+        static_cast<unsigned long long>(g_run_tick),
+        static_cast<unsigned long long>(GetMonotonicNs()),
+        service_name_text,
+        GetAcceptOperation(ctx.event_type),
+        GetAcceptPhase(ctx.event_type),
+        extra);
+    if (written > 0) {
+        AppendJsonLineForService(service_name_text, line);
+    }
+}
+
 void LogDispatchTrace(const ams::sf::hipc::mitm_monitor::DispatchTraceContext &ctx) {
     Initialize();
 
@@ -3761,15 +4562,18 @@ void LogDispatchTrace(const ams::sf::hipc::mitm_monitor::DispatchTraceContext &c
 
     char command_name[64] = "Unknown";
     char object_kind[48] = "Unknown";
+    const bool is_manager_request =
+        ctx.has_command_id &&
+        (ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestBegin ||
+         ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestEnd ||
+         ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestDomainOverride ||
+         ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestBaseFallback ||
+         ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestCmifParseFail ||
+         ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestCmifHandlerLookup ||
+         ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestCmifHandlerResult);
+    const bool is_clone_manager_request =
+        is_manager_request && (ctx.command_id == 2 || ctx.command_id == 4);
     if (ctx.has_command_id) {
-        const bool is_manager_request =
-            ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestBegin ||
-            ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestEnd ||
-            ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestDomainOverride ||
-            ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestBaseFallback ||
-            ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestCmifParseFail ||
-            ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestCmifHandlerLookup ||
-            ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestCmifHandlerResult;
         if (is_manager_request) {
             std::snprintf(object_kind, sizeof(object_kind), "IHipcManager");
             GetHipcManagerCommandName(command_name, sizeof(command_name), ctx.command_id);
@@ -3799,6 +4603,20 @@ void LogDispatchTrace(const ams::sf::hipc::mitm_monitor::DispatchTraceContext &c
             ctx.command_id,
             command_name,
             object_kind);
+        cursor += static_cast<size_t>(ClampLength(written, sizeof(extra) - cursor));
+    }
+
+    if (is_clone_manager_request && cursor < sizeof(extra)) {
+        size_t clone_count = 0;
+        {
+            std::scoped_lock lk(g_state_lock);
+            clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+        }
+        const int written = std::snprintf(
+            extra + cursor,
+            sizeof(extra) - cursor,
+            ",\"outstanding_clone_count\":%zu",
+            clone_count);
         cursor += static_cast<size_t>(ClampLength(written, sizeof(extra) - cursor));
     }
 
@@ -3952,6 +4770,30 @@ void LogDispatchTrace(const ams::sf::hipc::mitm_monitor::DispatchTraceContext &c
     if (written > 0) {
         AppendJsonLineForService(service_name_text, line);
     }
+
+    if (StartsWith(service_name_text, "bsd:") &&
+        is_clone_manager_request &&
+        ctx.event_type == ams::sf::hipc::mitm_monitor::DispatchTraceEventType::ManagerRequestEnd &&
+        ctx.has_response_snapshot &&
+        ctx.response_num_move_handles > 0) {
+        CloneHandleEntry remembered_entry = {};
+        size_t outstanding_clone_count = 0;
+        {
+            std::scoped_lock lk(g_state_lock);
+            remembered_entry = RememberCloneHandleLocked(
+                ctx.session_id,
+                ctx.response_move_handles[0],
+                ctx.command_id);
+            outstanding_clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+        }
+        LogCloneHandleState(
+            service_name_text,
+            ctx.client_info,
+            ctx.session_id,
+            "manager_request_end",
+            remembered_entry,
+            outstanding_clone_count);
+    }
 }
 
 void LogSessionTrace(const ams::sf::hipc::mitm_monitor::SessionTraceContext &ctx) {
@@ -3962,26 +4804,265 @@ void LogSessionTrace(const ams::sf::hipc::mitm_monitor::SessionTraceContext &ctx
     EncodeServiceName(service_name_text, sizeof(service_name_text), ctx.service_name);
     FormatProgramId(client_program_id, sizeof(client_program_id), ctx.client_info.program_id);
 
-    size_t remaining_count = 0;
-    {
-        std::scoped_lock lk(g_state_lock);
-        SessionEntry ignored = {};
-        static_cast<void>(ForgetSessionLocked(ctx.session_id, std::addressof(ignored), std::addressof(remaining_count)));
-    }
-
     const char *event_name = "client_session_event";
+    size_t remaining_count = 0;
+    size_t clone_count = 0;
+    size_t active_handle_count = 0;
+    size_t total_handle_count = 0;
+    SessionHandleEntry session_handle_entry = {};
+    bool have_session_handle_entry = false;
+    CloneHandleEntry clone_entry = {};
+    bool have_clone_entry = false;
     switch (ctx.event_type) {
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::Accepted:
+            event_name = "accepted_session_registered";
+            {
+                std::scoped_lock lk(g_state_lock);
+                session_handle_entry = RememberSessionHandleLocked(
+                    ctx.session_id,
+                    ctx.session_handle,
+                    ctx.peer_handle,
+                    ctx.forward_handle,
+                    ctx.has_forward_handle,
+                    false);
+                have_session_handle_entry = true;
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::CloneRegistered:
+            event_name = "clone_session_registered";
+            {
+                std::scoped_lock lk(g_state_lock);
+                session_handle_entry = RememberSessionHandleLocked(
+                    ctx.session_id,
+                    ctx.session_handle,
+                    ctx.peer_handle,
+                    ctx.forward_handle,
+                    ctx.has_forward_handle,
+                    true);
+                have_session_handle_entry = true;
+                have_clone_entry = NoteCloneRegisteredLocked(
+                    ctx.session_id,
+                    ctx.peer_handle,
+                    ctx.session_handle,
+                    ctx.forward_handle,
+                    ctx.has_forward_handle,
+                    std::addressof(clone_entry),
+                    std::addressof(clone_count));
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::WaitRegistered:
+            event_name = "session_wait_registered";
+            {
+                std::scoped_lock lk(g_state_lock);
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::WaitSelected:
+            event_name = "session_wait_selected";
+            {
+                std::scoped_lock lk(g_state_lock);
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::WaitFinalized:
+            event_name = "session_wait_finalized";
+            {
+                std::scoped_lock lk(g_state_lock);
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::ForwardServiceDestroyBegin:
+            event_name = "forward_service_destroy_begin";
+            {
+                std::scoped_lock lk(g_state_lock);
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::ForwardServiceDestroyEnd:
+            event_name = "forward_service_destroy_end";
+            {
+                std::scoped_lock lk(g_state_lock);
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::DestroyBegin:
+            event_name = "session_destroy_begin";
+            {
+                std::scoped_lock lk(g_state_lock);
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::DestroyEnd:
+            event_name = "session_destroy_end";
+            {
+                std::scoped_lock lk(g_state_lock);
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
         case ams::sf::hipc::mitm_monitor::SessionTraceEventType::Close:
-            event_name = "client_disconnected";
+            {
+                CloneHandleEntry entries[MaxTrackedCloneHandles] = {};
+                SessionEntry session_entry = {};
+                size_t open_clone_count = 0;
+                bool final_close = false;
+                {
+                    std::scoped_lock lk(g_state_lock);
+                    if (const auto *tracked = FindSessionEntryLocked(ctx.session_id); tracked != nullptr) {
+                        session_entry = *tracked;
+                    }
+                    have_session_handle_entry = MarkSessionHandleCloseObservedLocked(
+                        ctx.session_id,
+                        ctx.session_handle,
+                        std::addressof(session_handle_entry),
+                        std::addressof(active_handle_count),
+                        std::addressof(total_handle_count));
+                    have_clone_entry = MarkCloneClosedByServerHandleLocked(
+                        ctx.session_id,
+                        ctx.session_handle,
+                        std::addressof(clone_entry),
+                        std::addressof(clone_count));
+                    open_clone_count = CopyTrackedCloneHandlesForSessionLocked(ctx.session_id, entries, MaxTrackedCloneHandles);
+                    final_close = active_handle_count == 0;
+                }
+
+                if (session_entry.used) {
+                    if (final_close) {
+                        LogDomainSnapshotForSession(ctx.session_id, "pre_disconnect_final");
+                        if (open_clone_count == 0) {
+                            CloneHandleEntry empty_entry = {};
+                            empty_entry.manager_command_id = 0;
+                            empty_entry.handle = -1;
+                            empty_entry.server_handle = -1;
+                            empty_entry.forward_handle = -1;
+                            empty_entry.has_forward_handle = false;
+                            empty_entry.clone_registered = false;
+                            empty_entry.created_ts_ns = 0;
+                            empty_entry.close_seen_ts_ns = 0;
+                            empty_entry.close_observed = false;
+                            LogCloneHandleState(
+                                service_name_text,
+                                session_entry.client_info,
+                                ctx.session_id,
+                                "pre_disconnect_empty",
+                                empty_entry,
+                                0);
+                        } else {
+                            for (size_t i = 0; i < open_clone_count && i < MaxTrackedCloneHandles; ++i) {
+                                LogCloneHandleState(
+                                    service_name_text,
+                                    session_entry.client_info,
+                                    ctx.session_id,
+                                    "pre_disconnect_final",
+                                    entries[i],
+                                    open_clone_count);
+                            }
+                        }
+                    }
+                }
+
+                event_name = final_close ? "client_disconnected" : "client_handle_closed";
+                if (final_close) {
+                    std::scoped_lock lk(g_state_lock);
+                    SessionEntry ignored = {};
+                    static_cast<void>(ForgetSessionLocked(ctx.session_id, std::addressof(ignored), std::addressof(remaining_count)));
+                } else {
+                    std::scoped_lock lk(g_state_lock);
+                    remaining_count = CountTrackedSessionsLocked();
+                }
+            }
             break;
         AMS_UNREACHABLE_DEFAULT_CASE();
     }
 
-    char line[1152];
+    if (have_session_handle_entry) {
+        LogSessionHandleState(
+            service_name_text,
+            ctx.client_info,
+            ctx.session_id,
+            ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::Accepted ? "accepted" :
+            (ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::CloneRegistered ? "clone_registered" : "close_observed"),
+            session_handle_entry,
+            active_handle_count,
+            total_handle_count);
+    }
+
+    if (have_clone_entry) {
+        LogCloneHandleState(
+            service_name_text,
+            ctx.client_info,
+            ctx.session_id,
+            ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::CloneRegistered ? "clone_registered" : "close_observed",
+            clone_entry,
+            clone_count);
+    }
+
+    char extra[256];
+    extra[0] = '\0';
+    if (ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::Accepted ||
+        ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::CloneRegistered) {
+        std::snprintf(
+            extra,
+            sizeof(extra),
+            ",\"peer_handle\":%d,\"has_forward_handle\":%s,\"forward_handle\":%d,\"outstanding_clone_count\":%zu,\"active_handle_count\":%zu,\"total_handle_count\":%zu",
+            ctx.peer_handle,
+            ctx.has_forward_handle ? "true" : "false",
+            ctx.forward_handle,
+            clone_count,
+            active_handle_count,
+            total_handle_count);
+    } else if (ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::Close ||
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::WaitRegistered ||
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::WaitSelected ||
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::WaitFinalized ||
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::ForwardServiceDestroyBegin ||
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::ForwardServiceDestroyEnd ||
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::DestroyBegin ||
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::DestroyEnd) {
+        std::snprintf(
+            extra,
+            sizeof(extra),
+            ",\"has_forward_handle\":%s,\"forward_handle\":%d,\"active_handle_count\":%zu,\"total_handle_count\":%zu,\"outstanding_clone_count\":%zu",
+            ctx.has_forward_handle ? "true" : "false",
+            ctx.forward_handle,
+            active_handle_count,
+            total_handle_count,
+            clone_count);
+    }
+
+    char line[1408];
     const int written = std::snprintf(
         line,
         sizeof(line),
-        "{\"schema_version\":1,\"run_id\":\"tick-%llu\",\"scenario\":\"unknown\",\"event\":\"%s\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"object_id\":0,\"request_id\":0,\"session_handle\":%d,\"active_session_count\":%zu}\n",
+        "{\"schema_version\":1,\"run_id\":\"tick-%llu\",\"scenario\":\"unknown\",\"event\":\"%s\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"object_id\":0,\"request_id\":0,\"session_handle\":%d,\"active_session_count\":%zu%s}\n",
         static_cast<unsigned long long>(g_run_tick),
         event_name,
         static_cast<unsigned long long>(GetMonotonicNs()),
@@ -3990,10 +5071,16 @@ void LogSessionTrace(const ams::sf::hipc::mitm_monitor::SessionTraceContext &ctx
         client_program_id,
         static_cast<unsigned long long>(ctx.session_id),
         ctx.session_handle,
-        remaining_count);
+        remaining_count,
+        extra);
     if (written > 0) {
         AppendJsonLineForService(service_name_text, line);
     }
+}
+
+size_t GetTrackedSessionCount() {
+    std::scoped_lock lk(g_state_lock);
+    return CountTrackedSessionsLocked();
 }
 
 void LogSessionConnected(const ams::sm::ServiceName &service_name, u64 session_id, const ams::sm::MitmProcessInfo &client_info) {
@@ -4136,8 +5223,137 @@ void LogSessionSnapshot(const char *phase) {
     }
 }
 
+void LogDomainSnapshot(const char *phase) {
+    Initialize();
+
+    std::scoped_lock snapshot_lk(g_snapshot_lock);
+    size_t session_count = 0;
+    size_t active_count = 0;
+    {
+        std::scoped_lock state_lk(g_state_lock);
+        session_count = CopyTrackedSessionsLocked(g_snapshot_sessions.data(), g_snapshot_sessions.size());
+        active_count = CopyTrackedDomainPathsLocked(g_snapshot_domain_paths.data(), g_snapshot_domain_paths.size());
+    }
+
+    if (active_count == 0) {
+        char line[768];
+        const int written = std::snprintf(
+            line,
+            sizeof(line),
+            "{\"schema_version\":1,\"run_id\":\"tick-%llu\",\"scenario\":\"unknown\",\"event\":\"domain_snapshot\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"mitm\",\"client_program_id\":\"0x010000000000EAD1\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":0,\"object_id\":0,\"request_id\":0,\"phase\":\"%s\",\"active_domain_count\":0,\"snapshot_size\":0,\"snapshot_index\":0}\n",
+            static_cast<unsigned long long>(g_run_tick),
+            static_cast<unsigned long long>(GetMonotonicNs()),
+            phase != nullptr ? phase : "unknown");
+        if (written > 0) {
+            AppendJsonLine(TraceFamily::Broadcast, line);
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < active_count && i < MaxTrackedDomainPaths; ++i) {
+        const DomainPathEntry &entry = g_snapshot_domain_paths[i];
+        const SessionEntry *session_entry = FindCapturedSessionEntry(g_snapshot_sessions.data(), session_count, entry.session_id);
+        if (session_entry == nullptr || !session_entry->used) {
+            continue;
+        }
+
+        char service_name_text[ams::sm::ServiceName::MaxLength + 8] = {};
+        char client_program_id[32] = {};
+        char object_path[160] = {};
+        EncodeServiceName(service_name_text, sizeof(service_name_text), session_entry->service_name);
+        FormatProgramId(client_program_id, sizeof(client_program_id), session_entry->client_info.program_id);
+        FormatObjectPath(object_path, sizeof(object_path), service_name_text, entry.session_id, entry.object_id);
+
+        char line[1408];
+        const int written = std::snprintf(
+            line,
+            sizeof(line),
+            "{\"schema_version\":1,\"run_id\":\"tick-%llu\",\"scenario\":\"unknown\",\"event\":\"domain_snapshot\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"object_id\":%u,\"object_path\":\"%s\",\"request_id\":0,\"phase\":\"%s\",\"relative_path\":\"%s\",\"parent_object_id\":%u,\"creator_command_id\":%u,\"created_ts_monotonic_ns\":%llu,\"close_observed\":%s,\"close_seen_ts_monotonic_ns\":%llu,\"active_domain_count\":%zu,\"snapshot_size\":%zu,\"snapshot_index\":%zu}\n",
+            static_cast<unsigned long long>(g_run_tick),
+            static_cast<unsigned long long>(GetMonotonicNs()),
+            service_name_text,
+            static_cast<unsigned long long>(session_entry->client_info.process_id.value),
+            client_program_id,
+            static_cast<unsigned long long>(entry.session_id),
+            entry.object_id,
+            object_path,
+            phase != nullptr ? phase : "unknown",
+            entry.relative_path,
+            entry.parent_object_id,
+            entry.creator_command_id,
+            static_cast<unsigned long long>(entry.created_ts_ns),
+            entry.close_observed ? "true" : "false",
+            static_cast<unsigned long long>(entry.close_seen_ts_ns),
+            active_count,
+            active_count,
+            i);
+        if (written > 0) {
+            AppendJsonLineForService(service_name_text, line);
+        }
+    }
+}
+
+void LogDomainSnapshotForSession(u64 session_id, const char *phase) {
+    Initialize();
+
+    std::scoped_lock snapshot_lk(g_snapshot_lock);
+    SessionEntry session_entry = {};
+    size_t active_count = 0;
+    {
+        std::scoped_lock state_lk(g_state_lock);
+        active_count = CopyTrackedDomainPathsForSessionLocked(
+            session_id,
+            g_snapshot_domain_paths.data(),
+            g_snapshot_domain_paths.size(),
+            std::addressof(session_entry));
+    }
+
+    if (active_count == 0 || !session_entry.used) {
+        return;
+    }
+
+    char service_name_text[ams::sm::ServiceName::MaxLength + 8] = {};
+    char client_program_id[32] = {};
+    EncodeServiceName(service_name_text, sizeof(service_name_text), session_entry.service_name);
+    FormatProgramId(client_program_id, sizeof(client_program_id), session_entry.client_info.program_id);
+
+    for (size_t i = 0; i < active_count && i < MaxTrackedDomainPaths; ++i) {
+        const DomainPathEntry &entry = g_snapshot_domain_paths[i];
+        char object_path[160] = {};
+        FormatObjectPath(object_path, sizeof(object_path), service_name_text, session_id, entry.object_id);
+
+        char line[1408];
+        const int written = std::snprintf(
+            line,
+            sizeof(line),
+            "{\"schema_version\":1,\"run_id\":\"tick-%llu\",\"scenario\":\"unknown\",\"event\":\"domain_snapshot\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"object_id\":%u,\"object_path\":\"%s\",\"request_id\":0,\"phase\":\"%s\",\"relative_path\":\"%s\",\"parent_object_id\":%u,\"creator_command_id\":%u,\"created_ts_monotonic_ns\":%llu,\"close_observed\":%s,\"close_seen_ts_monotonic_ns\":%llu,\"active_domain_count\":%zu,\"snapshot_size\":%zu,\"snapshot_index\":%zu}\n",
+            static_cast<unsigned long long>(g_run_tick),
+            static_cast<unsigned long long>(GetMonotonicNs()),
+            service_name_text,
+            static_cast<unsigned long long>(session_entry.client_info.process_id.value),
+            client_program_id,
+            static_cast<unsigned long long>(session_id),
+            entry.object_id,
+            object_path,
+            phase != nullptr ? phase : "unknown",
+            entry.relative_path,
+            entry.parent_object_id,
+            entry.creator_command_id,
+            static_cast<unsigned long long>(entry.created_ts_ns),
+            entry.close_observed ? "true" : "false",
+            static_cast<unsigned long long>(entry.close_seen_ts_ns),
+            active_count,
+            active_count,
+            i);
+        if (written > 0) {
+            AppendJsonLineForService(service_name_text, line);
+        }
+    }
+}
+
 void RegisterMonitorHooks() {
     ams::sf::hipc::mitm_monitor::SetSmLifecycleTraceCallback(LogSmLifecycle);
+    ams::sf::hipc::mitm_monitor::SetAcceptTraceCallback(LogAcceptTrace);
     ams::sf::hipc::mitm_monitor::SetDispatchTraceCallback(LogDispatchTrace);
     ams::sf::hipc::mitm_monitor::SetSessionTraceCallback(LogSessionTrace);
     ams::sf::hipc::mitm_monitor::SetForwardRequestTraceCallback(OnForwardRequestTrace);

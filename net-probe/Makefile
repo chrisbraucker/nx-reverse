@@ -23,11 +23,13 @@ LIBNAMES	:=	lib/Atmosphere-libs/libstratosphere
 
 APP_VERSION	:= 0.0.1-dev
 BUILD_ID	:= $(shell git describe --always --dirty 2>/dev/null || echo "unknown")
+EXTRA_DEFINES ?=
 
 DEFINES	+=	-DDISABLE_IPC -D__SWITCH__ \
 	-DTARGET="\"$(TARGET)\"" \
 	-DVERSION="\"$(APP_VERSION)\"" \
-	-DBUILD_ID="\"$(BUILD_ID)\""
+	-DBUILD_ID="\"$(BUILD_ID)\"" \
+	$(EXTRA_DEFINES)
 
 CFLAGS	+= $(INCLUDE) -Wno-unused-result
 CXXFLAGS += $(CFLAGS) -std=c++23

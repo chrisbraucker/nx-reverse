@@ -292,6 +292,11 @@ Operational decision for now:
   `eupld`
 - this keeps boot stable while the tracer continues collecting from less
   sensitive `bsd:s` clients
+- `net-probe` now also has build-time diagnostic overrides so those clients can
+  be re-enabled one at a time without deleting the stable default denylist
+  policy:
+  - `make EXTRA_DEFINES='-DWGNX_DIAG_ALLOW_BSD_SYSTEM_OLSC=1'`
+  - related toggles exist for `npns`, `eupld`, `qlaunch`, and the `ssl` family
 
 This note is guidance from observed traces, not a proven root cause yet.
   - only observed creating the root child with cmd `5`
@@ -1481,3 +1486,251 @@ Expected value of the next run:
   semantic record
 - manual offline correlation against the `.bin` stream should be needed less
   often for routine `bsd:s` socket-state analysis
+
+## 2026-07-06: `bsd:s` lifecycle instrumentation for repeated-client freezes
+
+Latest `bsd:s`-only traces point away from a simple socket-command forwarding
+bug and toward a session/domain lifecycle issue.
+
+Observed shape from the failing `sphaira` sequence:
+
+- first `sphaira` launch reaches `bsd:s`, opens two MITM sessions, performs
+  normal `RegisterClient` / `StartMonitoring` / socket activity, and exits
+- the later freeze happens before the second launch reaches `bsd:s` at all
+- standalone `requester` traffic can still succeed in runs where the repeated
+  `sphaira` launch later freezes
+
+Working hypothesis:
+
+- the first `bsd:s` client leaves behind poisoned lifecycle state
+- the highest-value suspects remain:
+  - cloned forward-handle ownership
+  - domain-object teardown
+  - monitoring child-object teardown after `StartMonitoring`
+
+Tracer refinement added for this phase:
+
+- per-domain-object state records:
+  - creation path
+  - parent object ID
+  - creator command ID
+  - creation timestamp
+  - whether a `DispatchClose` was observed
+- per-session domain snapshots at disconnect time
+- passive-service destructor logging of the forward `Service` state
+- a low-rate watchdog that emits session and domain snapshots every two seconds
+  while MITM sessions are still active
+
+Practical goal of the next runs:
+
+- verify whether the first `sphaira` launch leaves any tracked `bsd:s` domain
+  objects alive at disconnect
+- compare the clean `requester` path against the repeated-client freeze path
+- determine whether the sensitive state is rooted in the short
+  `StartMonitoring` child session or in the main `RegisterClient` session
+
+## 2026-07-07: `CloneCurrentObject` overtakes `StartMonitoring` as primary `bsd:s` suspect
+
+The next static + runtime pass tightened the `bsd:s` picture enough to narrow
+the repeated-client freeze further.
+
+Runtime shape from the failing `sphaira` sequence:
+
+- `bsd:s` accepts two MITM sessions from `sphaira`
+- session `1` performs:
+  - `RegisterClient`
+  - repeated `CloneCurrentObject`
+  - normal socket-facing activity (`Socket`, `Fcntl`, `SetSockOpt`, `Bind`,
+    `Listen`, later another `Socket`)
+- session `2` performs only:
+  - `StartMonitoring`
+- the two observed `CloneCurrentObject` calls on session `1` each return one
+  move handle
+- later freezes still tend to happen before a second launch reaches fresh
+  `bsd:s` traffic at all
+
+Static reversing in `bsdsockets_main` now lines up with that shape:
+
+- `FUN_71000e41d0` is the `bsd:s` `StartMonitoring` wrapper
+  - it sends plain root cmd `1`
+  - it does not set up any returned child object or duplicate handle path
+- `FUN_71000e43f4` and `FUN_71000e487c` are representative `bsd:s` wrapper
+  methods that:
+  - lazily obtain a duplicate handle through `FUN_71000d7900`
+  - cache it in the wrapper object
+  - then issue the real socket-facing command over that duplicate
+- `FUN_71000d7900` is only a thin wrapper over `FUN_71000d8480`
+- `FUN_71000d79a0` is the sibling helper that calls `FUN_71000d7d00`
+- `FUN_71000d7d00` updates a caller-owned duplicate-handle slot
+- `FUN_71000d8050` explicitly replaces previous stored handles and closes old
+  ones via `FUN_71000c7c50`
+
+That shifts the working hypothesis:
+
+- `StartMonitoring` is still relevant as a secondary lifecycle signal, but it
+  is no longer the best explanation for the freeze by itself
+- the stronger suspect is now cloned forward-handle lifecycle on the main
+  `bsd:s` session
+  - duplicate-handle creation
+  - duplicate-handle replacement
+  - duplicate-handle teardown on wrapper destruction / client exit
+
+Practical implication for the tracer:
+
+- generic domain snapshots are no longer enough on their own
+- the next useful instrumentation should track, per `bsd:s` session:
+  - every successful `CloneCurrentObject` / `CloneCurrentObjectEx`
+  - the returned move handle
+  - the outstanding duplicate count at disconnect time
+  - whether later control-path events still target a session that should have
+    been fully torn down
+
+## 2026-07-07: new requester/requester vs sphaira/sphaira evidence
+
+Fresh runtime comparison tightened the clone hypothesis further.
+
+`requester -> requester`:
+
+- both requester runs completed cleanly
+- under the `bsd:s`-only probe shape used for this run, the `bsd:s` trace never
+  progressed into the clone-heavy session pattern seen with `sphaira`
+- this means requester is currently not a reliable reproducer for the
+  `bsd:s` repeated-launch wedge
+
+`sphaira -> sphaira`:
+
+- the first `sphaira` launch again accepted two `bsd:s` MITM sessions
+- the main logical session (`session_id = 1`) issued two successful
+  `CloneCurrentObject` calls
+- at disconnect time, the tracer still saw two outstanding clone records on
+  that logical session
+- the same logical session later emitted three close callbacks with different
+  server-side session handles
+  - this matches the expected shape of one original accepted MITM session plus
+    two clone-created MITM sessions
+- the second `sphaira` launch froze before any fresh `AcceptMitmConnection`
+  record appeared in the probe log
+
+That runtime shape aligns with the passive MITM implementation in the vendored
+Atmosphere-libs:
+
+- `CloneCurrentObjectImpl()` in
+  `sf_hipc_server_domain_session_manager.cpp` creates a fresh kernel session
+  pair with `hipc::CreateSession()`
+- for MITM sessions, it clones the upstream forward `Service` with
+  `serviceClone()`
+- it then registers the clone through `RegisterMitmSession(...)`
+- importantly, the cloned session is registered with the same logical
+  `m_mitm_session_id` used for monitor callbacks
+
+Implication:
+
+- the existing trace compression by logical `session_id` hides clone-created
+  MITM sessions as siblings of the original root session
+- the next targeted tracer needs to emit clone-registration events with the
+  newly created server session handle and cloned forward handle so those later
+  close callbacks can be matched to concrete clone registrations
+
+## 2026-07-07: updated `sphaira -> exit -> sphaira` teardown evidence
+
+Fresh run:
+
+- `workspace/reports/nxrv/probe/probe-mitm-bsd.jsonl`
+- `workspace/reports/nxrv/probe/net-probe.log`
+
+Observed:
+
+- only the first `sphaira` launch reaches `bsd:s`
+- the run accepts exactly two root MITM sessions:
+  - logical session `1`: main `bsd:s` root traffic
+  - logical session `2`: short `StartMonitoring` side session
+- logical session `1` issues two successful `CloneCurrentObject` calls
+- later close order is:
+  - clone session handle `688238`
+  - clone session handle `786541`
+  - root/monitor session handle `622705` for logical session `2`
+  - root/main session handle `524403` for logical session `1`
+- `PassiveMitmService` destructor logs appear for logical session `2` and then
+  `1`
+- no second-launch `ShouldMitm(bsd:s)` / `AcceptMitmConnection(bsd:s)` appears
+  after the first launch has torn down
+
+Current interpretation:
+
+- with present visibility, the first `sphaira` launch does complete its MITM-side
+  teardown
+- the freeze therefore moved from “missing disconnect callback” to “post-teardown
+  state still prevents a new `bsd:s` client from being created or acknowledged”
+- the next tracer improvement is to log root accepted session handles explicitly,
+  alongside clone-created session handles, so later disconnect/destructor events can
+  be mapped without inferring which handle belonged to the original accepted MITM
+  sessions
+
+## 2026-07-09: source-level `sphaira` + libnx correlation for `bsd:s`
+
+To reduce guesswork around the repeated-launch `bsd:s` wedge, the current
+upstream `sphaira` source and upstream libnx socket runtime were reviewed as
+guidance. This is not yet proof that the on-device `sphaira` binary matches the
+same revision exactly, but the recovered startup shape aligns closely with the
+live traces.
+
+Source-level chain:
+
+- `sphaira/source/main.cpp`
+  - `userAppInit()` calls:
+    - `socketInitialize(&socket_config)`
+    - `nifmInitialize(NifmServiceType_User)`
+  - both applet and application configs set:
+    - `num_bsd_sessions = 3`
+    - `bsd_service_type = BsdServiceType_Auto`
+- `sphaira/source/app.cpp`
+  - `App` initialization calls `curl::Init()`
+- `sphaira/source/download.cpp`
+  - `curl::Init()`:
+    - runs `curl_global_init()`
+    - creates one queue thread
+    - creates `MAX_THREADS = 4` worker threads
+    - creates one shared curl object with shared DNS / SSL-session /
+      connection state
+- `sphaira/source/ui/menus/main_menu.cpp`
+  - `MainMenu::MainMenu()` immediately starts an async HTTPS request to GitHub
+    releases metadata
+- `sphaira/source/ui/menus/menu_base.cpp`
+  - the UI polls `nifmGetInternetConnectionStatus()` and
+    `nifmGetCurrentIpAddress()` about once per second for the status banner
+
+libnx-side meaning of that startup:
+
+- `nx/source/runtime/devices/socket.c`
+  - `socketInitialize()` forwards `num_bsd_sessions` into `bsdInitialize()`
+- `nx/source/services/bsd.c`
+  - `_bsdInitialize()`:
+    - opens root `bsd:*`
+    - opens a second monitor `bsd:*`
+    - issues `RegisterClient` on the root session
+    - issues `StartMonitoring` on the monitor session
+    - then calls `sessionmgrCreate(...)`
+- `nx/source/sf/sessionmgr.c`
+  - `sessionmgrCreate()` stores the root session in slot `0`
+  - for every remaining slot, it issues `cmifCloneCurrentObject(root_session, ...)`
+
+That directly explains the main runtime shape we keep seeing from `sphaira`:
+
+- one main root `bsd:s` session
+- one short `StartMonitoring` root `bsd:s` session
+- two `CloneCurrentObject` calls on the main root session
+
+For `num_bsd_sessions = 3`, those two clone calls are expected libnx behavior,
+not an application-specific anomaly.
+
+Updated interpretation:
+
+- the current `sphaira` reproducer is valuable because it exercises the normal
+  libnx BSD session pool shape plus immediate async network work
+- the repeated-launch failure is now more likely inside passive MITM lifecycle
+  compatibility with libnx session pooling than in Sphaira-specific socket code
+- the next targeted tracer still needs to focus on:
+  - accepted root-session ownership
+  - clone-session registration / close ordering
+  - whether post-teardown state blocks a later client before a fresh
+    `AcceptMitmConnection(bsd:s)` occurs

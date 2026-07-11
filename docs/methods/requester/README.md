@@ -80,6 +80,15 @@ The requester should run as follows:
 8. wait a short grace period
 9. exit cleanly
 
+Current implementation detail:
+
+- the requester now uses a Sphaira-like `socketInitialize(...)` configuration
+  with `num_bsd_sessions = 3` and `BsdServiceType_Auto`
+- it also initializes `libcurl` and runs explicit libcurl-backed HTTP/HTTPS
+  scenarios in addition to the existing raw socket and Horizon `ssl:*` paths
+- this exists specifically to see whether the `bsd:s` second-launch failure can
+  be reproduced with a smaller, controlled client before patching Sphaira
+
 The grace period should default to about 3 seconds. Its purpose is:
 
 - allow the user to read the console summary

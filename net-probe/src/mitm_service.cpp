@@ -2,6 +2,7 @@
 
 #include <stratosphere.hpp>
 
+#include "build_config.hpp"
 #include "logger.hpp"
 #include "mitm_trace.hpp"
 
@@ -16,12 +17,127 @@ namespace wgnx::net_probe::mitm {
 
 constexpr ::ams::ncm::ProgramId WireguardProgramId{0x010000000000EAD0ul};
 constexpr ::ams::ncm::ProgramId NetProbeProgramId{0x010000000000EAD1ul};
+constexpr ::ams::ncm::ProgramId BsdSocketsProgramId = ::ams::ncm::SystemProgramId::BsdSockets;
 constexpr ::ams::ncm::ProgramId NpnsProgramId = ::ams::ncm::SystemProgramId::Npns;
 constexpr ::ams::ncm::ProgramId EupldProgramId = ::ams::ncm::SystemProgramId::Eupld;
 constexpr ::ams::ncm::ProgramId OlscProgramId = ::ams::ncm::SystemProgramId::Olsc;
+constexpr ::ams::ncm::ProgramId SslProgramId = ::ams::ncm::SystemProgramId::Ssl;
+constexpr ::ams::ncm::ProgramId NimProgramId = ::ams::ncm::SystemProgramId::Nim;
 constexpr ::ams::ncm::ProgramId QlaunchProgramId{0x0100000000001000ul};
 
 namespace {
+
+namespace cfg = ::wgnx::net_probe::build_config;
+
+const char *GetProgramDebugName(::ams::ncm::ProgramId program_id) {
+    if (program_id == WireguardProgramId) {
+        return "wireguard-nx";
+    }
+    if (program_id == NetProbeProgramId) {
+        return "net-probe";
+    }
+    if (program_id == BsdSocketsProgramId) {
+        return "bsdsockets";
+    }
+    if (program_id == NpnsProgramId) {
+        return "npns";
+    }
+    if (program_id == EupldProgramId) {
+        return "eupld";
+    }
+    if (program_id == OlscProgramId) {
+        return "olsc";
+    }
+    if (program_id == SslProgramId) {
+        return "ssl";
+    }
+    if (program_id == NimProgramId) {
+        return "nim";
+    }
+    if (program_id == QlaunchProgramId) {
+        return "qlaunch";
+    }
+
+    switch (program_id.value) {
+        case ::ams::ncm::SystemProgramId::Am.value:
+            return "am";
+        case ::ams::ncm::SystemProgramId::Ssl.value:
+            return "ssl";
+        case ::ams::ncm::SystemProgramId::Nim.value:
+            return "nim";
+        case ::ams::ncm::SystemProgramId::Pctl.value:
+            return "pctl";
+        default:
+            return "unknown";
+    }
+}
+
+bool IsDiagnosticOverrideEnabled(const ::ams::sm::MitmProcessInfo &client_info, const char *service_name) {
+    if (std::strcmp(service_name, "bsd:s") == 0) {
+        if (client_info.program_id == NpnsProgramId) {
+            return cfg::AllowBsdSystemNpns;
+        }
+        if (client_info.program_id == EupldProgramId) {
+            return cfg::AllowBsdSystemEupld;
+        }
+        if (client_info.program_id == OlscProgramId) {
+            return cfg::AllowBsdSystemOlsc;
+        }
+        if (client_info.program_id == BsdSocketsProgramId) {
+            return cfg::AllowBsdSystemBsdSockets;
+        }
+        if (client_info.program_id == SslProgramId) {
+            return cfg::AllowBsdSystemSsl;
+        }
+        if (client_info.program_id == NimProgramId) {
+            return cfg::AllowBsdSystemNim;
+        }
+    }
+
+    if (std::strcmp(service_name, "bsd:a") == 0) {
+        if (client_info.program_id == QlaunchProgramId) {
+            return cfg::AllowBsdAdminQlaunch;
+        }
+    }
+
+    if (std::strcmp(service_name, "ssl") == 0 || std::strcmp(service_name, "ssl:s") == 0) {
+        if (client_info.program_id == NpnsProgramId) {
+            return cfg::AllowSslNpns;
+        }
+        if (client_info.program_id == EupldProgramId) {
+            return cfg::AllowSslEupld;
+        }
+        if (client_info.program_id == OlscProgramId) {
+            return cfg::AllowSslOlsc;
+        }
+    }
+
+    return false;
+}
+
+void LogBuildPolicy() {
+    wgnx::net_probe::logger::Log(
+        "MITM targets: nifm:u=%u nifm:s=%u bsd:u=%u bsd:s=%u bsd:a=%u ssl=%u ssl:s=%u",
+        static_cast<unsigned>(cfg::EnableMitmNifmUser),
+        static_cast<unsigned>(cfg::EnableMitmNifmSystem),
+        static_cast<unsigned>(cfg::EnableMitmBsdUser),
+        static_cast<unsigned>(cfg::EnableMitmBsdSystem),
+        static_cast<unsigned>(cfg::EnableMitmBsdAdmin),
+        static_cast<unsigned>(cfg::EnableMitmSslUser),
+        static_cast<unsigned>(cfg::EnableMitmSslSystem));
+    wgnx::net_probe::logger::Log(
+        "Diagnostic overrides: bsd:s[npns=%u eupld=%u olsc=%u bsdsockets=%u ssl=%u nim=%u] bsd:a[qlaunch=%u] ssl[npns=%u eupld=%u olsc=%u]",
+        static_cast<unsigned>(cfg::AllowBsdSystemNpns),
+        static_cast<unsigned>(cfg::AllowBsdSystemEupld),
+        static_cast<unsigned>(cfg::AllowBsdSystemOlsc),
+        static_cast<unsigned>(cfg::AllowBsdSystemBsdSockets),
+        static_cast<unsigned>(cfg::AllowBsdSystemSsl),
+        static_cast<unsigned>(cfg::AllowBsdSystemNim),
+        static_cast<unsigned>(cfg::AllowBsdAdminQlaunch),
+        static_cast<unsigned>(cfg::AllowSslNpns),
+        static_cast<unsigned>(cfg::AllowSslEupld),
+        static_cast<unsigned>(cfg::AllowSslOlsc));
+}
 
 alignas(::ams::os::MemoryPageSize) constinit u8 g_mitm_object_heap[32 * 1024];
 constinit ::ams::lmem::HeapHandle g_mitm_object_heap_handle = nullptr;
@@ -33,6 +149,7 @@ constinit ::ams::os::EventType g_shutdown_requested_event = {};
 constinit ::ams::os::EventType g_control_thread_ready_event = {};
 constinit ::ams::os::EventType g_mitm_thread_ready_event = {};
 constinit ::ams::os::EventType g_boot_watch_thread_ready_event = {};
+constinit ::ams::os::EventType g_watchdog_thread_ready_event = {};
 constinit bool g_shutdown_event_initialized = false;
 constinit bool g_thread_ready_events_initialized = false;
 constinit bool g_shutdown_requested = false;
@@ -62,9 +179,39 @@ void EnsureMitmObjectAllocatorInitialized() {
 }
 
 class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
+    private:
+        ::ams::sm::ServiceName m_service_name{};
+        u64 m_session_id{0};
+
     public:
         PassiveMitmService(std::shared_ptr<::Service> &&forward_service, const ::ams::sm::MitmProcessInfo &client_info)
             : ::ams::sf::MitmServiceImplBase(std::move(forward_service), client_info) {
+        }
+
+        PassiveMitmService(
+            std::shared_ptr<::Service> &&forward_service,
+            const ::ams::sm::MitmProcessInfo &client_info,
+            const ::ams::sm::ServiceName &service_name,
+            u64 session_id)
+            : ::ams::sf::MitmServiceImplBase(std::move(forward_service), client_info),
+              m_service_name(service_name),
+              m_session_id(session_id) {
+        }
+
+        ~PassiveMitmService() {
+            if (this->m_forward_service != nullptr) {
+                mitm_trace::LogForwardServiceState(
+                    m_service_name,
+                    this->m_client_info,
+                    m_session_id,
+                    "service_destructor",
+                    this->m_forward_service->session,
+                    this->m_forward_service->own_handle,
+                    this->m_forward_service->object_id,
+                    this->m_forward_service->pointer_buffer_size);
+            }
+
+            mitm_trace::LogDomainSnapshotForSession(m_session_id, "service_destructor");
         }
 
         static bool IsSelfProgram(const ::ams::sm::MitmProcessInfo &client_info) {
@@ -74,7 +221,10 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
         static bool IsBsdSystemDenylistedProgram(const ::ams::sm::MitmProcessInfo &client_info) {
             return client_info.program_id == NpnsProgramId
                 || client_info.program_id == EupldProgramId
-                || client_info.program_id == OlscProgramId;
+                || client_info.program_id == OlscProgramId
+                || client_info.program_id == BsdSocketsProgramId
+                || client_info.program_id == SslProgramId
+                || client_info.program_id == NimProgramId;
         }
 
         static bool IsBsdAdminDenylistedProgram(const ::ams::sm::MitmProcessInfo &client_info) {
@@ -84,10 +234,11 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
         static bool ShouldMitmForService(const char *service_name, const ::ams::sm::MitmProcessInfo &client_info) {
             const bool should_mitm = !IsSelfProgram(client_info);
             wgnx::net_probe::logger::Log(
-                "ShouldMitm(%s): pid=0x%016llx program_id=0x%016llx result=%u",
+                "ShouldMitm(%s): pid=0x%016llx program_id=0x%016llx (%s) result=%u",
                 service_name,
                 static_cast<unsigned long long>(client_info.process_id.value),
                 static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id),
                 should_mitm ? 1u : 0u);
             return should_mitm;
         }
@@ -107,18 +258,28 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
         static bool ShouldMitmBsdSystem(const ::ams::sm::MitmProcessInfo &client_info) {
             if (IsSelfProgram(client_info)) {
                 wgnx::net_probe::logger::Log(
-                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx skipped=self",
+                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
                     static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value));
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
                 return false;
             }
 
-            if (IsBsdSystemDenylistedProgram(client_info)) {
+            if (IsBsdSystemDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "bsd:s")) {
                 wgnx::net_probe::logger::Log(
-                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx skipped=denylist",
+                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
                     static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value));
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
                 return false;
+            }
+
+            if (IsDiagnosticOverrideEnabled(client_info, "bsd:s")) {
+                wgnx::net_probe::logger::Log(
+                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
+                    static_cast<unsigned long long>(client_info.process_id.value),
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
             }
 
             return ShouldMitmForService("bsd:s", client_info);
@@ -127,18 +288,28 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
         static bool ShouldMitmBsdAdmin(const ::ams::sm::MitmProcessInfo &client_info) {
             if (IsSelfProgram(client_info)) {
                 wgnx::net_probe::logger::Log(
-                    "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx skipped=self",
+                    "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
                     static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value));
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
                 return false;
             }
 
-            if (IsBsdAdminDenylistedProgram(client_info)) {
+            if (IsBsdAdminDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "bsd:a")) {
                 wgnx::net_probe::logger::Log(
-                    "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx skipped=denylist",
+                    "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
                     static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value));
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
                 return false;
+            }
+
+            if (IsDiagnosticOverrideEnabled(client_info, "bsd:a")) {
+                wgnx::net_probe::logger::Log(
+                    "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
+                    static_cast<unsigned long long>(client_info.process_id.value),
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
             }
 
             return ShouldMitmForService("bsd:a", client_info);
@@ -147,18 +318,28 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
         static bool ShouldMitmSslUser(const ::ams::sm::MitmProcessInfo &client_info) {
             if (IsSelfProgram(client_info)) {
                 wgnx::net_probe::logger::Log(
-                    "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx skipped=self",
+                    "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
                     static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value));
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
                 return false;
             }
 
-            if (IsBsdSystemDenylistedProgram(client_info)) {
+            if (IsBsdSystemDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "ssl")) {
                 wgnx::net_probe::logger::Log(
-                    "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx skipped=denylist",
+                    "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
                     static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value));
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
                 return false;
+            }
+
+            if (IsDiagnosticOverrideEnabled(client_info, "ssl")) {
+                wgnx::net_probe::logger::Log(
+                    "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
+                    static_cast<unsigned long long>(client_info.process_id.value),
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
             }
 
             return ShouldMitmForService("ssl", client_info);
@@ -167,18 +348,28 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
         static bool ShouldMitmSslSystem(const ::ams::sm::MitmProcessInfo &client_info) {
             if (IsSelfProgram(client_info)) {
                 wgnx::net_probe::logger::Log(
-                    "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx skipped=self",
+                    "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
                     static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value));
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
                 return false;
             }
 
-            if (IsBsdSystemDenylistedProgram(client_info)) {
+            if (IsBsdSystemDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "ssl:s")) {
                 wgnx::net_probe::logger::Log(
-                    "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx skipped=denylist",
+                    "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
                     static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value));
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
                 return false;
+            }
+
+            if (IsDiagnosticOverrideEnabled(client_info, "ssl:s")) {
+                wgnx::net_probe::logger::Log(
+                    "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
+                    static_cast<unsigned long long>(client_info.process_id.value),
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id));
             }
 
             return ShouldMitmForService("ssl:s", client_info);
@@ -229,17 +420,19 @@ struct MitmTargetConfig {
 };
 
 constexpr MitmTargetConfig g_mitm_target_configs[PortIndex_Count] = {
-    { "nifm:u", &PassiveMitmService::ShouldMitmNifmUser, true },
-    { "nifm:s", &PassiveMitmService::ShouldMitmNifmSystem, true },
-    { "bsd:u",  &PassiveMitmService::ShouldMitmBsdUser, true },
-    { "bsd:s",  &PassiveMitmService::ShouldMitmBsdSystem, true },
-    { "bsd:a",  &PassiveMitmService::ShouldMitmBsdAdmin, false },
-    { "ssl",    &PassiveMitmService::ShouldMitmSslUser, true },
-    { "ssl:s",  &PassiveMitmService::ShouldMitmSslSystem, true },
+    { "nifm:u", &PassiveMitmService::ShouldMitmNifmUser, cfg::EnableMitmNifmUser },
+    { "nifm:s", &PassiveMitmService::ShouldMitmNifmSystem, cfg::EnableMitmNifmSystem },
+    { "bsd:u",  &PassiveMitmService::ShouldMitmBsdUser, cfg::EnableMitmBsdUser },
+    { "bsd:s",  &PassiveMitmService::ShouldMitmBsdSystem, cfg::EnableMitmBsdSystem },
+    { "bsd:a",  &PassiveMitmService::ShouldMitmBsdAdmin, cfg::EnableMitmBsdAdmin },
+    { "ssl",    &PassiveMitmService::ShouldMitmSslUser, cfg::EnableMitmSslUser },
+    { "ssl:s",  &PassiveMitmService::ShouldMitmSslSystem, cfg::EnableMitmSslSystem },
 };
 
 constexpr size_t NumSessions = 48;
 constexpr size_t ControlMaxSessions = 4;
+
+void LogMitmServerManagerState(const char *phase);
 
 class MitmServerManager final : public ::ams::sf::hipc::ServerManager<PortIndex_Count, MitmServerOptions, NumSessions> {
     private:
@@ -304,7 +497,9 @@ class MitmServerManager final : public ::ams::sf::hipc::ServerManager<PortIndex_
             auto service_object = ::ams::sf::CreateSharedObjectEmplaced<IPassiveMitmService, PassiveMitmService>(
                 static_cast<::ams::MemoryResource *>(std::addressof(g_mitm_object_memory_resource)),
                 std::move(local_forward),
-                client_info);
+                client_info,
+                service_name,
+                session_id);
             wgnx::net_probe::logger::Log("AcceptMitmConnection(%s): calling AcceptMitmImpl session_id=%llu", service_name_text, static_cast<unsigned long long>(session_id));
 
             if (forward_service != nullptr) {
@@ -327,6 +522,7 @@ class MitmServerManager final : public ::ams::sf::hipc::ServerManager<PortIndex_
 
             wgnx::net_probe::logger::Log("AcceptMitmConnection(%s): AcceptMitmImpl succeeded session_id=%llu", service_name_text, static_cast<unsigned long long>(session_id));
             mitm_trace::LogSessionConnected(service_name, session_id, client_info);
+            LogMitmServerManagerState("accept_success");
             R_SUCCEED();
         }
 
@@ -348,9 +544,12 @@ alignas(::ams::os::ThreadStackAlignment) constinit u8 g_control_server_thread_st
 constinit ::ams::os::ThreadType g_control_server_thread;
 alignas(::ams::os::ThreadStackAlignment) constinit u8 g_boot_watch_thread_stack[8 * 1024];
 constinit ::ams::os::ThreadType g_boot_watch_thread;
+alignas(::ams::os::ThreadStackAlignment) constinit u8 g_watchdog_thread_stack[64 * 1024];
+constinit ::ams::os::ThreadType g_watchdog_thread;
 constinit bool g_mitm_thread_started = false;
 constinit bool g_control_thread_started = false;
 constinit bool g_boot_watch_thread_started = false;
+constinit bool g_watchdog_thread_started = false;
 constinit bool g_servers_started = false;
 
 constexpr const char *g_boot_watch_services[] = {
@@ -360,6 +559,37 @@ constexpr const char *g_boot_watch_services[] = {
 };
 constexpr auto BootWatchSampleInterval = ::ams::TimeSpan::FromSeconds(10);
 constexpr size_t BootWatchSampleCount = 6;
+constexpr auto WatchdogSampleInterval = ::ams::TimeSpan::FromSeconds(2);
+constexpr size_t WatchdogPostTeardownSampleCount = 6;
+
+void LogMitmServerManagerState(const char *phase) {
+    if (g_mitm_server_manager == nullptr) {
+        wgnx::net_probe::logger::Log("MITM manager state: phase=%s unavailable=1", phase);
+        return;
+    }
+
+    const auto resources = g_mitm_server_manager->GetDebugResourceState();
+    const auto wait_state = g_mitm_server_manager->GetDebugMultiWaitState();
+    wgnx::net_probe::logger::Log(
+        "MITM manager state: phase=%s resources[sessions=%zu/%zu servers=%zu/%zu domains=%zu/%zu] active_wait[total=%zu server=%zu session=%zu mitm=%zu other=%zu] deferred_wait[total=%zu server=%zu session=%zu mitm=%zu other=%zu]",
+        phase,
+        resources.allocated_sessions,
+        resources.max_sessions,
+        resources.allocated_servers,
+        resources.max_servers,
+        resources.allocated_domains,
+        resources.max_domains,
+        wait_state.active.total,
+        wait_state.active.server,
+        wait_state.active.session,
+        wait_state.active.mitm_server,
+        wait_state.active.other,
+        wait_state.deferred.total,
+        wait_state.deferred.server,
+        wait_state.deferred.session,
+        wait_state.deferred.mitm_server,
+        wait_state.deferred.other);
+}
 
 void MitmServerThreadMain(void *) {
     ::ams::os::SignalEvent(std::addressof(g_mitm_thread_ready_event));
@@ -387,6 +617,15 @@ void LogHasMitmState(const char *service_name, const char *phase) {
 
 void LogAllHasMitmStates(const char *phase) {
     for (const auto &target : g_mitm_target_configs) {
+        LogHasMitmState(target.service_name, phase);
+    }
+}
+
+void LogEnabledTargetHasMitmStates(const char *phase) {
+    for (const auto &target : g_mitm_target_configs) {
+        if (!target.enabled) {
+            continue;
+        }
         LogHasMitmState(target.service_name, phase);
     }
 }
@@ -425,6 +664,48 @@ void BootWatchThreadMain(void *) {
     }
 
     wgnx::net_probe::logger::Log("BootWatch thread completed");
+}
+
+void WatchdogThreadMain(void *) {
+    ::ams::os::SignalEvent(std::addressof(g_watchdog_thread_ready_event));
+    wgnx::net_probe::logger::Log(
+        "Watchdog thread started: interval_ms=%lld",
+        static_cast<long long>(WatchdogSampleInterval.GetMilliSeconds()));
+
+    size_t sample_index = 0;
+    size_t previous_tracked_session_count = 0;
+    size_t post_teardown_samples_remaining = 0;
+    while (true) {
+        if (::ams::os::TimedWaitEvent(std::addressof(g_shutdown_requested_event), WatchdogSampleInterval)) {
+            wgnx::net_probe::logger::Log("Watchdog thread exiting due to shutdown request");
+            return;
+        }
+
+        const size_t tracked_session_count = mitm_trace::GetTrackedSessionCount();
+        if (previous_tracked_session_count != 0 && tracked_session_count == 0) {
+            post_teardown_samples_remaining = WatchdogPostTeardownSampleCount;
+        }
+
+        const bool should_log = tracked_session_count != 0 || post_teardown_samples_remaining != 0;
+        previous_tracked_session_count = tracked_session_count;
+        if (!should_log) {
+            continue;
+        }
+
+        char phase[64];
+        std::snprintf(phase, sizeof(phase), "watchdog_%zu", sample_index++);
+        wgnx::net_probe::logger::Log(
+            "Watchdog snapshot: phase=%s tracked_sessions=%zu",
+            phase,
+            tracked_session_count);
+        LogMitmServerManagerState(phase);
+        mitm_trace::LogSessionSnapshot(phase);
+        mitm_trace::LogDomainSnapshot(phase);
+
+        if (tracked_session_count == 0 && post_teardown_samples_remaining != 0) {
+            --post_teardown_samples_remaining;
+        }
+    }
 }
 
 void ClearResidualMitmState(const char *service_name, const char *phase) {
@@ -505,6 +786,7 @@ void EnsureThreadReadyEventsInitialized() {
     ::ams::os::InitializeEvent(std::addressof(g_control_thread_ready_event), false, ::ams::os::EventClearMode_ManualClear);
     ::ams::os::InitializeEvent(std::addressof(g_mitm_thread_ready_event), false, ::ams::os::EventClearMode_ManualClear);
     ::ams::os::InitializeEvent(std::addressof(g_boot_watch_thread_ready_event), false, ::ams::os::EventClearMode_ManualClear);
+    ::ams::os::InitializeEvent(std::addressof(g_watchdog_thread_ready_event), false, ::ams::os::EventClearMode_ManualClear);
     g_thread_ready_events_initialized = true;
 }
 
@@ -556,7 +838,19 @@ void StopBootWatchThread() {
     wgnx::net_probe::logger::Log("StopBootWatchThread: boot watch thread stopped");
 }
 
-void StopAndDestroyMitmServerManager(bool log_snapshots) {
+void StopWatchdogThread() {
+    if (!g_watchdog_thread_started) {
+        return;
+    }
+
+    wgnx::net_probe::logger::Log("StopWatchdogThread: waiting for watchdog thread");
+    ::ams::os::WaitThread(std::addressof(g_watchdog_thread));
+    ::ams::os::DestroyThread(std::addressof(g_watchdog_thread));
+    g_watchdog_thread_started = false;
+    wgnx::net_probe::logger::Log("StopWatchdogThread: watchdog thread stopped");
+}
+
+void StopAndDestroyMitmServerManager(bool log_snapshots, bool clear_residual_state = true) {
     if (g_mitm_server_manager == nullptr) {
         return;
     }
@@ -590,7 +884,11 @@ void StopAndDestroyMitmServerManager(bool log_snapshots) {
         mitm_trace::LogSessionSnapshot("after_stop");
     }
 
-    ClearAllResidualMitmStates("after_destroy");
+    if (clear_residual_state) {
+        ClearAllResidualMitmStates("after_destroy");
+    } else {
+        wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: residual MITM clear skipped");
+    }
     wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: complete");
 }
 
@@ -612,10 +910,12 @@ bool StartServers() {
     ::ams::os::ClearEvent(std::addressof(g_control_thread_ready_event));
     ::ams::os::ClearEvent(std::addressof(g_mitm_thread_ready_event));
     ::ams::os::ClearEvent(std::addressof(g_boot_watch_thread_ready_event));
+    ::ams::os::ClearEvent(std::addressof(g_watchdog_thread_ready_event));
     g_shutdown_requested = false;
 
     mitm_trace::Initialize();
     mitm_trace::RegisterMonitorHooks();
+    LogBuildPolicy();
     LogResolverHasMitmStates("pre_register");
 
     wgnx::net_probe::logger::Log("StartServers: constructing control server manager");
@@ -658,16 +958,20 @@ bool StartServers() {
     wgnx::net_probe::logger::Log("StartServers: constructing MITM server manager");
     g_mitm_server_manager = ::ams::util::ConstructAt(g_mitm_server_manager_storage);
 
+    u32 requested_server_count = 0;
     u32 registered_server_count = 0;
+    u32 failed_server_count = 0;
     for (size_t i = 0; i < std::size(g_mitm_target_configs); ++i) {
         const auto &target = g_mitm_target_configs[i];
         if (!target.enabled) {
             wgnx::net_probe::logger::Log(
-                "Skipping MITM server for %s: disabled due to known transparency issues",
+                "Skipping MITM server for %s: disabled by build config",
                 target.service_name);
             continue;
         }
+        ++requested_server_count;
         wgnx::net_probe::logger::Log("Registering MITM server for %s", target.service_name);
+        LogHasMitmState(target.service_name, "before_register_target");
         const ::ams::Result rc = g_mitm_server_manager->RegisterMitmServer(
             static_cast<int>(i),
             ::ams::sm::ServiceName::Encode(target.service_name),
@@ -675,15 +979,28 @@ bool StartServers() {
         if (R_SUCCEEDED(rc)) {
             ++registered_server_count;
             wgnx::net_probe::logger::Log("Registered MITM server for %s", target.service_name);
+            LogHasMitmState(target.service_name, "after_register_target_success");
         } else {
+            ++failed_server_count;
             wgnx::net_probe::logger::Log("RegisterMitmServer(%s) failed rc=0x%08X", target.service_name, rc.GetValue());
+            LogHasMitmState(target.service_name, "after_register_target_failure");
         }
     }
 
     wgnx::net_probe::logger::Log(
-        "Registered MITM servers: requested=%zu active=%u",
-        std::size(g_mitm_target_configs),
-        registered_server_count);
+        "Registered MITM servers: requested=%u active=%u failed=%u",
+        requested_server_count,
+        registered_server_count,
+        failed_server_count);
+
+    if (failed_server_count != 0) {
+        wgnx::net_probe::logger::Log("StartServers: MITM registration failed; tearing down partial MITM state");
+        LogEnabledTargetHasMitmStates("registration_failure_before_teardown");
+        StopAndDestroyMitmServerManager(false, false);
+        StopAndDestroyControlServerManager();
+        LogEnabledTargetHasMitmStates("registration_failure_after_teardown");
+        return false;
+    }
 
     if (registered_server_count == 0) {
         wgnx::net_probe::logger::Log("StartServers: no MITM servers active; skipping server thread");
@@ -733,6 +1050,23 @@ bool StartServers() {
         static_cast<void>(WaitForThreadReady("wgnx-boot-watch", std::addressof(g_boot_watch_thread_ready_event), ThreadReadyTimeout));
     }
 
+    wgnx::net_probe::logger::Log("StartServers: creating watchdog thread");
+    const ::ams::Result watchdog_thread_rc = ::ams::os::CreateThread(
+        std::addressof(g_watchdog_thread),
+        WatchdogThreadMain,
+        nullptr,
+        g_watchdog_thread_stack,
+        sizeof(g_watchdog_thread_stack),
+        19);
+    if (R_FAILED(watchdog_thread_rc)) {
+        wgnx::net_probe::logger::Log("CreateThread(wgnx-watchdog) failed rc=0x%08X", watchdog_thread_rc.GetValue());
+    } else {
+        ::ams::os::SetThreadNamePointer(std::addressof(g_watchdog_thread), "wgnx-watchdog");
+        ::ams::os::StartThread(std::addressof(g_watchdog_thread));
+        g_watchdog_thread_started = true;
+        static_cast<void>(WaitForThreadReady("wgnx-watchdog", std::addressof(g_watchdog_thread_ready_event), ThreadReadyTimeout));
+    }
+
     wgnx::net_probe::logger::Log("StartServers: complete");
     return true;
 }
@@ -765,6 +1099,7 @@ void StopServers() {
 
     wgnx::net_probe::logger::Log("StopServers: begin");
     StopBootWatchThread();
+    StopWatchdogThread();
     StopAndDestroyMitmServerManager(true);
     StopAndDestroyControlServerManager();
 
@@ -772,6 +1107,7 @@ void StopServers() {
     ::ams::os::ClearEvent(std::addressof(g_control_thread_ready_event));
     ::ams::os::ClearEvent(std::addressof(g_mitm_thread_ready_event));
     ::ams::os::ClearEvent(std::addressof(g_boot_watch_thread_ready_event));
+    ::ams::os::ClearEvent(std::addressof(g_watchdog_thread_ready_event));
     g_shutdown_requested = false;
 
     g_servers_started = false;
