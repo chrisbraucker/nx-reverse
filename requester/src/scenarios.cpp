@@ -7,6 +7,7 @@
 #include <cstring>
 #include <string>
 
+#include <curl/curl.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -36,6 +37,11 @@ struct ConnectedTcpSocket {
     std::string ip;
 };
 
+struct CurlResponseBuffer {
+    std::array<char, config::CurlReadBufferSize> data {};
+    std::size_t size = 0;
+};
+
 bool ResolveIpv4(
     AppContext& ctx,
     const char *host,
@@ -43,6 +49,95 @@ bool ResolveIpv4(
     int socktype,
     ResolvedEndpoint& out_endpoint,
     std::string& detail);
+
+size_t CurlWriteCallback(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    auto *buffer = static_cast<CurlResponseBuffer *>(userdata);
+    if (buffer == nullptr || ptr == nullptr) {
+        return 0;
+    }
+
+    const std::size_t total = size * nmemb;
+    const std::size_t remaining = buffer->data.size() - buffer->size;
+    const std::size_t to_copy = std::min(total, remaining);
+    if (to_copy > 0) {
+        std::memcpy(buffer->data.data() + buffer->size, ptr, to_copy);
+        buffer->size += to_copy;
+    }
+    return total;
+}
+
+void ConfigureCurlCommon(CURL *curl, AppContext& ctx) {
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "nxrv-requester/1");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 1024L * 128L);
+    curl_easy_setopt(curl, CURLOPT_UPLOAD_BUFFERSIZE, 1024L * 128L);
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+    curl_easy_setopt(curl, CURLOPT_USE_SSL, static_cast<long>(CURLUSESSL_TRY));
+    curl_easy_setopt(curl, CURLOPT_TRANSFER_ENCODING, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(config::SocketTimeoutMs));
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, static_cast<long>(config::SocketTimeoutMs));
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    if (ctx.curl_share != nullptr) {
+        curl_easy_setopt(curl, CURLOPT_SHARE, ctx.curl_share);
+    }
+}
+
+bool RunCurlTransfer(
+    AppContext& ctx,
+    const char *scenario_name,
+    const char *url,
+    bool allow_insecure_tls,
+    ScenarioResult& result) {
+    if (!ctx.curl_initialized) {
+        result.skipped = true;
+        result.detail = std::string("curl unavailable: ") + curl_easy_strerror(ctx.curl_global_rc);
+        logger::Log(ctx, "scenario=%s skipped: %s", scenario_name, result.detail.c_str());
+        return true;
+    }
+
+    CURL *curl = curl_easy_init();
+    if (curl == nullptr) {
+        result.detail = "curl_easy_init failed";
+        return false;
+    }
+
+    CurlResponseBuffer response {};
+    ConfigureCurlCommon(curl, ctx);
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    if (allow_insecure_tls) {
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    }
+
+    const CURLcode perform_rc = curl_easy_perform(curl);
+    if (perform_rc != CURLE_OK) {
+        result.detail = std::string("curl_easy_perform failed: ") + curl_easy_strerror(perform_rc);
+        curl_easy_cleanup(curl);
+        return false;
+    }
+
+    char *effective_url = nullptr;
+    long response_code = 0;
+    char *primary_ip = nullptr;
+    static_cast<void>(curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effective_url));
+    static_cast<void>(curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code));
+    static_cast<void>(curl_easy_getinfo(curl, CURLINFO_PRIMARY_IP, &primary_ip));
+
+    result.success = true;
+    result.bytes_received = response.size;
+    result.detail =
+        std::string("effective_url=") + (effective_url != nullptr ? effective_url : url) +
+        " primary_ip=" + (primary_ip != nullptr ? primary_ip : "unknown") +
+        " http_code=" + std::to_string(response_code) +
+        " response_preview=" + EscapePreview(response.data.data(), response.size, 160);
+
+    curl_easy_cleanup(curl);
+    return true;
+}
 
 std::string CollectSslVerifyDiagnostics(SslConnection& ssl_connection) {
     std::array<Result, SslVerifyErrorCapacity> verify_errors {};
@@ -613,6 +708,48 @@ ScenarioResult RunHttpsGet(AppContext& ctx) {
     return result;
 }
 
+ScenarioResult RunCurlHttpGet(AppContext& ctx) {
+    ScenarioResult result { .name = "curl_http_get" };
+
+    char url[512];
+    const int url_len = std::snprintf(
+        url,
+        sizeof(url),
+        "http://%s:%u%s",
+        config::HttpHost,
+        config::HttpPort,
+        config::HttpPath);
+    if (url_len <= 0 || static_cast<std::size_t>(url_len) >= sizeof(url)) {
+        result.detail = "url formatting failed";
+        return result;
+    }
+
+    logger::Status(ctx, "Running libcurl HTTP GET for %s", url);
+    static_cast<void>(RunCurlTransfer(ctx, result.name.c_str(), url, false, result));
+    return result;
+}
+
+ScenarioResult RunCurlHttpsGet(AppContext& ctx) {
+    ScenarioResult result { .name = "curl_https_get" };
+
+    char url[512];
+    const int url_len = std::snprintf(
+        url,
+        sizeof(url),
+        "https://%s:%u%s",
+        config::HttpsHost,
+        config::HttpsPort,
+        config::HttpsPath);
+    if (url_len <= 0 || static_cast<std::size_t>(url_len) >= sizeof(url)) {
+        result.detail = "url formatting failed";
+        return result;
+    }
+
+    logger::Status(ctx, "Running libcurl HTTPS GET for %s", url);
+    static_cast<void>(RunCurlTransfer(ctx, result.name.c_str(), url, true, result));
+    return result;
+}
+
 ScenarioResult RunUdpEcho(AppContext& ctx) {
     ScenarioResult result { .name = "udp_echo" };
 
@@ -800,14 +937,16 @@ void RunScenarioStep(
 
 std::vector<ScenarioResult> RunScenarios(AppContext& ctx) {
     std::vector<ScenarioResult> results;
-    results.reserve(8);
+    results.reserve(10);
 
     RunScenarioStep(ctx, results, "dns_resolve", RunEnvironmentSnapshot);
     RunScenarioStep(ctx, results, "plain_tcp_connect", RunDnsResolve);
     RunScenarioStep(ctx, results, "tcp_idle_hold", RunPlainTcpConnect);
     RunScenarioStep(ctx, results, "http_get", RunIdleTcpHold);
     RunScenarioStep(ctx, results, "https_get", RunHttpGet);
-    RunScenarioStep(ctx, results, "udp_echo", RunHttpsGet);
+    RunScenarioStep(ctx, results, "curl_http_get", RunHttpsGet);
+    RunScenarioStep(ctx, results, "curl_https_get", RunCurlHttpGet);
+    RunScenarioStep(ctx, results, "udp_echo", RunCurlHttpsGet);
     RunScenarioStep(ctx, results, "tcp_multi_connect", RunUdpEcho);
     RunScenarioStep(ctx, results, nullptr, RunConcurrentTcpBurst);
 

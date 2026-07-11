@@ -38,7 +38,7 @@ CXXFLAGS := $(CFLAGS) -std=c++23
 ASFLAGS := -g $(ARCH)
 LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-LIBS := -lnx -lm
+LIBS := -lcurl -lz -lnx -lm
 
 LIBDIRS := $(PORTLIBS) $(LIBNX)
 
