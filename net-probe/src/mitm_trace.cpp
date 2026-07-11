@@ -4928,6 +4928,36 @@ void LogSessionTrace(const ams::sf::hipc::mitm_monitor::SessionTraceContext &ctx
                 total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
             }
             break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::NativeHandleClosed:
+            event_name = "session_native_handle_closed";
+            {
+                std::scoped_lock lk(g_state_lock);
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::ProcessForSessionBegin:
+            event_name = "process_for_session_begin";
+            {
+                std::scoped_lock lk(g_state_lock);
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
+        case ams::sf::hipc::mitm_monitor::SessionTraceEventType::ProcessForSessionEnd:
+            event_name = "process_for_session_end";
+            {
+                std::scoped_lock lk(g_state_lock);
+                clone_count = CountTrackedCloneHandlesForSessionLocked(ctx.session_id);
+                remaining_count = CountTrackedSessionsLocked();
+                active_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, true);
+                total_handle_count = CountTrackedSessionHandlesForSessionLocked(ctx.session_id, false);
+            }
+            break;
         case ams::sf::hipc::mitm_monitor::SessionTraceEventType::Close:
             {
                 CloneHandleEntry entries[MaxTrackedCloneHandles] = {};
@@ -5046,7 +5076,10 @@ void LogSessionTrace(const ams::sf::hipc::mitm_monitor::SessionTraceContext &ctx
                ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::ForwardServiceDestroyBegin ||
                ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::ForwardServiceDestroyEnd ||
                ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::DestroyBegin ||
-               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::DestroyEnd) {
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::DestroyEnd ||
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::NativeHandleClosed ||
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::ProcessForSessionBegin ||
+               ctx.event_type == ams::sf::hipc::mitm_monitor::SessionTraceEventType::ProcessForSessionEnd) {
         std::snprintf(
             extra,
             sizeof(extra),

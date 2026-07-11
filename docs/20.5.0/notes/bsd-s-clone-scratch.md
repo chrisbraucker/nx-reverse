@@ -414,3 +414,100 @@ For a later WireGuard sysmodule, this should become a startup invariant rather
 than probe-only behavior: MITM registration must be all-or-nothing, with explicit
 pre/post `HasMitm` evidence and no best-effort continuation after a failed
 critical service registration.
+
+## 2026-07-11 post-teardown watchdog correction
+
+The latest `requester -> wait -> requester` run with only `bsd:s` enabled
+tightened the repeated-launch failure again:
+
+- first requester launch completed and cleaned up from the application's point
+  of view
+- the `bsd:s` trace ended with final `Close` activity and tracker state dropping
+  to zero sessions
+- no second requester bootstrap log appeared
+- no second `ShouldMitm(bsd:s)` / accept event appeared
+
+One important diagnostic caveat was found in the probe itself:
+
+- the watchdog called `GetDebugMultiWaitState()` after teardown
+- that accessor takes the server manager selection mutex
+- the server manager intentionally holds that same mutex while blocked in
+  `WaitAny()`
+- therefore a post-teardown watchdog snapshot can block when the manager is
+  idle, making the diagnostic path unsafe
+
+Patch applied:
+
+- watchdog snapshots now use resource-only manager state plus `HasMitm(...)`
+  checks
+- wait-list snapshots remain available only for synchronous points where they do
+  not contend with the sleeping manager thread
+- vendored Atmosphere-libs now emits lower-level MITM session events:
+  `process_for_session_begin`, `process_for_session_end`, and
+  `session_native_handle_closed`
+
+The next run should answer a narrower lifecycle question:
+
+- does every first-launch session emit `process_for_session_end` and
+  `session_native_handle_closed` after its final close?
+- after tracked sessions drop to zero, does `HasMitm(bsd:s)` remain true while
+  resource counts return to their expected baseline?
+- if both are true and the second launch still hangs before a new accept, the
+  failure point is likely outside command forwarding and outside normal
+  `ServerSession` destruction, probably in the SM/MITM handoff or service
+  connection path for `bsd:s`.
+
+## 2026-07-11 Atmosphere `sm` MITM handoff check
+
+Pinned Atmosphere source was checked out at:
+
+- `workspace/repos/Atmosphere`
+- commit `de9b02007bbfc62f2f9ee2abf4a96bc337f5f86a`
+
+The relevant upstream implementation detail is in
+`stratosphere/sm/source/impl/sm_service_manager.cpp`:
+
+- `GetMitmServiceHandleImpl(...)` calls the MITM query service
+- when `ShouldMitm` returns true, `sm` creates a forward session, connects to
+  the MITM port, then sets `mitm_info->waiting_ack = true`
+- later `GetService` calls for the same service return
+  `tipc::ResultRequestDeferred()` while `waiting_ack` remains true
+- `AcknowledgeMitmSession(...)` clears `waiting_ack` and transfers the forward
+  session handle to the MITM process
+
+This matters for the pre-`main()` second-launch hang: application bootstrap can
+block in service acquisition before requester logging starts if a prior or
+current `bsd:s` handoff leaves `waiting_ack` uncleared. This does not require a
+bad BSD command dispatch; it can happen entirely in the SM/MITM handshake.
+
+Probe changes for the next run:
+
+- `Server::AcknowledgeMitmSession(...)` now returns `Result` instead of
+  aborting on failure
+- existing `server_acknowledge` accept trace phases now bracket the actual SM
+  acknowledge call and include the result
+- `bsd:s` `ShouldMitm` has a temporary fail-closed liveness gate:
+  - returning true increments a local pending count
+  - successful accept/register promotes pending to active
+  - service destruction drops active
+  - while pending or active is nonzero, later `bsd:s` `ShouldMitm` calls return
+    false
+- the gate records decisions through the query trace ring, not file-backed
+  `ShouldMitm` logging
+
+Expected interpretation:
+
+- if the second requester launch now succeeds and the query trace shows
+  `should_mitm_policy_decision` with reason
+  `BsdSystemSessionOutstanding`, the repeated-launch hang is probably caused by
+  a stale or long-lived first `bsd:s` MITM session preventing a safe second
+  handoff
+- if the second launch still hangs and no second `ShouldMitm` appears, `sm` is
+  probably deferring before the query call, which points directly at an uncleared
+  `waiting_ack`
+- if the trace shows `server_acknowledge` begin without end, the MITM accept
+  thread is blocked inside the SM acknowledge call
+- if `server_acknowledge` ends successfully but no
+  `accept_mitm_session` / `register_mitm_session` completion follows, the fault
+  is in probe-side accept/session registration after SM has already cleared
+  `waiting_ack`

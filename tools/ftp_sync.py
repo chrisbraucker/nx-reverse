@@ -28,6 +28,7 @@ REMOTE_REQUESTER = PurePosixPath("sdmc:/switch/requester.nro")
 REMOTE_FATAL_ERROR_DIR = PurePosixPath("sdmc:/atmosphere/fatal_errors")
 REMOTE_FATAL_REPORT_DIR = PurePosixPath("sdmc:/atmosphere/fatal_reports")
 REMOTE_CRASH_DIR = PurePosixPath("sdmc:/atmosphere/crash_reports")
+REMOTE_ERPT_DIR = PurePosixPath("sdmc:/atmosphere/erpt_reports")
 REMOTE_PROBE_LOG_DIR = PurePosixPath("sdmc:/nxrv")
 
 
@@ -44,8 +45,9 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("-p", "--push-probe", action="store_true", help="Upload probe NSP to Atmosphere contents")
     parser.add_argument("-r", "--push-requester", action="store_true", help="Upload requester NRO to /switch/")
-    parser.add_argument("-E", "--pull-fatal-errors", action="store_true", help="Download all files from /atmosphere/fatal_errors/")
-    parser.add_argument("-F", "--pull-fatal-reports", action="store_true", help="Download all files from /atmosphere/fatal_reports/")
+    parser.add_argument("-F", "--pull-fatal-errors", action="store_true", help="Download all files from /atmosphere/fatal_errors/")
+    parser.add_argument("-R", "--pull-fatal-reports", action="store_true", help="Download all files from /atmosphere/fatal_reports/")
+    parser.add_argument("-E", "--pull-erpt-reports", action="store_true", help="Download all files from /atmosphere/erpt_reports/")
     parser.add_argument("-C", "--pull-crashes", action="store_true", help="Download all files from /atmosphere/crash_reports/")
     parser.add_argument("-L", "--pull-logs", action="store_true", help="Download all files from sdmc:/nxrv/ recursively")
     parser.add_argument("-A", "--all", action="store_true", help="Run every push and pull action")
@@ -67,6 +69,7 @@ def parse_args() -> argparse.Namespace:
         args.push_requester = True
         args.pull_fatal_errors = True
         args.pull_fatal_reports = True
+        args.pull_erpt_reports = True
         args.pull_crashes = True
         args.pull_logs = True
 
@@ -75,6 +78,7 @@ def parse_args() -> argparse.Namespace:
         args.push_requester,
         args.pull_fatal_errors,
         args.pull_fatal_reports,
+        args.pull_erpt_reports,
         args.pull_crashes,
         args.pull_logs,
     )):
@@ -225,6 +229,8 @@ def main() -> int:
             pull_path(ftp, REMOTE_FATAL_ERROR_DIR, reports_dir, delete_remote=args.clean)
         if args.pull_fatal_reports:
             pull_path(ftp, REMOTE_FATAL_REPORT_DIR, reports_dir, delete_remote=args.clean)
+        if args.pull_erpt_reports:
+            pull_path(ftp, REMOTE_ERPT_DIR, reports_dir, delete_remote=args.clean)
         if args.pull_crashes:
             pull_path(ftp, REMOTE_CRASH_DIR, reports_dir, delete_remote=args.clean)
         if args.pull_logs:
