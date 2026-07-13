@@ -81,6 +81,7 @@ enum class BsdSendToMutationMode : unsigned int {
     Disabled = 0,
     ShadowCopy = 1,
     RewritePort = 2,
+    /* Rewrite both the destination IPv4 address and port. */
     RewriteIpv4 = 3,
 };
 
@@ -89,11 +90,14 @@ enum class BsdSendToMutationMode : unsigned int {
  * forwarded destination send-static descriptor with probe-owned storage while
  * preserving every sockaddr byte. RewritePort changes only the destination
  * port in that copy after the original endpoint has matched exactly.
+ * RewriteIpv4 changes both the destination address and port. Set the rewrite
+ * address to the controlled host before selecting that mode.
  */
 inline constexpr BsdSendToMutationMode RequesterBsdSendToMutation =
-    BsdSendToMutationMode::RewritePort;
-inline constexpr u8 RequesterUdpEchoIpv4[4] = {10, 0, 0, 0};
+    BsdSendToMutationMode::RewriteIpv4;
+inline constexpr u8 RequesterUdpEchoIpv4[4] = {10, 0, 0, 1};
 inline constexpr u16 RequesterUdpEchoPort = 29000;
+inline constexpr u8 RequesterUdpEchoRewriteIpv4[4] = {10, 0, 0, 2};
 inline constexpr u16 RequesterUdpEchoRewritePort = 29001;
 
 } // namespace wgnx::net_probe::build_config

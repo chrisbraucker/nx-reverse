@@ -1319,3 +1319,32 @@ If repeated launches now succeed, incorrect probe-owned BSD registration was
 the minimal root cause. If the second launch still stalls, the next split must
 keep tagged PID ownership and vary only explicit CMIF session close versus
 requester process disconnect.
+
+## 2026-07-13 guarded UDP SendTo mutation result
+
+The requester-only `bsd:s` SendTo mutation ladder now has successful positive
+and negative-path validation. The probe matches command 11 only when the
+requester forwarder sends an IPv4 sockaddr for the exact configured original
+endpoint. It copies that sockaddr into probe-owned storage and asks the
+Atmosphere-libs forwarder to replace send-static descriptor 1; it never writes
+to requester-owned memory.
+
+With port rewriting enabled, three consecutive requester launches sent UDP to
+the harness on port 29001 even though each requester still specified port
+29000. All three echo responses succeeded, every replacement trace reported
+`substitution_applied=true`, and session/domain counts returned to zero.
+
+The negative-path run left the port-29001 listener disabled. Three consecutive
+requester launches each sent 18 bytes, reached the requester's bounded
+five-second poll timeout, cleaned up normally, and remained relaunchable. The
+probe again returned to zero active sessions and domains after each run. This
+confirms that both successful forwarding and an absent rewritten destination
+survive repeated lifecycle teardown.
+
+The next mutation mode, `RewriteIpv4`, rewrites both bytes 4-7 of the copied
+IPv4 sockaddr and its destination port. The expected original endpoint and the
+replacement endpoint are configured independently in `build_config.hpp`.
+Keeping the original-endpoint match unchanged prevents already rewritten or
+unrelated SendTo calls from entering the mutation path. The trace event names
+the mode `rewrite_ipv4_and_port` and records both endpoints so the descriptor
+replacement can be correlated with the spare host's receive log.

@@ -4182,7 +4182,7 @@ const char *GetBsdSendToMutationModeName(build_config::BsdSendToMutationMode mod
         case build_config::BsdSendToMutationMode::RewritePort:
             return "rewrite_port";
         case build_config::BsdSendToMutationMode::RewriteIpv4:
-            return "rewrite_ipv4";
+            return "rewrite_ipv4_and_port";
     }
     return "unknown";
 }
@@ -4210,7 +4210,8 @@ void OnForwardRequestPreprocess(
     const auto mutation_mode = cfg::RequesterBsdSendToMutation;
     const bool mutation_mode_supported =
         mutation_mode == cfg::BsdSendToMutationMode::ShadowCopy ||
-        mutation_mode == cfg::BsdSendToMutationMode::RewritePort;
+        mutation_mode == cfg::BsdSendToMutationMode::RewritePort ||
+        mutation_mode == cfg::BsdSendToMutationMode::RewriteIpv4;
     if (out_replacement == nullptr ||
         !mutation_mode_supported ||
         ctx.client_info.program_id != RequesterForwarderProgramId) {
@@ -4272,7 +4273,14 @@ void OnForwardRequestPreprocess(
 
     const u16 original_port = ReadBe16(sockaddr_bytes + 2);
     u16 effective_port = original_port;
-    if (mutation_mode == cfg::BsdSendToMutationMode::RewritePort) {
+    if (mutation_mode == cfg::BsdSendToMutationMode::RewriteIpv4) {
+        std::memcpy(
+            out_replacement->data + 4,
+            cfg::RequesterUdpEchoRewriteIpv4,
+            sizeof(cfg::RequesterUdpEchoRewriteIpv4));
+    }
+    if (mutation_mode == cfg::BsdSendToMutationMode::RewritePort ||
+        mutation_mode == cfg::BsdSendToMutationMode::RewriteIpv4) {
         effective_port = cfg::RequesterUdpEchoRewritePort;
         out_replacement->data[2] = static_cast<u8>(effective_port >> 8);
         out_replacement->data[3] = static_cast<u8>(effective_port & 0xFF);

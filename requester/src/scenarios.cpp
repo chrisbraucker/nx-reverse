@@ -43,6 +43,30 @@ struct CurlResponseBuffer {
     std::size_t size = 0;
 };
 
+std::string FormatSocketAddress(
+    const sockaddr_storage& address,
+    socklen_t address_len) {
+    std::string detail =
+        "source_addr_len=" + std::to_string(address_len) +
+        " source_family=" + std::to_string(address.ss_family);
+
+    if (address.ss_family != AF_INET || address_len < sizeof(sockaddr_in)) {
+        return detail + " source_ip=<unavailable> source_port=<unavailable>";
+    }
+
+    const auto *ipv4 = reinterpret_cast<const sockaddr_in *>(&address);
+    char ip_buffer[Ipv4StringCapacity] {};
+    if (inet_ntop(AF_INET, &ipv4->sin_addr, ip_buffer, sizeof(ip_buffer)) == nullptr) {
+        return detail +
+            " source_ip=<inet_ntop-failed> source_port=" +
+            std::to_string(ntohs(ipv4->sin_port));
+    }
+
+    return detail +
+        " source_ip=" + ip_buffer +
+        " source_port=" + std::to_string(ntohs(ipv4->sin_port));
+}
+
 using ScenarioFn = ScenarioResult (*)(AppContext& ctx);
 
 struct ScenarioStep {
@@ -1144,10 +1168,19 @@ ScenarioResult RunUdpEcho(AppContext& ctx) {
         &source_addr_len);
     if (recv_rc < 0) {
         result.err = errno;
-        result.detail = "recv failed: " + FormatErrno(errno);
+        result.detail =
+            "recvfrom failed: " + FormatErrno(errno) +
+            " returned_source_addr_len=" + std::to_string(source_addr_len);
         close(sockfd);
         return result;
     }
+
+    const std::string source_detail = FormatSocketAddress(source_addr, source_addr_len);
+    logger::Log(
+        ctx,
+        "udp_echo recvfrom bytes_received=%zd %s",
+        recv_rc,
+        source_detail.c_str());
 
     result.bytes_received = static_cast<std::size_t>(recv_rc);
     result.success =
@@ -1157,6 +1190,7 @@ ScenarioResult RunUdpEcho(AppContext& ctx) {
         "target_ip=" + endpoint.ip +
         " socket_timeouts=" + (config::EnableUdpEchoSocketTimeouts ? "enabled" : "disabled") +
         " poll=" + (config::EnableUdpEchoPoll ? "enabled" : "disabled") +
+        " " + source_detail +
         " response_preview=" + EscapePreview(buffer.data(), result.bytes_received, 96);
     close(sockfd);
     return result;
