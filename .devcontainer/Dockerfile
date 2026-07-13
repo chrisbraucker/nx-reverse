@@ -18,6 +18,7 @@ RUN apt-get update \
     openssh-client \
     python3 \
     python3-pip \
+    ripgrep \
     tar \
     unzip \
     xxd \
