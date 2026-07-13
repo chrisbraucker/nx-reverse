@@ -1,3 +1,6 @@
 [submodule "net-probe/lib/Atmosphere-libs"]
 	path = net-probe/lib/Atmosphere-libs
 	url = git@github.com:chrisbraucker/Atmosphere-libs.git
+[submodule "requester/libs/wireguard-nx"]
+	path = requester/libs/wireguard-nx
+	url = git@github.com:chrisbraucker/wireguard-nx.git

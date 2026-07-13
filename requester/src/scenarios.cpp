@@ -19,6 +19,7 @@
 #include "config.hpp"
 #include "logger.hpp"
 #include "manual_bsd_lifecycle.hpp"
+#include "wgnx_packet_scenario.hpp"
 
 namespace requester {
 
@@ -1356,6 +1357,7 @@ std::vector<ScenarioResult> RunScenarios(AppContext& ctx) {
         { "udp_connect_send_only", config::EnableScenarioUdpConnectSendOnly, RunUdpConnectSendOnly },
         { "udp_echo", config::EnableScenarioUdpEcho, RunUdpEcho },
         { "tcp_multi_connect", config::EnableScenarioConcurrentTcpBurst, RunConcurrentTcpBurst },
+        { "wgnx_packet_udp_echo", config::EnableScenarioWgnxUdpEcho, RunWgnxPacketUdpEcho },
     };
 
     std::vector<ScenarioResult> results;

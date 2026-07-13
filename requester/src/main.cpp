@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
         is_application ? config::SocketConfigApplication : config::SocketConfigApplet;
     logger::Log(
         ctx,
-        "execution_config applet_exit_lock=%u socket=%u nifm=%u ssl=%u curl=%u curl_share=%u scenario_manual_bsd=%u manual_bsd_open_monitor=%u manual_bsd_create_tmem=%u manual_bsd_register=%u manual_bsd_start_monitoring=%u manual_bsd_clone_root=%u scenario_environment=%u scenario_dns=%u scenario_plain_tcp=%u scenario_idle_tcp=%u scenario_http=%u scenario_https=%u scenario_curl_http=%u scenario_curl_https=%u scenario_udp_socket_only=%u scenario_udp_socket_setsockopt=%u scenario_udp_setsockopt_reuseaddr=%u scenario_udp_setsockopt_recv_timeout=%u scenario_udp_setsockopt_send_timeout=%u scenario_udp_sendto_only=%u udp_sendto_only_timeouts=%u scenario_udp_connect_send_only=%u scenario_udp=%u scenario_tcp_multi=%u",
+        "execution_config applet_exit_lock=%u socket=%u nifm=%u ssl=%u curl=%u curl_share=%u scenario_manual_bsd=%u manual_bsd_open_monitor=%u manual_bsd_create_tmem=%u manual_bsd_register=%u manual_bsd_start_monitoring=%u manual_bsd_clone_root=%u scenario_environment=%u scenario_dns=%u scenario_plain_tcp=%u scenario_idle_tcp=%u scenario_http=%u scenario_https=%u scenario_curl_http=%u scenario_curl_https=%u scenario_udp_socket_only=%u scenario_udp_socket_setsockopt=%u scenario_udp_setsockopt_reuseaddr=%u scenario_udp_setsockopt_recv_timeout=%u scenario_udp_setsockopt_send_timeout=%u scenario_udp_sendto_only=%u udp_sendto_only_timeouts=%u scenario_udp_connect_send_only=%u scenario_udp=%u scenario_tcp_multi=%u scenario_wgnx_udp=%u",
         static_cast<unsigned>(config::EnableAppletExitLock),
         static_cast<unsigned>(config::EnableSocketInitialize),
         static_cast<unsigned>(config::EnableNifmInitialize),
@@ -104,7 +104,19 @@ int main(int argc, char **argv) {
         static_cast<unsigned>(config::EnableUdpSendToOnlyTimeouts),
         static_cast<unsigned>(config::EnableScenarioUdpConnectSendOnly),
         static_cast<unsigned>(config::EnableScenarioUdpEcho),
-        static_cast<unsigned>(config::EnableScenarioConcurrentTcpBurst));
+        static_cast<unsigned>(config::EnableScenarioConcurrentTcpBurst),
+        static_cast<unsigned>(config::EnableScenarioWgnxUdpEcho));
+    logger::Log(
+        ctx,
+        "wgnx_packet_config api=%u source=%s:%u destination=%s:%u timeout_ms=%u poll_ms=%u malformed_ipv4_checksum=%u",
+        config::WgnxExpectedApiVersion,
+        config::WgnxTunnelSourceIpv4,
+        config::WgnxUdpSourcePort,
+        config::WgnxUdpEchoDestinationIpv4,
+        config::WgnxUdpEchoDestinationPort,
+        config::WgnxPacketTimeoutMs,
+        config::WgnxPacketPollIntervalMs,
+        static_cast<unsigned>(config::WgnxSubmitMalformedIpv4Checksum));
     logger::Log(
         ctx,
         "socket_config mode=%s tcp_tx=%u tcp_rx=%u tcp_tx_max=%u tcp_rx_max=%u udp_tx=%u udp_rx=%u sb_efficiency=%u num_bsd_sessions=%u service_type=%u",

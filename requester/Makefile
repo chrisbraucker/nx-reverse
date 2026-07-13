@@ -24,7 +24,8 @@ BUILD_ID    := $(shell git describe --always --dirty 2>/dev/null || echo "unknow
 DEFINES := -DTARGET="\"$(TARGET)\"" \
     -DAPP_TITLE="\"$(APP_TITLE)\"" \
     -DVERSION="\"$(APP_VERSION)\"" \
-    -DBUILD_ID="\"$(BUILD_ID)\""
+    -DBUILD_ID="\"$(BUILD_ID)\"" \
+    -DWGNX_ENABLE_DEBUG_PROBE=1
 
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
@@ -40,7 +41,7 @@ LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*
 
 LIBS := -lcurl -lz -lnx -lm
 
-LIBDIRS := $(PORTLIBS) $(LIBNX)
+LIBDIRS := $(PORTLIBS) $(LIBNX) $(TOPDIR)/libs/wireguard-nx/common
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 

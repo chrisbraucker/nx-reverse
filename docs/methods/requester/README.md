@@ -66,6 +66,13 @@ Notes:
 The app should remain self-contained and should not depend on `net-probe`
 internals.
 
+The experimental WireGuard packet scenario is the one deliberate cross-repo
+dependency. Its build consumes the public API headers from
+`wireguard-nx.git/common/include` so that command IDs, result layouts, and the
+API version cannot silently diverge. The Makefile defaults to the sibling
+workspace layout and accepts `WGNX_COMMON_INCLUDE=/path/to/common/include` for
+other layouts.
+
 ## Runtime Behavior
 
 The requester should run as follows:
@@ -384,3 +391,25 @@ It should not yet add:
 - multiple profiles or config files
 
 Those can be added once the basic requester is producing useful traces.
+
+## Direct WireGuard Packet Scenario
+
+`wgnx_packet_udp_echo` tests API v2 without initializing BSD. It constructs a
+complete inner IPv4/UDP datagram from the `Wgnx*` values in
+`requester/src/config.hpp`, adds a random per-run token, and submits it through
+`wgnx:ctl`. Receive polling is nonblocking and bounded by
+`WgnxPacketTimeoutMs`.
+
+A reply is accepted only when its IPv4 header, total length, fragmentation
+state, IPv4 checksum, UDP length, UDP checksum, source/destination addresses,
+ports, and random payload all match. Other decrypted packets are logged and
+ignored until the deadline. CMIF transport failures, packet API statuses,
+validation rejections, and timeouts remain distinguishable in the requester
+log.
+
+The current next-test profile enables only this scenario and leaves
+`EnableSocketInitialize` false. Set the tunnel source address and echo endpoint
+to match the active WireGuard configuration before building. For the malformed
+submission acceptance test, set `WgnxSubmitMalformedIpv4Checksum` to `true`;
+success then means the sysmodule returned `MalformedPacket` without queueing
+the datagram.

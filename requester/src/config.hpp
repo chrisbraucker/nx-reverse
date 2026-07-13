@@ -8,7 +8,7 @@ namespace requester::config {
 constexpr char LogDirectory[] = "sdmc:/nxrv/requester";
 
 constexpr bool EnableAppletExitLock = false;
-constexpr bool EnableSocketInitialize = true;
+constexpr bool EnableSocketInitialize = false;
 constexpr bool EnableNifmInitialize = false;
 constexpr bool EnableSslInitialize = false;
 constexpr bool EnableCurlInitialize = false;
@@ -50,10 +50,22 @@ constexpr bool EnableScenarioUdpSetSockOptSendTimeout = false;
 constexpr bool EnableScenarioUdpSendToOnly = false;
 constexpr bool EnableUdpSendToOnlyTimeouts = false;
 constexpr bool EnableScenarioUdpConnectSendOnly = false;
-constexpr bool EnableScenarioUdpEcho = true;
+constexpr bool EnableScenarioUdpEcho = false;
 constexpr bool EnableUdpEchoSocketTimeouts = false;
 constexpr bool EnableUdpEchoPoll = true;
 constexpr bool EnableScenarioConcurrentTcpBurst = false;
+constexpr bool EnableScenarioWgnxUdpEcho = true;
+
+/* Direct inner-packet test through the debug-gated wgnx:ctl API v2. */
+constexpr std::uint32_t WgnxExpectedApiVersion = 2;
+constexpr char WgnxTunnelSourceIpv4[] = "10.0.0.2";
+constexpr char WgnxUdpEchoDestinationIpv4[] = "10.1.0.2";
+constexpr std::uint16_t WgnxUdpSourcePort = 39000;
+constexpr std::uint16_t WgnxUdpEchoDestinationPort = 29000;
+constexpr char WgnxUdpPayloadPrefix[] = "nxrv-wgnx-udp:";
+constexpr std::uint32_t WgnxPacketTimeoutMs = 5000;
+constexpr std::uint32_t WgnxPacketPollIntervalMs = 25;
+constexpr bool WgnxSubmitMalformedIpv4Checksum = false;
 
 constexpr SocketInitConfig SocketConfigApplication = {
     .tcp_tx_buf_size = 1024 * 64,
