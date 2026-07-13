@@ -75,6 +75,6 @@ enum class RequesterForwarderBsdMitmMode : unsigned int {
  * for the known-stable StartMonitoring side-session check.
  */
 inline constexpr RequesterForwarderBsdMitmMode RequesterForwarderBsdMitm =
-    RequesterForwarderBsdMitmMode::FirstOnly;
+    RequesterForwarderBsdMitmMode::Both;
 
 } // namespace wgnx::net_probe::build_config

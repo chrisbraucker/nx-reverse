@@ -8,7 +8,7 @@ namespace requester::config {
 constexpr char LogDirectory[] = "sdmc:/nxrv/requester";
 
 constexpr bool EnableAppletExitLock = false;
-constexpr bool EnableSocketInitialize = false;
+constexpr bool EnableSocketInitialize = true;
 constexpr bool EnableNifmInitialize = false;
 constexpr bool EnableSslInitialize = false;
 constexpr bool EnableCurlInitialize = false;
@@ -20,7 +20,7 @@ constexpr bool EnableCurlShare = false;
  * monitor session with the returned client ID. A single session does not need
  * a cloned root session.
  */
-constexpr bool EnableScenarioManualBsdLifecycle = true;
+constexpr bool EnableScenarioManualBsdLifecycle = false;
 constexpr bool ManualBsdOpenMonitorSession = true;
 constexpr bool ManualBsdCreateTransferMemory = true;
 constexpr bool ManualBsdRegisterClient = true;
@@ -33,7 +33,7 @@ static_assert(!ManualBsdStartMonitoring || ManualBsdRegisterClient);
 static_assert(!ManualBsdStartMonitoring || ManualBsdOpenMonitorSession);
 static_assert(!ManualBsdCloneRootSession || ManualBsdRegisterClient);
 
-/* Ordinary socket scenarios stay disabled while the raw BSD ladder is active. */
+/* Exercise outbound and inbound UDP without socket options. */
 constexpr bool EnableScenarioEnvironmentSnapshot = false;
 constexpr bool EnableScenarioDnsResolve = false;
 constexpr bool EnableScenarioPlainTcpConnect = false;
@@ -50,7 +50,9 @@ constexpr bool EnableScenarioUdpSetSockOptSendTimeout = false;
 constexpr bool EnableScenarioUdpSendToOnly = false;
 constexpr bool EnableUdpSendToOnlyTimeouts = false;
 constexpr bool EnableScenarioUdpConnectSendOnly = false;
-constexpr bool EnableScenarioUdpEcho = false;
+constexpr bool EnableScenarioUdpEcho = true;
+constexpr bool EnableUdpEchoSocketTimeouts = false;
+constexpr bool EnableUdpEchoPoll = true;
 constexpr bool EnableScenarioConcurrentTcpBurst = false;
 
 constexpr SocketInitConfig SocketConfigApplication = {

@@ -1081,9 +1081,13 @@ ScenarioResult RunUdpEcho(AppContext& ctx) {
         return result;
     }
 
-    if (!SetSocketTimeouts(ctx, sockfd, result)) {
-        close(sockfd);
-        return result;
+    if constexpr (config::EnableUdpEchoSocketTimeouts) {
+        if (!SetSocketTimeouts(ctx, sockfd, result)) {
+            close(sockfd);
+            return result;
+        }
+    } else {
+        logger::Log(ctx, "udp_echo skipping internal SO_RCVTIMEO/SO_SNDTIMEO");
     }
 
     const ssize_t send_rc = sendto(
@@ -1101,8 +1105,43 @@ ScenarioResult RunUdpEcho(AppContext& ctx) {
     }
     result.bytes_sent = static_cast<std::size_t>(send_rc);
 
+    if constexpr (config::EnableUdpEchoPoll) {
+        pollfd poll_fd {
+            .fd = sockfd,
+            .events = POLLIN,
+            .revents = 0,
+        };
+        const int poll_rc = poll(&poll_fd, 1, static_cast<int>(config::SocketTimeoutMs));
+        if (poll_rc < 0) {
+            result.err = errno;
+            result.detail = "poll failed: " + FormatErrno(errno);
+            close(sockfd);
+            return result;
+        }
+        if (poll_rc == 0) {
+            result.err = ETIMEDOUT;
+            result.detail = "poll timed out waiting for UDP response";
+            close(sockfd);
+            return result;
+        }
+        if ((poll_fd.revents & POLLIN) == 0) {
+            result.detail = "poll returned without POLLIN: revents=" +
+                std::to_string(poll_fd.revents);
+            close(sockfd);
+            return result;
+        }
+    }
+
     std::array<char, config::ReadBufferSize> buffer {};
-    const ssize_t recv_rc = recv(sockfd, buffer.data(), buffer.size(), 0);
+    sockaddr_storage source_addr {};
+    socklen_t source_addr_len = sizeof(source_addr);
+    const ssize_t recv_rc = recvfrom(
+        sockfd,
+        buffer.data(),
+        buffer.size(),
+        0,
+        reinterpret_cast<sockaddr *>(&source_addr),
+        &source_addr_len);
     if (recv_rc < 0) {
         result.err = errno;
         result.detail = "recv failed: " + FormatErrno(errno);
@@ -1115,7 +1154,9 @@ ScenarioResult RunUdpEcho(AppContext& ctx) {
         static_cast<std::size_t>(recv_rc) == std::strlen(config::UdpPayload) &&
         std::memcmp(buffer.data(), config::UdpPayload, result.bytes_received) == 0;
     result.detail =
-        "connected_ip=" + endpoint.ip +
+        "target_ip=" + endpoint.ip +
+        " socket_timeouts=" + (config::EnableUdpEchoSocketTimeouts ? "enabled" : "disabled") +
+        " poll=" + (config::EnableUdpEchoPoll ? "enabled" : "disabled") +
         " response_preview=" + EscapePreview(buffer.data(), result.bytes_received, 96);
     close(sockfd);
     return result;
