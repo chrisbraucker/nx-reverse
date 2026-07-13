@@ -7,6 +7,7 @@
 #include <cstring>
 #include <mutex>
 
+#include "build_config.hpp"
 #include "fs_runtime.hpp"
 #include "logger.hpp"
 
@@ -37,6 +38,7 @@ constexpr size_t MaxTrackedSessionHandles = 128;
 constexpr size_t MaxTrackedCloneHandles = 128;
 constexpr size_t BinaryPayloadChunkBytes = 1536;
 constexpr u32 BsdCommandPoll = 6;
+constexpr u32 BsdCommandSendTo = 11;
 constexpr u16 BsdAddressFamilyInet = 2;
 constexpr u16 BsdAddressFamilyInet6 = 28;
 constexpr u16 BsdSocketLevel = 0xFFFF;
@@ -188,6 +190,8 @@ std::array<SessionHandleEntry, MaxTrackedSessionHandles> g_session_handles = {};
 std::array<DomainPathEntry, MaxTrackedDomainPaths> g_snapshot_domain_paths = {};
 std::array<SessionEntry, MaxTrackedSessions> g_snapshot_sessions = {};
 std::array<CloneHandleEntry, MaxTrackedCloneHandles> g_clone_handles = {};
+
+constexpr ams::ncm::ProgramId RequesterForwarderProgramId{0x05720820ABC97000ul};
 
 int ClampLength(int written, size_t capacity) {
     if (written <= 0) {
@@ -1445,7 +1449,7 @@ bool TryFormatSockaddr(char *out, size_t out_size, const u8 *bytes, size_t size)
         std::snprintf(out, out_size, "family=%u raw=%s", family, preview);
     };
 
-    if (size >= 8 && bytes[1] == BsdAddressFamilyInet && bytes[0] >= 8) {
+    if (size >= 8 && bytes[1] == BsdAddressFamilyInet) {
         char ip[32] = {};
         FormatIpv4(ip, sizeof(ip), bytes + 4, size - 4);
         std::snprintf(out, out_size, "family=AF_INET addr=%s port=%u", ip, ReadBe16(bytes + 2));
@@ -4169,6 +4173,162 @@ void EmitSslSemanticRecord(
     }
 }
 
+const char *GetBsdSendToMutationModeName(build_config::BsdSendToMutationMode mode) {
+    switch (mode) {
+        case build_config::BsdSendToMutationMode::Disabled:
+            return "disabled";
+        case build_config::BsdSendToMutationMode::ShadowCopy:
+            return "shadow_copy";
+        case build_config::BsdSendToMutationMode::RewritePort:
+            return "rewrite_port";
+        case build_config::BsdSendToMutationMode::RewriteIpv4:
+            return "rewrite_ipv4";
+    }
+    return "unknown";
+}
+
+const char *GetBufferReplacementDirectionName(
+    ams::sf::hipc::mitm_monitor::ForwardRequestBufferDirection direction) {
+    using Direction = ams::sf::hipc::mitm_monitor::ForwardRequestBufferDirection;
+
+    switch (direction) {
+        case Direction::Send:
+            return "send_map_alias";
+        case Direction::Exchange:
+            return "exchange_map_alias";
+        case Direction::SendStatic:
+            return "send_static";
+    }
+    return "unknown";
+}
+
+void OnForwardRequestPreprocess(
+    const ams::sf::hipc::mitm_monitor::ForwardRequestPreprocessContext &ctx,
+    ams::sf::hipc::mitm_monitor::ForwardRequestBufferReplacement *out_replacement) {
+    namespace cfg = build_config;
+
+    const auto mutation_mode = cfg::RequesterBsdSendToMutation;
+    const bool mutation_mode_supported =
+        mutation_mode == cfg::BsdSendToMutationMode::ShadowCopy ||
+        mutation_mode == cfg::BsdSendToMutationMode::RewritePort;
+    if (out_replacement == nullptr ||
+        !mutation_mode_supported ||
+        ctx.client_info.program_id != RequesterForwarderProgramId) {
+        return;
+    }
+
+    char service_name[ams::sm::ServiceName::MaxLength + 1] = {};
+    EncodeServiceName(service_name, sizeof(service_name), ctx.service_name);
+    if (std::strcmp(service_name, "bsd:s") != 0) {
+        return;
+    }
+
+    const ParsedRequestInfo request_info = ParseRequestInfo(ctx.request_message);
+    if (!request_info.valid || request_info.is_close || request_info.command_id != BsdCommandSendTo) {
+        return;
+    }
+
+    const ::HipcParsedRequest request = hipcParseRequest(ctx.request_message.GetPointer());
+    if (request.meta.num_send_statics != 2 ||
+        request.meta.num_send_buffers != 2 ||
+        request.meta.num_exch_buffers != 0) {
+        return;
+    }
+
+    const auto &payload_descriptor = request.data.send_statics[0];
+    const auto &sockaddr_descriptor = request.data.send_statics[1];
+    const auto &payload_map_alias = request.data.send_buffers[0];
+    const auto &sockaddr_map_alias = request.data.send_buffers[1];
+    if (hipcGetBufferSize(std::addressof(payload_map_alias)) != 0 ||
+        hipcGetBufferSize(std::addressof(sockaddr_map_alias)) != 0) {
+        return;
+    }
+
+    const void * const payload = hipcGetStaticAddress(std::addressof(payload_descriptor));
+    const auto * const sockaddr_bytes = static_cast<const u8 *>(hipcGetStaticAddress(std::addressof(sockaddr_descriptor)));
+    const size_t payload_size = hipcGetStaticSize(std::addressof(payload_descriptor));
+    const size_t sockaddr_size = hipcGetStaticSize(std::addressof(sockaddr_descriptor));
+    if (payload == nullptr || payload_size == 0 ||
+        sockaddr_bytes == nullptr || sockaddr_size < 16 ||
+        sockaddr_size > sizeof(out_replacement->data)) {
+        return;
+    }
+
+    const bool is_ipv4 =
+        sockaddr_bytes[1] == BsdAddressFamilyInet ||
+        ReadLe16(sockaddr_bytes) == BsdAddressFamilyInet;
+    const bool endpoint_matches =
+        is_ipv4 &&
+        ReadBe16(sockaddr_bytes + 2) == cfg::RequesterUdpEchoPort &&
+        std::memcmp(sockaddr_bytes + 4, cfg::RequesterUdpEchoIpv4, sizeof(cfg::RequesterUdpEchoIpv4)) == 0;
+    if (!endpoint_matches) {
+        return;
+    }
+
+    out_replacement->direction = ams::sf::hipc::mitm_monitor::ForwardRequestBufferDirection::SendStatic;
+    out_replacement->index = 1;
+    out_replacement->size = sockaddr_size;
+    std::memcpy(out_replacement->data, sockaddr_bytes, sockaddr_size);
+
+    const u16 original_port = ReadBe16(sockaddr_bytes + 2);
+    u16 effective_port = original_port;
+    if (mutation_mode == cfg::BsdSendToMutationMode::RewritePort) {
+        effective_port = cfg::RequesterUdpEchoRewritePort;
+        out_replacement->data[2] = static_cast<u8>(effective_port >> 8);
+        out_replacement->data[3] = static_cast<u8>(effective_port & 0xFF);
+    }
+    out_replacement->requested = true;
+
+    char original_endpoint[64];
+    char effective_endpoint[64];
+    std::snprintf(
+        original_endpoint,
+        sizeof(original_endpoint),
+        "%u.%u.%u.%u:%u",
+        sockaddr_bytes[4],
+        sockaddr_bytes[5],
+        sockaddr_bytes[6],
+        sockaddr_bytes[7],
+        original_port);
+    std::snprintf(
+        effective_endpoint,
+        sizeof(effective_endpoint),
+        "%u.%u.%u.%u:%u",
+        out_replacement->data[4],
+        out_replacement->data[5],
+        out_replacement->data[6],
+        out_replacement->data[7],
+        effective_port);
+
+    char line[1024];
+    const int written = std::snprintf(
+        line,
+        sizeof(line),
+        "{\"schema_version\":1,\"run_id\":\"tick-%llu\",\"scenario\":\"unknown\",\"event\":\"bsd_sendto_mutation\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"bsd:s\",\"client_pid\":%llu,\"client_program_id\":\"0x%016llX\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"request_id\":0,\"command_id\":11,\"mutation_mode\":\"%s\",\"original_endpoint\":\"%s\",\"effective_endpoint\":\"%s\",\"descriptor_kind\":\"send_static\",\"descriptor_index\":1,\"descriptor_static_index\":%u,\"descriptor_size\":%zu,\"substitution_requested\":true}\n",
+        static_cast<unsigned long long>(g_run_tick),
+        static_cast<unsigned long long>(GetMonotonicNs()),
+        static_cast<unsigned long long>(ctx.client_info.process_id.value),
+        static_cast<unsigned long long>(ctx.client_info.program_id.value),
+        static_cast<unsigned long long>(ctx.session_id),
+        GetBsdSendToMutationModeName(mutation_mode),
+        original_endpoint,
+        effective_endpoint,
+        sockaddr_descriptor.index,
+        sockaddr_size);
+    if (written > 0) {
+        AppendJsonLineForService(service_name, line);
+    }
+    logger::Log(
+        "monitor.bsd_sendto_mutation client_pid=0x%016llx tracked_session=%llu mode=%s original=%s effective=%s descriptor_kind=send_static index=1 static_index=%u descriptor_size=%zu requested=1",
+        static_cast<unsigned long long>(ctx.client_info.process_id.value),
+        static_cast<unsigned long long>(ctx.session_id),
+        GetBsdSendToMutationModeName(mutation_mode),
+        original_endpoint,
+        effective_endpoint,
+        sockaddr_descriptor.index,
+        sockaddr_size);
+}
+
 void OnForwardRequestTrace(const ams::sf::hipc::mitm_monitor::ForwardRequestTraceContext &ctx) {
     char service_name[ams::sm::ServiceName::MaxLength + 8] = {};
     char client_program_id[32] = {};
@@ -4239,6 +4399,70 @@ void OnForwardRequestTrace(const ams::sf::hipc::mitm_monitor::ForwardRequestTrac
             ctx.request_tracked_copy_handle_count,
             ctx.request_closed_copy_handle_count,
             ctx.request_num_move_handles);
+    }
+
+    if (ctx.request_buffer_replacement_requested || ctx.request_buffer_replacement_applied) {
+        const auto replacement_direction =
+            static_cast<ams::sf::hipc::mitm_monitor::ForwardRequestBufferDirection>(
+                ctx.request_buffer_replacement_direction);
+        const char * const descriptor_kind = GetBufferReplacementDirectionName(replacement_direction);
+        logger::Log(
+            "monitor.forward_buffer_replacement service=%s client_pid=0x%016llx tracked_session=%llu command_id=%u requested=%u applied=%u descriptor_kind=%s direction=%u index=%u size=%zu original_mode=%u original_static_index=%u",
+            service_name,
+            static_cast<unsigned long long>(ctx.client_info.process_id.value),
+            static_cast<unsigned long long>(ctx.session_id),
+            request_info.command_id,
+            ctx.request_buffer_replacement_requested ? 1u : 0u,
+            ctx.request_buffer_replacement_applied ? 1u : 0u,
+            descriptor_kind,
+            ctx.request_buffer_replacement_direction,
+            ctx.request_buffer_replacement_index,
+            ctx.request_buffer_replacement_size,
+            ctx.request_buffer_replacement_original_mode,
+            ctx.request_buffer_replacement_original_static_index);
+
+        char descriptor_metadata[96];
+        if (replacement_direction == ams::sf::hipc::mitm_monitor::ForwardRequestBufferDirection::SendStatic) {
+            std::snprintf(
+                descriptor_metadata,
+                sizeof(descriptor_metadata),
+                "\"descriptor_static_index\":%u",
+                ctx.request_buffer_replacement_original_static_index);
+        } else {
+            std::snprintf(
+                descriptor_metadata,
+                sizeof(descriptor_metadata),
+                "\"descriptor_mode\":%u",
+                ctx.request_buffer_replacement_original_mode);
+        }
+
+        char replacement_line[1024];
+        const int replacement_written = std::snprintf(
+            replacement_line,
+            sizeof(replacement_line),
+            "{\"schema_version\":1,\"run_id\":\"%s\",\"scenario\":\"%s\",\"event\":\"ipc_buffer_replacement\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"object_id\":%u,\"object_path\":\"%s\",\"request_id\":%llu,\"command_id\":%u,\"mutation_mode\":\"%s\",\"descriptor_kind\":\"%s\",\"descriptor_direction\":%u,\"descriptor_index\":%u,\"descriptor_size\":%zu,%s,\"substitution_requested\":%s,\"substitution_applied\":%s}\n",
+            run_id,
+            scenario,
+            static_cast<unsigned long long>(response_ts_ns),
+            service_name,
+            static_cast<unsigned long long>(ctx.client_info.process_id.value),
+            client_program_id,
+            static_cast<unsigned long long>(ctx.session_id),
+            request_info.object_id,
+            object_path,
+            static_cast<unsigned long long>(request_id),
+            request_info.command_id,
+            GetBsdSendToMutationModeName(build_config::RequesterBsdSendToMutation),
+            descriptor_kind,
+            ctx.request_buffer_replacement_direction,
+            ctx.request_buffer_replacement_index,
+            ctx.request_buffer_replacement_size,
+            descriptor_metadata,
+            ctx.request_buffer_replacement_requested ? "true" : "false",
+            ctx.request_buffer_replacement_applied ? "true" : "false");
+        if (replacement_written > 0) {
+            AppendJsonLineForService(service_name, replacement_line);
+        }
     }
 
     char request_line[2304];
@@ -5680,6 +5904,7 @@ void RegisterMonitorHooks() {
     ams::sf::hipc::mitm_monitor::SetAcceptTraceCallback(LogAcceptTrace);
     ams::sf::hipc::mitm_monitor::SetDispatchTraceCallback(LogDispatchTrace);
     ams::sf::hipc::mitm_monitor::SetSessionTraceCallback(LogSessionTrace);
+    ams::sf::hipc::mitm_monitor::SetForwardRequestPreprocessCallback(OnForwardRequestPreprocess);
     ams::sf::hipc::mitm_monitor::SetForwardRequestTraceCallback(OnForwardRequestTrace);
     ams::sf::hipc::mitm_monitor::SetDomainTraceCallback(OnDomainTrace);
 }

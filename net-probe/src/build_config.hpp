@@ -77,4 +77,23 @@ enum class RequesterForwarderBsdMitmMode : unsigned int {
 inline constexpr RequesterForwarderBsdMitmMode RequesterForwarderBsdMitm =
     RequesterForwarderBsdMitmMode::Both;
 
+enum class BsdSendToMutationMode : unsigned int {
+    Disabled = 0,
+    ShadowCopy = 1,
+    RewritePort = 2,
+    RewriteIpv4 = 3,
+};
+
+/*
+ * Requester-only SendTo transformation ladder. ShadowCopy replaces the
+ * forwarded destination send-static descriptor with probe-owned storage while
+ * preserving every sockaddr byte. RewritePort changes only the destination
+ * port in that copy after the original endpoint has matched exactly.
+ */
+inline constexpr BsdSendToMutationMode RequesterBsdSendToMutation =
+    BsdSendToMutationMode::RewritePort;
+inline constexpr u8 RequesterUdpEchoIpv4[4] = {10, 0, 0, 0};
+inline constexpr u16 RequesterUdpEchoPort = 29000;
+inline constexpr u16 RequesterUdpEchoRewritePort = 29001;
+
 } // namespace wgnx::net_probe::build_config

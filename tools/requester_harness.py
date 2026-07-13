@@ -14,7 +14,7 @@ LISTEN_HOST = "0.0.0.0"
 TCP_ACK_PORT = 28080
 HTTP_PORT = 28081
 HTTPS_PORT = 28443
-UDP_PORT = 29000
+UDP_PORTS = (29000, 29001)
 
 TCP_REPLY = b"NXRV TCP ACK\r\n"
 HTTP_BODY = b"nxrv harness http ok\n"
@@ -64,8 +64,9 @@ class UdpHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         data, sock = self.request
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
+        local_port = self.server.server_address[1]
         reply = data if UDP_ECHO_INPUT else UDP_FIXED_REPLY
-        log(f"[udp] peer={peer} recv={data[:64]!r} reply={reply[:64]!r}")
+        log(f"[udp:{local_port}] peer={peer} recv={data[:64]!r} reply={reply[:64]!r}")
         sock.sendto(reply, self.client_address)
 
 
@@ -130,14 +131,16 @@ def main() -> int:
     tcp_server = ThreadedTcpServer((LISTEN_HOST, TCP_ACK_PORT), PlainTcpHandler)
     http_server = QuietHttpServer((LISTEN_HOST, HTTP_PORT), CannedHttpHandler)
     #https_server = build_https_server()
-    udp_server = ThreadedUdpServer((LISTEN_HOST, UDP_PORT), UdpHandler)
 
     servers: list[tuple[str, socketserver.BaseServer]] = [
         ("tcp", tcp_server),
         ("http", http_server),
         #("https", https_server),
-        ("udp", udp_server),
     ]
+    servers.extend(
+        (f"udp:{port}", ThreadedUdpServer((LISTEN_HOST, port), UdpHandler))
+        for port in UDP_PORTS
+    )
 
     stop_event = threading.Event()
 
@@ -155,7 +158,8 @@ def main() -> int:
     log(f"  tcp   : {LISTEN_HOST}:{TCP_ACK_PORT}")
     log(f"  http  : {LISTEN_HOST}:{HTTP_PORT}")
     #log(f"  https : {LISTEN_HOST}:{HTTPS_PORT} cert={TLS_CERT_FILE}")
-    log(f"  udp   : {LISTEN_HOST}:{UDP_PORT} echo={UDP_ECHO_INPUT}")
+    for port in UDP_PORTS:
+        log(f"  udp   : {LISTEN_HOST}:{port} echo={UDP_ECHO_INPUT}")
 
     try:
         stop_event.wait()
