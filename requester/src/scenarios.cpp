@@ -18,6 +18,7 @@
 
 #include "config.hpp"
 #include "logger.hpp"
+#include "manual_bsd_lifecycle.hpp"
 
 namespace requester {
 
@@ -40,6 +41,14 @@ struct ConnectedTcpSocket {
 struct CurlResponseBuffer {
     std::array<char, config::CurlReadBufferSize> data {};
     std::size_t size = 0;
+};
+
+using ScenarioFn = ScenarioResult (*)(AppContext& ctx);
+
+struct ScenarioStep {
+    const char *name;
+    bool enabled;
+    ScenarioFn fn;
 };
 
 bool ResolveIpv4(
@@ -176,14 +185,105 @@ std::string CollectSslVerifyDiagnostics(SslConnection& ssl_connection) {
     return detail;
 }
 
-void SetSocketTimeouts(int sockfd) {
+const char *SocketOptionName(int level, int optname) {
+    if (level == SOL_SOCKET) {
+        switch (optname) {
+            case SO_REUSEADDR:
+                return "SOL_SOCKET/SO_REUSEADDR";
+            case SO_RCVTIMEO:
+                return "SOL_SOCKET/SO_RCVTIMEO";
+            case SO_SNDTIMEO:
+                return "SOL_SOCKET/SO_SNDTIMEO";
+            default:
+                return "SOL_SOCKET/unknown";
+        }
+    }
+    return "unknown";
+}
+
+int TraceSetSockOpt(
+    AppContext& ctx,
+    int sockfd,
+    int level,
+    int optname,
+    const void *optval,
+    socklen_t optlen,
+    int& out_errno) {
+    logger::Log(
+        ctx,
+        "setsockopt begin fd=%d level=%d opt=%d opt_name=%s optval=%p optlen=%u",
+        sockfd,
+        level,
+        optname,
+        SocketOptionName(level, optname),
+        optval,
+        static_cast<unsigned>(optlen));
+
+    errno = 0;
+    const int rc = setsockopt(sockfd, level, optname, optval, optlen);
+    const int saved_errno = errno;
+    out_errno = saved_errno;
+
+    logger::Log(
+        ctx,
+        "setsockopt complete fd=%d level=%d opt=%d opt_name=%s rc=%d errno=%d detail=%s",
+        sockfd,
+        level,
+        optname,
+        SocketOptionName(level, optname),
+        rc,
+        saved_errno,
+        rc == 0 ? "success" : FormatErrno(saved_errno).c_str());
+    return rc;
+}
+
+bool TraceSetSockOptReuseAddr(AppContext& ctx, int sockfd, ScenarioResult& result) {
+    const int enabled = 1;
+    int saved_errno = 0;
+    const int rc = TraceSetSockOpt(ctx, sockfd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled), saved_errno);
+    if (rc != 0) {
+        result.err = saved_errno;
+        result.detail = std::string("SO_REUSEADDR failed: ") + FormatErrno(saved_errno);
+        return false;
+    }
+    return true;
+}
+
+bool TraceSetSockOptRecvTimeout(AppContext& ctx, int sockfd, ScenarioResult& result) {
     const struct timeval timeout {
         .tv_sec = static_cast<long>(config::SocketTimeoutMs / 1000U),
         .tv_usec = static_cast<long>((config::SocketTimeoutMs % 1000U) * 1000U),
     };
 
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    int saved_errno = 0;
+    const int rc = TraceSetSockOpt(ctx, sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout), saved_errno);
+    if (rc != 0) {
+        result.err = saved_errno;
+        result.detail = std::string("SO_RCVTIMEO failed: ") + FormatErrno(saved_errno);
+        return false;
+    }
+    return true;
+}
+
+bool TraceSetSockOptSendTimeout(AppContext& ctx, int sockfd, ScenarioResult& result) {
+    const struct timeval timeout {
+        .tv_sec = static_cast<long>(config::SocketTimeoutMs / 1000U),
+        .tv_usec = static_cast<long>((config::SocketTimeoutMs % 1000U) * 1000U),
+    };
+
+    int saved_errno = 0;
+    const int rc = TraceSetSockOpt(ctx, sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout), saved_errno);
+    if (rc != 0) {
+        result.err = saved_errno;
+        result.detail = std::string("SO_SNDTIMEO failed: ") + FormatErrno(saved_errno);
+        return false;
+    }
+    return true;
+}
+
+bool SetSocketTimeouts(AppContext& ctx, int sockfd, ScenarioResult& result) {
+    return TraceSetSockOptRecvTimeout(ctx, sockfd, result) &&
+        TraceSetSockOptSendTimeout(ctx, sockfd, result);
 }
 
 bool ConnectResolvedTcp(
@@ -203,7 +303,12 @@ bool ConnectResolvedTcp(
         return false;
     }
 
-    SetSocketTimeouts(sockfd);
+    ScenarioResult setopt_result { .name = "plain_tcp_connect_setsockopt" };
+    if (!SetSocketTimeouts(ctx, sockfd, setopt_result)) {
+        detail = setopt_result.detail;
+        close(sockfd);
+        return false;
+    }
 
     if (connect(sockfd, reinterpret_cast<const struct sockaddr *>(&endpoint.addr), endpoint.addr_len) != 0) {
         detail = "connect failed: " + FormatErrno(errno);
@@ -306,6 +411,14 @@ bool ResolveIpv4(
 
 ScenarioResult RunEnvironmentSnapshot(AppContext& ctx) {
     ScenarioResult result { .name = "environment_snapshot" };
+
+    if (!ctx.nifm_initialized) {
+        result.skipped = true;
+        result.rc = ctx.nifm_initialize_rc;
+        result.detail = "nifm unavailable: " + FormatResult(ctx.nifm_initialize_rc);
+        logger::Log(ctx, "scenario=%s skipped: %s", result.name.c_str(), result.detail.c_str());
+        return result;
+    }
 
     logger::Status(ctx, "Running NIFM status check");
 
@@ -525,7 +638,10 @@ ScenarioResult RunHttpsGet(AppContext& ctx) {
         return result;
     }
 
-    SetSocketTimeouts(sockfd);
+    if (!SetSocketTimeouts(ctx, sockfd, result)) {
+        close(sockfd);
+        return result;
+    }
 
     if (connect(sockfd, reinterpret_cast<const struct sockaddr *>(&endpoint.addr), endpoint.addr_len) != 0) {
         result.err = errno;
@@ -750,32 +866,225 @@ ScenarioResult RunCurlHttpsGet(AppContext& ctx) {
     return result;
 }
 
-ScenarioResult RunUdpEcho(AppContext& ctx) {
-    ScenarioResult result { .name = "udp_echo" };
-
+bool PrepareUdpTarget(AppContext& ctx, ScenarioResult& result, ResolvedEndpoint& endpoint) {
     if (config::UdpHost[0] == '\0' || config::UdpPort == 0) {
         result.skipped = true;
         result.detail = "udp target not configured";
-        logger::Status(ctx, "Running UDP echo skipped; no target configured");
         logger::Log(ctx, "scenario=%s skipped: %s", result.name.c_str(), result.detail.c_str());
-        return result;
+        return false;
     }
 
-    logger::Status(ctx, "Running UDP echo to %s:%u", config::UdpHost, config::UdpPort);
+    return ResolveIpv4(ctx, config::UdpHost, config::UdpPort, SOCK_DGRAM, endpoint, result.detail);
+}
 
-    ResolvedEndpoint endpoint {};
-    if (!ResolveIpv4(ctx, config::UdpHost, config::UdpPort, SOCK_DGRAM, endpoint, result.detail)) {
-        return result;
-    }
-
+int OpenUdpSocket(ScenarioResult& result) {
     const int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sockfd < 0) {
         result.err = errno;
         result.detail = "socket failed: " + FormatErrno(errno);
+    }
+    return sockfd;
+}
+
+ScenarioResult RunUdpSocketOnly(AppContext& ctx) {
+    ScenarioResult result { .name = "udp_socket_only" };
+    logger::Status(ctx, "Opening UDP socket only");
+
+    const int sockfd = OpenUdpSocket(result);
+    if (sockfd < 0) {
         return result;
     }
 
-    SetSocketTimeouts(sockfd);
+    result.success = true;
+    result.detail = "socket opened and closed";
+    close(sockfd);
+    return result;
+}
+
+ScenarioResult RunUdpSocketSetSockOpt(AppContext& ctx) {
+    ScenarioResult result { .name = "udp_socket_setsockopt" };
+    logger::Status(ctx, "Opening UDP socket and setting timeouts");
+
+    const int sockfd = OpenUdpSocket(result);
+    if (sockfd < 0) {
+        return result;
+    }
+
+    if (!SetSocketTimeouts(ctx, sockfd, result)) {
+        close(sockfd);
+        return result;
+    }
+    result.success = true;
+    result.detail = "socket opened, timeouts set, and closed";
+    close(sockfd);
+    return result;
+}
+
+ScenarioResult RunUdpSetSockOptReuseAddr(AppContext& ctx) {
+    ScenarioResult result { .name = "udp_setsockopt_reuseaddr" };
+    logger::Status(ctx, "Opening UDP socket and setting SO_REUSEADDR");
+
+    const int sockfd = OpenUdpSocket(result);
+    if (sockfd < 0) {
+        return result;
+    }
+
+    if (!TraceSetSockOptReuseAddr(ctx, sockfd, result)) {
+        close(sockfd);
+        return result;
+    }
+
+    result.success = true;
+    result.detail = "socket opened, SO_REUSEADDR set, and closed";
+    close(sockfd);
+    return result;
+}
+
+ScenarioResult RunUdpSetSockOptRecvTimeout(AppContext& ctx) {
+    ScenarioResult result { .name = "udp_setsockopt_recv_timeout" };
+    logger::Status(ctx, "Opening UDP socket and setting SO_RCVTIMEO");
+
+    const int sockfd = OpenUdpSocket(result);
+    if (sockfd < 0) {
+        return result;
+    }
+
+    if (!TraceSetSockOptRecvTimeout(ctx, sockfd, result)) {
+        close(sockfd);
+        return result;
+    }
+
+    result.success = true;
+    result.detail = "socket opened, SO_RCVTIMEO set, and closed";
+    close(sockfd);
+    return result;
+}
+
+ScenarioResult RunUdpSetSockOptSendTimeout(AppContext& ctx) {
+    ScenarioResult result { .name = "udp_setsockopt_send_timeout" };
+    logger::Status(ctx, "Opening UDP socket and setting SO_SNDTIMEO");
+
+    const int sockfd = OpenUdpSocket(result);
+    if (sockfd < 0) {
+        return result;
+    }
+
+    if (!TraceSetSockOptSendTimeout(ctx, sockfd, result)) {
+        close(sockfd);
+        return result;
+    }
+
+    result.success = true;
+    result.detail = "socket opened, SO_SNDTIMEO set, and closed";
+    close(sockfd);
+    return result;
+}
+
+ScenarioResult RunUdpSendToOnly(AppContext& ctx) {
+    ScenarioResult result { .name = "udp_sendto_only" };
+    logger::Status(ctx, "Running UDP sendto-only to %s:%u", config::UdpHost, config::UdpPort);
+
+    ResolvedEndpoint endpoint {};
+    if (!PrepareUdpTarget(ctx, result, endpoint)) {
+        return result;
+    }
+
+    const int sockfd = OpenUdpSocket(result);
+    if (sockfd < 0) {
+        return result;
+    }
+
+    if constexpr (config::EnableUdpSendToOnlyTimeouts) {
+        if (!SetSocketTimeouts(ctx, sockfd, result)) {
+            close(sockfd);
+            return result;
+        }
+    } else {
+        logger::Log(ctx, "udp_sendto_only skipping internal SO_RCVTIMEO/SO_SNDTIMEO");
+    }
+
+    const ssize_t send_rc = sendto(
+        sockfd,
+        config::UdpPayload,
+        std::strlen(config::UdpPayload),
+        0,
+        reinterpret_cast<const struct sockaddr *>(&endpoint.addr),
+        endpoint.addr_len);
+    if (send_rc < 0) {
+        result.err = errno;
+        result.detail = "sendto failed: " + FormatErrno(errno);
+        close(sockfd);
+        return result;
+    }
+
+    result.success = true;
+    result.bytes_sent = static_cast<std::size_t>(send_rc);
+    result.detail =
+        "target_ip=" + endpoint.ip +
+        " internal_timeouts=" + (config::EnableUdpSendToOnlyTimeouts ? "enabled" : "disabled");
+    close(sockfd);
+    return result;
+}
+
+ScenarioResult RunUdpConnectSendOnly(AppContext& ctx) {
+    ScenarioResult result { .name = "udp_connect_send_only" };
+    logger::Status(ctx, "Running UDP connect+send-only to %s:%u", config::UdpHost, config::UdpPort);
+
+    ResolvedEndpoint endpoint {};
+    if (!PrepareUdpTarget(ctx, result, endpoint)) {
+        return result;
+    }
+
+    const int sockfd = OpenUdpSocket(result);
+    if (sockfd < 0) {
+        return result;
+    }
+
+    if (!SetSocketTimeouts(ctx, sockfd, result)) {
+        close(sockfd);
+        return result;
+    }
+    if (connect(sockfd, reinterpret_cast<const struct sockaddr *>(&endpoint.addr), endpoint.addr_len) != 0) {
+        result.err = errno;
+        result.detail = "connect failed: " + FormatErrno(errno);
+        close(sockfd);
+        return result;
+    }
+
+    const ssize_t send_rc = send(sockfd, config::UdpPayload, std::strlen(config::UdpPayload), 0);
+    if (send_rc < 0) {
+        result.err = errno;
+        result.detail = "send failed: " + FormatErrno(errno);
+        close(sockfd);
+        return result;
+    }
+
+    result.success = true;
+    result.bytes_sent = static_cast<std::size_t>(send_rc);
+    result.detail = "connected_ip=" + endpoint.ip;
+    close(sockfd);
+    return result;
+}
+
+ScenarioResult RunUdpEcho(AppContext& ctx) {
+    ScenarioResult result { .name = "udp_echo" };
+
+    logger::Status(ctx, "Running UDP echo to %s:%u", config::UdpHost, config::UdpPort);
+
+    ResolvedEndpoint endpoint {};
+    if (!PrepareUdpTarget(ctx, result, endpoint)) {
+        return result;
+    }
+
+    const int sockfd = OpenUdpSocket(result);
+    if (sockfd < 0) {
+        return result;
+    }
+
+    if (!SetSocketTimeouts(ctx, sockfd, result)) {
+        close(sockfd);
+        return result;
+    }
 
     const ssize_t send_rc = sendto(
         sockfd,
@@ -914,41 +1223,76 @@ void LogScenarioResult(AppContext& ctx, const ScenarioResult& result) {
         result.detail.c_str());
 }
 
-template <typename ScenarioFn>
 void RunScenarioStep(
     AppContext& ctx,
     std::vector<ScenarioResult>& results,
-    const char *next_name,
-    ScenarioFn&& scenario_fn) {
-    results.push_back(scenario_fn(ctx));
+    const ScenarioStep& step,
+    const char *next_enabled_name) {
+    if (!step.enabled) {
+        ScenarioResult skipped { .name = step.name };
+        skipped.skipped = true;
+        skipped.detail = "disabled by config";
+        results.push_back(std::move(skipped));
+        LogScenarioResult(ctx, results.back());
+        return;
+    }
+
+    results.push_back(step.fn(ctx));
     LogScenarioResult(ctx, results.back());
 
-    if (next_name != nullptr && config::ScenarioStepDelayMs > 0) {
+    if (next_enabled_name != nullptr && config::ScenarioStepDelayMs > 0) {
         logger::Log(
             ctx,
             "scenario_pause next=%s duration_ms=%u",
-            next_name,
+            next_enabled_name,
             config::ScenarioStepDelayMs);
         SleepMilliseconds(config::ScenarioStepDelayMs);
     }
 }
 
+const char *FindNextEnabledScenarioName(const ScenarioStep *steps, std::size_t count, std::size_t current_index) {
+    for (std::size_t i = current_index + 1; i < count; ++i) {
+        if (steps[i].enabled) {
+            return steps[i].name;
+        }
+    }
+    return nullptr;
+}
+
 } // namespace
 
 std::vector<ScenarioResult> RunScenarios(AppContext& ctx) {
-    std::vector<ScenarioResult> results;
-    results.reserve(10);
+    const ScenarioStep steps[] = {
+        { "manual_bsd_lifecycle", config::EnableScenarioManualBsdLifecycle, RunManualBsdLifecycle },
+        { "environment_snapshot", config::EnableScenarioEnvironmentSnapshot, RunEnvironmentSnapshot },
+        { "dns_resolve", config::EnableScenarioDnsResolve, RunDnsResolve },
+        { "plain_tcp_connect", config::EnableScenarioPlainTcpConnect, RunPlainTcpConnect },
+        { "tcp_idle_hold", config::EnableScenarioIdleTcpHold, RunIdleTcpHold },
+        { "http_get", config::EnableScenarioHttpGet, RunHttpGet },
+        { "https_get", config::EnableScenarioHttpsGet, RunHttpsGet },
+        { "curl_http_get", config::EnableScenarioCurlHttpGet, RunCurlHttpGet },
+        { "curl_https_get", config::EnableScenarioCurlHttpsGet, RunCurlHttpsGet },
+        { "udp_socket_only", config::EnableScenarioUdpSocketOnly, RunUdpSocketOnly },
+        { "udp_socket_setsockopt", config::EnableScenarioUdpSocketSetSockOpt, RunUdpSocketSetSockOpt },
+        { "udp_setsockopt_reuseaddr", config::EnableScenarioUdpSetSockOptReuseAddr, RunUdpSetSockOptReuseAddr },
+        { "udp_setsockopt_recv_timeout", config::EnableScenarioUdpSetSockOptRecvTimeout, RunUdpSetSockOptRecvTimeout },
+        { "udp_setsockopt_send_timeout", config::EnableScenarioUdpSetSockOptSendTimeout, RunUdpSetSockOptSendTimeout },
+        { "udp_sendto_only", config::EnableScenarioUdpSendToOnly, RunUdpSendToOnly },
+        { "udp_connect_send_only", config::EnableScenarioUdpConnectSendOnly, RunUdpConnectSendOnly },
+        { "udp_echo", config::EnableScenarioUdpEcho, RunUdpEcho },
+        { "tcp_multi_connect", config::EnableScenarioConcurrentTcpBurst, RunConcurrentTcpBurst },
+    };
 
-    RunScenarioStep(ctx, results, "dns_resolve", RunEnvironmentSnapshot);
-    RunScenarioStep(ctx, results, "plain_tcp_connect", RunDnsResolve);
-    RunScenarioStep(ctx, results, "tcp_idle_hold", RunPlainTcpConnect);
-    RunScenarioStep(ctx, results, "http_get", RunIdleTcpHold);
-    RunScenarioStep(ctx, results, "https_get", RunHttpGet);
-    RunScenarioStep(ctx, results, "curl_http_get", RunHttpsGet);
-    RunScenarioStep(ctx, results, "curl_https_get", RunCurlHttpGet);
-    RunScenarioStep(ctx, results, "udp_echo", RunCurlHttpsGet);
-    RunScenarioStep(ctx, results, "tcp_multi_connect", RunUdpEcho);
-    RunScenarioStep(ctx, results, nullptr, RunConcurrentTcpBurst);
+    std::vector<ScenarioResult> results;
+    results.reserve(std::size(steps));
+
+    for (std::size_t i = 0; i < std::size(steps); ++i) {
+        RunScenarioStep(
+            ctx,
+            results,
+            steps[i],
+            FindNextEnabledScenarioName(steps, std::size(steps), i));
+    }
 
     return results;
 }

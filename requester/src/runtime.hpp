@@ -31,7 +31,10 @@ struct AppContext {
     std::string log_path;
     EnvironmentSnapshot env{};
     Result socket_initialize_rc = 0;
+    bool socket_initialized = false;
     bool applet_exit_locked = false;
+    Result nifm_initialize_rc = 0;
+    bool nifm_initialized = false;
     Result ssl_initialize_rc = 0;
     bool ssl_initialized = false;
     CURLSH *curl_share = nullptr;

@@ -1,6 +1,7 @@
 #include "mitm_service.hpp"
 
 #include <atomic>
+#include <mutex>
 
 #include <stratosphere.hpp>
 #include <stratosphere/sf/hipc/sf_hipc_mitm_monitor.hpp>
@@ -27,6 +28,8 @@ constexpr ::ams::ncm::ProgramId OlscProgramId = ::ams::ncm::SystemProgramId::Ols
 constexpr ::ams::ncm::ProgramId SslProgramId = ::ams::ncm::SystemProgramId::Ssl;
 constexpr ::ams::ncm::ProgramId NimProgramId = ::ams::ncm::SystemProgramId::Nim;
 constexpr ::ams::ncm::ProgramId QlaunchProgramId{0x0100000000001000ul};
+constexpr ::ams::ncm::ProgramId SphairaWrapperProgramId{0x05446530ACA7E000ul};
+constexpr ::ams::ncm::ProgramId RequesterForwarderProgramId{0x05720820ABC97000ul};
 
 namespace {
 
@@ -59,6 +62,12 @@ const char *GetProgramDebugName(::ams::ncm::ProgramId program_id) {
     }
     if (program_id == QlaunchProgramId) {
         return "qlaunch";
+    }
+    if (program_id == SphairaWrapperProgramId) {
+        return "sphaira-wrapper";
+    }
+    if (program_id == RequesterForwarderProgramId) {
+        return "requester-forwarder";
     }
 
     switch (program_id.value) {
@@ -95,6 +104,12 @@ bool IsDiagnosticOverrideEnabled(const ::ams::sm::MitmProcessInfo &client_info, 
         if (client_info.program_id == NimProgramId) {
             return cfg::AllowBsdSystemNim;
         }
+        if (client_info.program_id == SphairaWrapperProgramId) {
+            return cfg::AllowBsdSystemSphairaWrapper;
+        }
+        if (client_info.program_id == RequesterForwarderProgramId) {
+            return cfg::AllowBsdSystemRequesterForwarder;
+        }
     }
 
     if (std::strcmp(service_name, "bsd:a") == 0) {
@@ -118,6 +133,8 @@ bool IsDiagnosticOverrideEnabled(const ::ams::sm::MitmProcessInfo &client_info, 
     return false;
 }
 
+const char *GetRequesterForwarderBsdMitmModeName();
+
 void LogBuildPolicy() {
     wgnx::net_probe::logger::Log(
         "MITM targets: nifm:u=%u nifm:s=%u bsd:u=%u bsd:s=%u bsd:a=%u ssl=%u ssl:s=%u",
@@ -129,17 +146,26 @@ void LogBuildPolicy() {
         static_cast<unsigned>(cfg::EnableMitmSslUser),
         static_cast<unsigned>(cfg::EnableMitmSslSystem));
     wgnx::net_probe::logger::Log(
-        "Diagnostic overrides: bsd:s[npns=%u eupld=%u olsc=%u bsdsockets=%u ssl=%u nim=%u] bsd:a[qlaunch=%u] ssl[npns=%u eupld=%u olsc=%u]",
+        "Diagnostic overrides: bsd:s[npns=%u eupld=%u olsc=%u bsdsockets=%u ssl=%u nim=%u sphaira-wrapper=%u requester-forwarder=%u] bsd:a[qlaunch=%u] ssl[npns=%u eupld=%u olsc=%u]",
         static_cast<unsigned>(cfg::AllowBsdSystemNpns),
         static_cast<unsigned>(cfg::AllowBsdSystemEupld),
         static_cast<unsigned>(cfg::AllowBsdSystemOlsc),
         static_cast<unsigned>(cfg::AllowBsdSystemBsdSockets),
         static_cast<unsigned>(cfg::AllowBsdSystemSsl),
         static_cast<unsigned>(cfg::AllowBsdSystemNim),
+        static_cast<unsigned>(cfg::AllowBsdSystemSphairaWrapper),
+        static_cast<unsigned>(cfg::AllowBsdSystemRequesterForwarder),
         static_cast<unsigned>(cfg::AllowBsdAdminQlaunch),
         static_cast<unsigned>(cfg::AllowSslNpns),
         static_cast<unsigned>(cfg::AllowSslEupld),
         static_cast<unsigned>(cfg::AllowSslOlsc));
+    wgnx::net_probe::logger::Log(
+        "Requester forwarder bsd:s MITM split: mode=%s (%u)",
+        GetRequesterForwarderBsdMitmModeName(),
+        static_cast<unsigned>(cfg::RequesterForwarderBsdMitm));
+    wgnx::net_probe::logger::Log(
+        "MITM HIPC diagnostics: advertise_zero_pointer_buffer_for_requester_bsd=%u",
+        static_cast<unsigned>(cfg::AdvertiseZeroPointerBufferForRequesterBsd));
 }
 
 alignas(::ams::os::MemoryPageSize) constinit u8 g_mitm_object_heap[32 * 1024];
@@ -159,6 +185,9 @@ constinit bool g_shutdown_requested = false;
 constinit std::atomic<u32> g_bsd_system_pending_mitm_sessions = 0;
 constinit std::atomic<u32> g_bsd_system_active_mitm_sessions = 0;
 constinit std::atomic<u64> g_bsd_system_total_mitm_denials = 0;
+constinit ::ams::os::SdkMutex g_requester_forwarder_bsd_ordinal_lock;
+constinit u64 g_requester_forwarder_bsd_ordinal_pid = 0;
+constinit u32 g_requester_forwarder_bsd_ordinal_count = 0;
 
 enum class ShouldMitmPolicyReason : u32 {
     DefaultAllow = 1,
@@ -166,6 +195,7 @@ enum class ShouldMitmPolicyReason : u32 {
     DenylistedProgram = 3,
     BsdSystemSessionOutstanding = 4,
     DiagnosticOverride = 5,
+    RequesterForwarderOrdinalDeny = 6,
 };
 
 bool IsBsdSystemServiceName(const ::ams::sm::ServiceName &service_name) {
@@ -202,7 +232,9 @@ void RecordShouldMitmPolicyDecision(
     bool result,
     ShouldMitmPolicyReason reason,
     u32 pending_count,
-    u32 active_count) {
+    u32 active_count,
+    u32 holder_tag = 0,
+    u32 detail_value3 = 0) {
     ::ams::sf::hipc::mitm_monitor::RecordQueryTraceDetail(
         ::ams::sf::hipc::mitm_monitor::QueryTraceEventType::ShouldMitmPolicyDecision,
         ::ams::sm::ServiceName::Encode(service_name),
@@ -210,14 +242,62 @@ void RecordShouldMitmPolicyDecision(
         true,
         result,
         ::ams::os::InvalidNativeHandle,
-        0,
+        holder_tag,
         static_cast<u32>(reason),
         pending_count,
         active_count,
         static_cast<u32>(g_bsd_system_total_mitm_denials.load(std::memory_order_relaxed)),
-        0,
+        detail_value3,
         false,
         ::ams::ResultSuccess());
+}
+
+const char *GetRequesterForwarderBsdMitmModeName() {
+    switch (cfg::RequesterForwarderBsdMitm) {
+        case cfg::RequesterForwarderBsdMitmMode::None:
+            return "none";
+        case cfg::RequesterForwarderBsdMitmMode::FirstOnly:
+            return "first-only";
+        case cfg::RequesterForwarderBsdMitmMode::SecondOnly:
+            return "second-only";
+        case cfg::RequesterForwarderBsdMitmMode::Both:
+            return "both";
+        default:
+            return "unknown";
+    }
+}
+
+bool ShouldMitmRequesterForwarderBsdOrdinal(
+    const ::ams::sm::MitmProcessInfo &client_info,
+    u32 *out_ordinal) {
+    const u64 pid = client_info.process_id.value;
+    u32 ordinal = 0;
+
+    {
+        std::scoped_lock lk(g_requester_forwarder_bsd_ordinal_lock);
+        if (g_requester_forwarder_bsd_ordinal_pid != pid) {
+            g_requester_forwarder_bsd_ordinal_pid = pid;
+            g_requester_forwarder_bsd_ordinal_count = 0;
+        }
+        ordinal = ++g_requester_forwarder_bsd_ordinal_count;
+    }
+
+    if (out_ordinal != nullptr) {
+        *out_ordinal = ordinal;
+    }
+
+    switch (cfg::RequesterForwarderBsdMitm) {
+        case cfg::RequesterForwarderBsdMitmMode::None:
+            return false;
+        case cfg::RequesterForwarderBsdMitmMode::FirstOnly:
+            return ordinal == 1;
+        case cfg::RequesterForwarderBsdMitmMode::SecondOnly:
+            return ordinal == 2;
+        case cfg::RequesterForwarderBsdMitmMode::Both:
+            return true;
+        default:
+            return false;
+    }
 }
 
 void NoteBsdSystemMitmPending() {
@@ -299,6 +379,13 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
         }
 
         ~PassiveMitmService() {
+            wgnx::net_probe::logger::Log(
+                "PassiveMitmService destructor begin: service=%.*s session_id=%llu pid=0x%016llx program_id=0x%016llx",
+                static_cast<int>(::ams::sm::ServiceName::MaxLength),
+                m_service_name.name,
+                static_cast<unsigned long long>(m_session_id),
+                static_cast<unsigned long long>(this->m_client_info.process_id.value),
+                static_cast<unsigned long long>(this->m_client_info.program_id.value));
             if (this->m_forward_service != nullptr) {
                 mitm_trace::LogForwardServiceState(
                     m_service_name,
@@ -316,6 +403,11 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
             if (IsBsdSystemServiceName(m_service_name)) {
                 DropBsdSystemMitmActive("service_destructor");
             }
+            wgnx::net_probe::logger::Log(
+                "PassiveMitmService destructor end: service=%.*s session_id=%llu",
+                static_cast<int>(::ams::sm::ServiceName::MaxLength),
+                m_service_name.name,
+                static_cast<unsigned long long>(m_session_id));
         }
 
         static bool IsSelfProgram(const ::ams::sm::MitmProcessInfo &client_info) {
@@ -328,7 +420,9 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
                 || client_info.program_id == OlscProgramId
                 || client_info.program_id == BsdSocketsProgramId
                 || client_info.program_id == SslProgramId
-                || client_info.program_id == NimProgramId;
+                || client_info.program_id == NimProgramId
+                || client_info.program_id == SphairaWrapperProgramId
+                || client_info.program_id == RequesterForwarderProgramId;
         }
 
         static bool IsBsdAdminDenylistedProgram(const ::ams::sm::MitmProcessInfo &client_info) {
@@ -391,6 +485,39 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
                 return false;
             }
 
+            if (client_info.program_id == RequesterForwarderProgramId && cfg::AllowBsdSystemRequesterForwarder) {
+                u32 ordinal = 0;
+                const bool allow_for_ordinal = ShouldMitmRequesterForwarderBsdOrdinal(client_info, std::addressof(ordinal));
+                const u32 pending_count = g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed);
+                const u32 active_count = g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed);
+                RecordShouldMitmPolicyDecision(
+                    "bsd:s",
+                    client_info,
+                    allow_for_ordinal,
+                    allow_for_ordinal ? ShouldMitmPolicyReason::DiagnosticOverride : ShouldMitmPolicyReason::RequesterForwarderOrdinalDeny,
+                    pending_count,
+                    active_count,
+                    ordinal,
+                    static_cast<u32>(cfg::RequesterForwarderBsdMitm));
+                LogShouldMitmDecision(
+                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) requester_forwarder_ordinal=%u mode=%s result=%u",
+                    static_cast<unsigned long long>(client_info.process_id.value),
+                    static_cast<unsigned long long>(client_info.program_id.value),
+                    GetProgramDebugName(client_info.program_id),
+                    ordinal,
+                    GetRequesterForwarderBsdMitmModeName(),
+                    allow_for_ordinal ? 1u : 0u);
+                if (!allow_for_ordinal) {
+                    return false;
+                }
+
+                const bool should_mitm = ShouldMitmForService("bsd:s", client_info);
+                if (should_mitm) {
+                    NoteBsdSystemMitmPending();
+                }
+                return should_mitm;
+            }
+
             if (IsBsdSystemDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "bsd:s")) {
                 RecordShouldMitmPolicyDecision(
                     "bsd:s",
@@ -409,24 +536,6 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
 
             const u32 pending_count = g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed);
             const u32 active_count = g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed);
-            if (pending_count != 0 || active_count != 0) {
-                g_bsd_system_total_mitm_denials.fetch_add(1, std::memory_order_relaxed);
-                RecordShouldMitmPolicyDecision(
-                    "bsd:s",
-                    client_info,
-                    false,
-                    ShouldMitmPolicyReason::BsdSystemSessionOutstanding,
-                    pending_count,
-                    active_count);
-                LogShouldMitmDecision(
-                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=outstanding pending=%u active=%u",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id),
-                    pending_count,
-                    active_count);
-                return false;
-            }
 
             if (IsDiagnosticOverrideEnabled(client_info, "bsd:s")) {
                 RecordShouldMitmPolicyDecision(
@@ -720,7 +829,8 @@ constinit ::ams::util::TypedStorage<ControlServerManager> g_control_server_manag
 constinit ControlServerManager *g_control_server_manager = nullptr;
 constinit ::ams::sf::UnmanagedServiceObject<IProbeControlService, ProbeControlService> g_control_service_object;
 
-alignas(::ams::os::ThreadStackAlignment) constinit u8 g_mitm_server_thread_stack[16 * 1024];
+constexpr size_t MitmServerThreadStackSize = 64 * 1024;
+alignas(::ams::os::ThreadStackAlignment) constinit u8 g_mitm_server_thread_stack[MitmServerThreadStackSize];
 constinit ::ams::os::ThreadType g_mitm_server_thread;
 alignas(::ams::os::ThreadStackAlignment) constinit u8 g_control_server_thread_stack[8 * 1024];
 constinit ::ams::os::ThreadType g_control_server_thread;

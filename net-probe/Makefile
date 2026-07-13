@@ -80,7 +80,7 @@ dist	: $(BUILD)
 	@echo "prepared Atmosphere layout in $(DISTDIR)"
 
 libs	:
-	@$(foreach lib,$(LIBNAMES),$(MAKE) --no-print-directory -C $(TOPDIR)/$(lib) && ) true
+	@$(foreach lib,$(LIBNAMES),$(MAKE) --no-print-directory -C $(TOPDIR)/$(lib) ATMOSPHERE_DEFINES='$(ATMOSPHERE_DEFINES) $(EXTRA_DEFINES)' && ) true
 
 $(BUILD)	: libs
 	@[ -d $@ ] || mkdir -p $@

@@ -7,6 +7,52 @@ namespace requester::config {
 
 constexpr char LogDirectory[] = "sdmc:/nxrv/requester";
 
+constexpr bool EnableAppletExitLock = false;
+constexpr bool EnableSocketInitialize = false;
+constexpr bool EnableNifmInitialize = false;
+constexpr bool EnableSslInitialize = false;
+constexpr bool EnableCurlInitialize = false;
+constexpr bool EnableCurlShare = false;
+
+/*
+ * Raw single-session bsd:s lifecycle matching libnx initialization: open the
+ * root and monitor services, register the transfer memory, then associate the
+ * monitor session with the returned client ID. A single session does not need
+ * a cloned root session.
+ */
+constexpr bool EnableScenarioManualBsdLifecycle = true;
+constexpr bool ManualBsdOpenMonitorSession = true;
+constexpr bool ManualBsdCreateTransferMemory = true;
+constexpr bool ManualBsdRegisterClient = true;
+constexpr bool ManualBsdStartMonitoring = true;
+constexpr bool ManualBsdCloneRootSession = false;
+
+static_assert(!EnableScenarioManualBsdLifecycle || !EnableSocketInitialize);
+static_assert(!ManualBsdRegisterClient || ManualBsdCreateTransferMemory);
+static_assert(!ManualBsdStartMonitoring || ManualBsdRegisterClient);
+static_assert(!ManualBsdStartMonitoring || ManualBsdOpenMonitorSession);
+static_assert(!ManualBsdCloneRootSession || ManualBsdRegisterClient);
+
+/* Ordinary socket scenarios stay disabled while the raw BSD ladder is active. */
+constexpr bool EnableScenarioEnvironmentSnapshot = false;
+constexpr bool EnableScenarioDnsResolve = false;
+constexpr bool EnableScenarioPlainTcpConnect = false;
+constexpr bool EnableScenarioIdleTcpHold = false;
+constexpr bool EnableScenarioHttpGet = false;
+constexpr bool EnableScenarioHttpsGet = false;
+constexpr bool EnableScenarioCurlHttpGet = false;
+constexpr bool EnableScenarioCurlHttpsGet = false;
+constexpr bool EnableScenarioUdpSocketOnly = false;
+constexpr bool EnableScenarioUdpSocketSetSockOpt = false;
+constexpr bool EnableScenarioUdpSetSockOptReuseAddr = false;
+constexpr bool EnableScenarioUdpSetSockOptRecvTimeout = false;
+constexpr bool EnableScenarioUdpSetSockOptSendTimeout = false;
+constexpr bool EnableScenarioUdpSendToOnly = false;
+constexpr bool EnableUdpSendToOnlyTimeouts = false;
+constexpr bool EnableScenarioUdpConnectSendOnly = false;
+constexpr bool EnableScenarioUdpEcho = false;
+constexpr bool EnableScenarioConcurrentTcpBurst = false;
+
 constexpr SocketInitConfig SocketConfigApplication = {
     .tcp_tx_buf_size = 1024 * 64,
     .tcp_rx_buf_size = 1024 * 64,
@@ -15,7 +61,7 @@ constexpr SocketInitConfig SocketConfigApplication = {
     .udp_tx_buf_size = 0x2400,
     .udp_rx_buf_size = 0xA500,
     .sb_efficiency = 8,
-    .num_bsd_sessions = 3,
+    .num_bsd_sessions = 1,
     .bsd_service_type = BsdServiceType_Auto,
 };
 
@@ -27,7 +73,7 @@ constexpr SocketInitConfig SocketConfigApplet = {
     .udp_tx_buf_size = 0x2400,
     .udp_rx_buf_size = 0xA500,
     .sb_efficiency = 4,
-    .num_bsd_sessions = 3,
+    .num_bsd_sessions = 1,
     .bsd_service_type = BsdServiceType_Auto,
 };
 

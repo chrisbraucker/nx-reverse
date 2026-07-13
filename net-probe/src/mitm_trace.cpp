@@ -1625,6 +1625,62 @@ bool GetFirstRequestInputView(
     return false;
 }
 
+bool GetRequestInputViewAt(
+    const ::HipcParsedRequest &request,
+    size_t ordinal,
+    const u8 **out_bytes,
+    size_t *out_size,
+    bool *out_is_pointer_static) {
+    if (out_bytes == nullptr || out_size == nullptr) {
+        return false;
+    }
+
+    size_t current = 0;
+    auto try_match = [&](const u8 *bytes, size_t size, bool is_pointer_static) {
+        if (bytes == nullptr || size == 0) {
+            return false;
+        }
+        if (current++ != ordinal) {
+            return false;
+        }
+        *out_bytes = bytes;
+        *out_size = size;
+        if (out_is_pointer_static != nullptr) {
+            *out_is_pointer_static = is_pointer_static;
+        }
+        return true;
+    };
+
+    for (u32 i = 0; i < request.meta.num_send_buffers; ++i) {
+        const u8 *bytes = nullptr;
+        size_t size = 0;
+        if (GetBufferView(request.data.send_buffers[i], std::addressof(bytes), std::addressof(size)) &&
+            try_match(bytes, size, false)) {
+            return true;
+        }
+    }
+
+    for (u32 i = 0; i < request.meta.num_send_statics; ++i) {
+        const u8 *bytes = nullptr;
+        size_t size = 0;
+        if (GetStaticView(request.data.send_statics[i], std::addressof(bytes), std::addressof(size)) &&
+            try_match(bytes, size, true)) {
+            return true;
+        }
+    }
+
+    for (u32 i = 0; i < request.meta.num_exch_buffers; ++i) {
+        const u8 *bytes = nullptr;
+        size_t size = 0;
+        if (GetBufferView(request.data.exch_buffers[i], std::addressof(bytes), std::addressof(size)) &&
+            try_match(bytes, size, false)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool GetFirstResponseOutputView(
     const ::HipcParsedRequest &request,
     const ::HipcResponse &response,
@@ -1666,13 +1722,14 @@ bool TryAppendBsdSockaddrRequestSummary(
         return false;
     }
 
-    if (command_id != 13 && command_id != 14) {
+    if (command_id != 11 && command_id != 13 && command_id != 14) {
         return false;
     }
 
     const u8 *bytes = nullptr;
     size_t size = 0;
-    if (!GetFirstRequestInputView(request, std::addressof(bytes), std::addressof(size), nullptr)) {
+    const size_t sockaddr_ordinal = (command_id == 11) ? 1 : 0;
+    if (!GetRequestInputViewAt(request, sockaddr_ordinal, std::addressof(bytes), std::addressof(size), nullptr)) {
         return false;
     }
 
@@ -1684,6 +1741,142 @@ bool TryAppendBsdSockaddrRequestSummary(
     const char *label = (command_id == 13) ? "bind" : "peer";
     AppendSummaryText(out, out_size, "%s={%s}", label, sockaddr_text);
     return true;
+}
+
+bool TryAppendBsdPayloadRequestSummary(
+    char *out,
+    size_t out_size,
+    u32 command_id,
+    const ::HipcParsedRequest &request) {
+    if (out == nullptr || out_size == 0 || (command_id != 10 && command_id != 11 && command_id != 24)) {
+        return false;
+    }
+
+    const u8 *bytes = nullptr;
+    size_t size = 0;
+    bool is_pointer_static = false;
+    if (!GetRequestInputViewAt(request, 0, std::addressof(bytes), std::addressof(size), std::addressof(is_pointer_static))) {
+        return false;
+    }
+
+    char preview[(HexPreviewBytes * 2) + 1] = {};
+    HexEncode(bytes, std::min<size_t>(HexPreviewBytes, size), preview, sizeof(preview));
+    AppendSummaryText(
+        out,
+        out_size,
+        "payload_len=%zu payload_kind=%s payload_hex=%s",
+        size,
+        is_pointer_static ? "pointer_static" : "map_alias",
+        preview);
+    return true;
+}
+
+void AppendRequestBufferLayoutSummary(char *out, size_t out_size, const ::HipcParsedRequest &request) {
+    if (out == nullptr || out_size == 0) {
+        return;
+    }
+
+    char summary[384];
+    int cursor = std::snprintf(
+        summary,
+        sizeof(summary),
+        "req_bufs=ss[");
+    cursor = ClampLength(cursor, sizeof(summary));
+    for (u32 i = 0; i < request.meta.num_send_statics && cursor < static_cast<int>(sizeof(summary)) - 1; ++i) {
+        cursor += std::snprintf(
+            summary + cursor,
+            sizeof(summary) - cursor,
+            "%s%zu",
+            i == 0 ? "" : ",",
+            hipcGetStaticSize(std::addressof(request.data.send_statics[i])));
+        cursor = ClampLength(cursor, sizeof(summary));
+    }
+    cursor += std::snprintf(summary + cursor, sizeof(summary) - cursor, "] sm[");
+    cursor = ClampLength(cursor, sizeof(summary));
+    for (u32 i = 0; i < request.meta.num_send_buffers && cursor < static_cast<int>(sizeof(summary)) - 1; ++i) {
+        cursor += std::snprintf(
+            summary + cursor,
+            sizeof(summary) - cursor,
+            "%s%zu",
+            i == 0 ? "" : ",",
+            hipcGetBufferSize(std::addressof(request.data.send_buffers[i])));
+        cursor = ClampLength(cursor, sizeof(summary));
+    }
+    cursor += std::snprintf(summary + cursor, sizeof(summary) - cursor, "] rm[");
+    cursor = ClampLength(cursor, sizeof(summary));
+    for (u32 i = 0; i < request.meta.num_recv_buffers && cursor < static_cast<int>(sizeof(summary)) - 1; ++i) {
+        cursor += std::snprintf(
+            summary + cursor,
+            sizeof(summary) - cursor,
+            "%s%zu",
+            i == 0 ? "" : ",",
+            hipcGetBufferSize(std::addressof(request.data.recv_buffers[i])));
+        cursor = ClampLength(cursor, sizeof(summary));
+    }
+    cursor += std::snprintf(summary + cursor, sizeof(summary) - cursor, "] xm[");
+    cursor = ClampLength(cursor, sizeof(summary));
+    for (u32 i = 0; i < request.meta.num_exch_buffers && cursor < static_cast<int>(sizeof(summary)) - 1; ++i) {
+        cursor += std::snprintf(
+            summary + cursor,
+            sizeof(summary) - cursor,
+            "%s%zu",
+            i == 0 ? "" : ",",
+            hipcGetBufferSize(std::addressof(request.data.exch_buffers[i])));
+        cursor = ClampLength(cursor, sizeof(summary));
+    }
+    cursor += std::snprintf(summary + cursor, sizeof(summary) - cursor, "]");
+    summary[sizeof(summary) - 1] = '\0';
+    AppendSummaryText(out, out_size, "%s", summary);
+}
+
+void AppendResponseBufferLayoutSummary(
+    char *out,
+    size_t out_size,
+    const ::HipcParsedRequest &request,
+    const ::HipcResponse &response,
+    bool have_response) {
+    if (out == nullptr || out_size == 0) {
+        return;
+    }
+
+    char summary[256];
+    int cursor = std::snprintf(summary, sizeof(summary), "resp_bufs=rm[");
+    cursor = ClampLength(cursor, sizeof(summary));
+    for (u32 i = 0; i < request.meta.num_recv_buffers && cursor < static_cast<int>(sizeof(summary)) - 1; ++i) {
+        cursor += std::snprintf(
+            summary + cursor,
+            sizeof(summary) - cursor,
+            "%s%zu",
+            i == 0 ? "" : ",",
+            hipcGetBufferSize(std::addressof(request.data.recv_buffers[i])));
+        cursor = ClampLength(cursor, sizeof(summary));
+    }
+    cursor += std::snprintf(summary + cursor, sizeof(summary) - cursor, "] xm[");
+    cursor = ClampLength(cursor, sizeof(summary));
+    for (u32 i = 0; i < request.meta.num_exch_buffers && cursor < static_cast<int>(sizeof(summary)) - 1; ++i) {
+        cursor += std::snprintf(
+            summary + cursor,
+            sizeof(summary) - cursor,
+            "%s%zu",
+            i == 0 ? "" : ",",
+            hipcGetBufferSize(std::addressof(request.data.exch_buffers[i])));
+        cursor = ClampLength(cursor, sizeof(summary));
+    }
+    cursor += std::snprintf(summary + cursor, sizeof(summary) - cursor, "] rs[");
+    cursor = ClampLength(cursor, sizeof(summary));
+    const u32 static_count = have_response ? response.num_statics : 0;
+    for (u32 i = 0; i < static_count && cursor < static_cast<int>(sizeof(summary)) - 1; ++i) {
+        cursor += std::snprintf(
+            summary + cursor,
+            sizeof(summary) - cursor,
+            "%s%zu",
+            i == 0 ? "" : ",",
+            hipcGetStaticSize(std::addressof(response.statics[i])));
+        cursor = ClampLength(cursor, sizeof(summary));
+    }
+    cursor += std::snprintf(summary + cursor, sizeof(summary) - cursor, "]");
+    summary[sizeof(summary) - 1] = '\0';
+    AppendSummaryText(out, out_size, "%s", summary);
 }
 
 bool TryAppendBsdSockOptRequestSummary(
@@ -2546,7 +2739,19 @@ void FormatBsdSemanticResponseSummary(
     }
 
     out[0] = '\0';
-    if (!IsKnownBsdObjectPath(object_path) || response_decode.payload_size < (2 * sizeof(s32))) {
+    if (!IsKnownBsdObjectPath(object_path)) {
+        return;
+    }
+
+    if (command_id == 0) {
+        u64 assigned_pid = 0;
+        if (ReadPod(std::addressof(assigned_pid), response_decode.payload_bytes, response_decode.payload_size, 0)) {
+            std::snprintf(out, out_size, "assigned_pid=0x%016llX", static_cast<unsigned long long>(assigned_pid));
+        }
+        return;
+    }
+
+    if (response_decode.payload_size < (2 * sizeof(s32))) {
         return;
     }
 
@@ -2558,20 +2763,6 @@ void FormatBsdSemanticResponseSummary(
     }
 
     switch (command_id) {
-        case 0: {
-            u64 assigned_pid = 0;
-            if (ReadPod(std::addressof(assigned_pid), response_decode.payload_bytes, response_decode.payload_size, 8)) {
-                std::snprintf(
-                    out,
-                    out_size,
-                    "ret=%d errno=%d assigned_pid=0x%016llX",
-                    ret,
-                    errno_value,
-                    static_cast<unsigned long long>(assigned_pid));
-                return;
-            }
-            break;
-        }
         case 9:
         case 12:
         case 15:
@@ -3812,8 +4003,8 @@ void EmitBsdSemanticRecord(
 
     char object_kind[48] = {};
     char command_name[64] = {};
-    char request_summary[384] = {};
-    char response_summary[256] = {};
+    char request_summary[768] = {};
+    char response_summary[512] = {};
     GetBsdObjectKindAndCommandName(
         object_path,
         request_info.command_id,
@@ -3835,6 +4026,15 @@ void EmitBsdSemanticRecord(
         response_decode);
 
     if (have_request && request != nullptr) {
+        AppendRequestBufferLayoutSummary(
+            request_summary,
+            sizeof(request_summary),
+            *request);
+        static_cast<void>(TryAppendBsdPayloadRequestSummary(
+            request_summary,
+            sizeof(request_summary),
+            request_info.command_id,
+            *request));
         static_cast<void>(TryAppendBsdSockaddrRequestSummary(
             request_summary,
             sizeof(request_summary),
@@ -3860,9 +4060,15 @@ void EmitBsdSemanticRecord(
             *request,
             response != nullptr ? *response : ::HipcResponse{},
             have_response));
+        AppendResponseBufferLayoutSummary(
+            response_summary,
+            sizeof(response_summary),
+            *request,
+            response != nullptr ? *response : ::HipcResponse{},
+            have_response);
     }
 
-    char line[1280];
+    char line[2304];
     const int written = std::snprintf(
         line,
         sizeof(line),
@@ -4006,11 +4212,40 @@ void OnForwardRequestTrace(const ams::sf::hipc::mitm_monitor::ForwardRequestTrac
         response = hipcParseResponse(ctx.response_message.GetPointer());
     }
 
-    char request_line[1024];
+    if (ShouldMirrorMonitorEventToMainLog(service_name)) {
+        logger::Log(
+            "monitor.forward_pid service=%s client_pid=0x%016llx client_program_id=%s tracked_session=%llu command_id=%u has_root_cmd=%u sent_pid=%u rewrite_mode=%u pid_before=0x%016llx pid_after=0x%016llx bsd_register_mode=%u bsd_register_blocked=%u bsd_register_spoofed=%u bsd_probe_upstream_attempted=%u bsd_probe_upstream_rc=0x%08X bsd_probe_upstream_cmif=0x%08X bsd_probe_upstream_pid=0x%016llx bsd_probe_upstream_handle=0x%08X forwarded_to_bsd_probe_upstream=%u forward_target_handle=0x%08X request_copy_handles=%u tracked_copy_handles=%u closed_copy_handles=%u request_move_handles=%u",
+            service_name,
+            static_cast<unsigned long long>(ctx.client_info.process_id.value),
+            client_program_id,
+            static_cast<unsigned long long>(ctx.session_id),
+            ctx.request_root_command_id,
+            ctx.request_has_root_command_id ? 1u : 0u,
+            ctx.request_sent_pid ? 1u : 0u,
+            ctx.request_pid_rewrite_mode,
+            static_cast<unsigned long long>(ctx.request_pid_before_preprocess),
+            static_cast<unsigned long long>(ctx.request_pid_after_preprocess),
+            ctx.request_bsd_register_client_mode,
+            ctx.request_bsd_register_client_blocked ? 1u : 0u,
+            ctx.request_bsd_register_client_spoofed ? 1u : 0u,
+            ctx.request_bsd_probe_upstream_register_attempted ? 1u : 0u,
+            ctx.request_bsd_probe_upstream_register_result.GetValue(),
+            ctx.request_bsd_probe_upstream_register_cmif_result.GetValue(),
+            static_cast<unsigned long long>(ctx.request_bsd_probe_upstream_register_pid),
+            static_cast<unsigned int>(ctx.request_bsd_probe_upstream_handle),
+            ctx.request_forwarded_to_bsd_probe_upstream ? 1u : 0u,
+            static_cast<unsigned int>(ctx.request_forward_target_handle),
+            ctx.request_num_copy_handles,
+            ctx.request_tracked_copy_handle_count,
+            ctx.request_closed_copy_handle_count,
+            ctx.request_num_move_handles);
+    }
+
+    char request_line[2304];
     const int request_written = std::snprintf(
         request_line,
         sizeof(request_line),
-        "{\"schema_version\":1,\"run_id\":\"%s\",\"scenario\":\"%s\",\"event\":\"ipc_request\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"object_id\":%u,\"request_id\":%llu,\"command_id\":%u,\"command_name\":\"%s\",\"object_kind\":\"%s\",\"known_object_kind\":\"%s\",\"object_path\":\"%s\",\"in_raw_size\":%zu,\"buffer_count\":%u,\"in_interface_count\":0,\"out_interface_expected\":0,\"copy_handle_count\":%u,\"move_handle_count\":%u,\"send_pid\":%s}\n",
+        "{\"schema_version\":1,\"run_id\":\"%s\",\"scenario\":\"%s\",\"event\":\"ipc_request\",\"ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"%s\",\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\",\"thread_id\":0,\"session_id\":%llu,\"object_id\":%u,\"request_id\":%llu,\"command_id\":%u,\"command_name\":\"%s\",\"object_kind\":\"%s\",\"known_object_kind\":\"%s\",\"object_path\":\"%s\",\"in_raw_size\":%zu,\"buffer_count\":%u,\"in_interface_count\":0,\"out_interface_expected\":0,\"copy_handle_count\":%u,\"move_handle_count\":%u,\"send_pid\":%s,\"forward_sent_pid\":%s,\"forward_has_root_command_id\":%s,\"forward_root_command_id\":%u,\"forward_pid_rewrite_mode\":%u,\"forward_pid_before_preprocess\":\"0x%016llX\",\"forward_pid_after_preprocess\":\"0x%016llX\",\"forward_bsd_register_client_mode\":%u,\"forward_bsd_register_client_blocked\":%s,\"forward_bsd_register_client_spoofed\":%s,\"forward_bsd_probe_upstream_register_attempted\":%s,\"forward_bsd_probe_upstream_register_result\":\"0x%08X\",\"forward_bsd_probe_upstream_register_cmif_result\":\"0x%08X\",\"forward_bsd_probe_upstream_register_pid\":\"0x%016llX\",\"forward_bsd_probe_upstream_handle\":\"0x%08X\",\"forwarded_to_bsd_probe_upstream\":%s,\"forward_target_handle\":\"0x%08X\",\"forward_request_copy_handle_count\":%u,\"forward_request_move_handle_count\":%u,\"forward_tracked_copy_handle_count\":%u,\"forward_closed_copy_handle_count\":%u,\"forward_copy_handle0\":\"0x%08X\",\"forward_copy_handle1\":\"0x%08X\",\"forward_copy_handle2\":\"0x%08X\",\"forward_copy_handle3\":\"0x%08X\"}\n",
         run_id,
         scenario,
         static_cast<unsigned long long>(request_ts_ns),
@@ -4029,7 +4264,31 @@ void OnForwardRequestTrace(const ams::sf::hipc::mitm_monitor::ForwardRequestTrac
         have_request ? (request.meta.num_send_statics + request.meta.num_send_buffers + request.meta.num_recv_buffers + request.meta.num_exch_buffers) : 0,
         have_request ? request.meta.num_copy_handles : 0,
         have_request ? request.meta.num_move_handles : 0,
-        have_request && request.meta.send_pid ? "true" : "false");
+        have_request && request.meta.send_pid ? "true" : "false",
+        ctx.request_sent_pid ? "true" : "false",
+        ctx.request_has_root_command_id ? "true" : "false",
+        ctx.request_root_command_id,
+        ctx.request_pid_rewrite_mode,
+        static_cast<unsigned long long>(ctx.request_pid_before_preprocess),
+        static_cast<unsigned long long>(ctx.request_pid_after_preprocess),
+        ctx.request_bsd_register_client_mode,
+        ctx.request_bsd_register_client_blocked ? "true" : "false",
+        ctx.request_bsd_register_client_spoofed ? "true" : "false",
+        ctx.request_bsd_probe_upstream_register_attempted ? "true" : "false",
+        ctx.request_bsd_probe_upstream_register_result.GetValue(),
+        ctx.request_bsd_probe_upstream_register_cmif_result.GetValue(),
+        static_cast<unsigned long long>(ctx.request_bsd_probe_upstream_register_pid),
+        static_cast<unsigned int>(ctx.request_bsd_probe_upstream_handle),
+        ctx.request_forwarded_to_bsd_probe_upstream ? "true" : "false",
+        static_cast<unsigned int>(ctx.request_forward_target_handle),
+        ctx.request_num_copy_handles,
+        ctx.request_num_move_handles,
+        ctx.request_tracked_copy_handle_count,
+        ctx.request_closed_copy_handle_count,
+        static_cast<unsigned int>(ctx.request_copy_handles[0]),
+        static_cast<unsigned int>(ctx.request_copy_handles[1]),
+        static_cast<unsigned int>(ctx.request_copy_handles[2]),
+        static_cast<unsigned int>(ctx.request_copy_handles[3]));
     if (request_written > 0) {
         AppendJsonLineForService(service_name, request_line);
     }
@@ -5109,6 +5368,24 @@ void LogSessionTrace(const ams::sf::hipc::mitm_monitor::SessionTraceContext &ctx
     if (written > 0) {
         AppendJsonLineForService(service_name_text, line);
     }
+
+    if (ShouldMirrorMonitorEventToMainLog(service_name_text)) {
+        logger::Log(
+            "monitor.session service=%s event=%s client_pid=0x%016llx client_program_id=%s tracked_session=%llu session_handle=%d peer_handle=%d has_forward=%u forward_handle=%d active_sessions=%zu active_handles=%zu total_handles=%zu outstanding_clones=%zu",
+            service_name_text,
+            event_name,
+            static_cast<unsigned long long>(ctx.client_info.process_id.value),
+            client_program_id,
+            static_cast<unsigned long long>(ctx.session_id),
+            ctx.session_handle,
+            ctx.peer_handle,
+            ctx.has_forward_handle ? 1u : 0u,
+            ctx.forward_handle,
+            remaining_count,
+            active_handle_count,
+            total_handle_count,
+            clone_count);
+    }
 }
 
 size_t GetTrackedSessionCount() {
@@ -5205,6 +5482,20 @@ void LogForwardServiceState(
         pointer_buffer_size);
     if (written > 0) {
         AppendJsonLineForService(service_name_text, line);
+    }
+
+    if (ShouldMirrorMonitorEventToMainLog(service_name_text)) {
+        logger::Log(
+            "monitor.forward service=%s phase=%s client_pid=0x%016llx client_program_id=%s tracked_session=%llu forward_handle=%d own=%u object_id=%u pointer_buffer=%u",
+            service_name_text,
+            phase != nullptr ? phase : "unknown",
+            static_cast<unsigned long long>(client_info.process_id.value),
+            client_program_id,
+            static_cast<unsigned long long>(session_id),
+            handle,
+            own_handle ? 1u : 0u,
+            object_id,
+            pointer_buffer_size);
     }
 }
 
