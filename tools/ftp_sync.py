@@ -25,10 +25,12 @@ PROBE_TITLE_ID = load_title_id(PROBE_META)
 
 REMOTE_PROBE = PurePosixPath(f"sdmc:/atmosphere/contents/{PROBE_TITLE_ID}/exefs.nsp")
 REMOTE_REQUESTER = PurePosixPath("sdmc:/switch/requester.nro")
+
 REMOTE_FATAL_ERROR_DIR = PurePosixPath("sdmc:/atmosphere/fatal_errors")
 REMOTE_FATAL_REPORT_DIR = PurePosixPath("sdmc:/atmosphere/fatal_reports")
 REMOTE_CRASH_DIR = PurePosixPath("sdmc:/atmosphere/crash_reports")
 REMOTE_ERPT_DIR = PurePosixPath("sdmc:/atmosphere/erpt_reports")
+
 REMOTE_PROBE_LOG_DIR = PurePosixPath("sdmc:/nxrv")
 
 
@@ -96,8 +98,7 @@ def ensure_remote_dirs(ftp: ftplib.FTP, remote_path: PurePosixPath) -> None:
         try:
             ftp.mkd(str(current))
         except ftplib.error_perm as exc:
-            message = str(exc)
-            if not message.startswith("550"):
+            if not str(exc).startswith("550"):
                 raise
 
 
@@ -111,14 +112,36 @@ def upload_file(ftp: ftplib.FTP, local_path: Path, remote_path: PurePosixPath) -
     print(f"uploaded {local_path.relative_to(REPO_ROOT)} -> {remote_path}")
 
 
-def download_file(ftp: ftplib.FTP, remote_path: PurePosixPath, local_path: Path, *, delete_remote: bool = False) -> None:
+def download_file(
+    ftp: ftplib.FTP,
+    remote_path: PurePosixPath,
+    local_path: Path,
+    *,
+    delete_remote: bool = False,
+) -> bool:
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    with local_path.open("wb") as handle:
-        ftp.retrbinary(f"RETR {remote_path}", handle.write)
+    temporary_path = local_path.with_name(f".{local_path.name}.part")
+    try:
+        with temporary_path.open("wb") as handle:
+            ftp.retrbinary(f"RETR {remote_path}", handle.write)
+    except ftplib.error_perm as exc:
+        temporary_path.unlink(missing_ok=True)
+        if str(exc).startswith("550"):
+            print(f"'{remote_path}' unavailable, skipping.")
+            return False
+        raise
+
+    temporary_path.replace(local_path)
     print(f"downloaded {remote_path} -> {local_path}")
     if delete_remote:
-        ftp.delete(str(remote_path))
-        print(f"deleted remote {remote_path}")
+        try:
+            ftp.delete(str(remote_path))
+            print(f"deleted remote {remote_path}")
+        except ftplib.error_perm as exc:
+            if not str(exc).startswith("550"):
+                raise
+            print(f"'{remote_path}' already absent after download.")
+    return True
 
 
 def list_remote_files(ftp: ftplib.FTP, remote_dir: PurePosixPath) -> list[str]:
@@ -191,8 +214,8 @@ def pull_remote_tree(
             continue
 
         local_dir.mkdir(parents=True, exist_ok=True)
-        download_file(ftp, remote_path, local_dir / remote_path.name, delete_remote=delete_remote)
-        downloaded += 1
+        if download_file(ftp, remote_path, local_dir / remote_path.name, delete_remote=delete_remote):
+            downloaded += 1
 
     return downloaded
 
