@@ -394,11 +394,17 @@ Those can be added once the basic requester is producing useful traces.
 
 ## Direct WireGuard Packet Scenario
 
-`wgnx_packet_udp_echo` tests API v2 without initializing BSD. It constructs a
+`wgnx_packet_udp_echo` tests API v3 without initializing BSD. It constructs a
 complete inner IPv4/UDP datagram from the `Wgnx*` values in
 `requester/src/config.hpp`, adds a random per-run token, and submits it through
 `wgnx:ctl`. Receive polling is nonblocking and bounded by
 `WgnxPacketTimeoutMs`.
+
+API v3 accepts submissions from any process that can open `wgnx:ctl`; it no
+longer resolves the caller's Program ID or requires the requester forwarder's
+Title ID at sysmodule build time. Caller PID remains part of both commands so
+the sysmodule can pin one packet-stream owner, flush stale queues when a new
+process submits, and reject receives from non-owner processes.
 
 A reply is accepted only when its IPv4 header, total length, fragmentation
 state, IPv4 checksum, UDP length, UDP checksum, source/destination addresses,

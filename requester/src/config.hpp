@@ -56,8 +56,8 @@ constexpr bool EnableUdpEchoPoll = true;
 constexpr bool EnableScenarioConcurrentTcpBurst = false;
 constexpr bool EnableScenarioWgnxUdpEcho = true;
 
-/* Direct inner-packet test through the debug-gated wgnx:ctl API v2. */
-constexpr std::uint32_t WgnxExpectedApiVersion = 2;
+/* Direct inner-packet test through the experimental wgnx:ctl API v3. */
+constexpr std::uint32_t WgnxExpectedApiVersion = 3;
 constexpr char WgnxTunnelSourceIpv4[] = "10.0.0.2";
 constexpr char WgnxUdpEchoDestinationIpv4[] = "10.1.0.2";
 constexpr std::uint16_t WgnxUdpSourcePort = 39000;
