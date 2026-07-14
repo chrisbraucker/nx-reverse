@@ -242,8 +242,20 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
         return result;
     }
 
+    wgnx::client::ScopedService service;
+    Result rc = service.open();
+    logger::Log(
+        ctx,
+        "scenario=wgnx_packet_udp_echo service_open rc=%s",
+        FormatResult(rc).c_str());
+    if (R_FAILED(rc)) {
+        result.rc = rc;
+        result.detail = "wgnx:ctl open failure";
+        return result;
+    }
+
     std::uint32_t api_version = 0;
-    Result rc = wgnx::client::GetApiVersion(&api_version);
+    rc = wgnx::client::GetApiVersion(service, &api_version);
     if (R_FAILED(rc)) {
         result.rc = rc;
         result.detail = "GetApiVersion CMIF failure";
@@ -288,7 +300,7 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
     }
 
     wgnx::PacketSubmissionResult submission{};
-    rc = wgnx::client::SubmitInnerIpv4Packet(outgoing.data(), outgoing_size, &submission);
+    rc = wgnx::client::SubmitInnerIpv4Packet(service, outgoing.data(), outgoing_size, &submission);
     result.rc = rc;
     logger::Log(
         ctx,
@@ -336,7 +348,7 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
 
     while (armGetSystemTick() < deadline) {
         wgnx::PacketReceiveResult received{};
-        rc = wgnx::client::ReceiveInnerIpv4Packet(incoming.data(), incoming.size(), &received);
+        rc = wgnx::client::ReceiveInnerIpv4Packet(service, incoming.data(), incoming.size(), &received);
         result.rc = rc;
         if (R_FAILED(rc)) {
             result.detail = "ReceiveInnerIpv4Packet CMIF failure after empty_polls=" +
