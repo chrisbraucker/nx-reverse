@@ -7,6 +7,7 @@
 #include "logger.hpp"
 #include "runtime.hpp"
 #include "scenarios.hpp"
+#include "wgnx/protocol.hpp"
 
 namespace {
 
@@ -109,7 +110,7 @@ int main(int argc, char **argv) {
     logger::Log(
         ctx,
         "wgnx_packet_config api=%u source=%s:%u destination=%s:%u timeout_ms=%u poll_ms=%u malformed_ipv4_checksum=%u",
-        config::WgnxExpectedApiVersion,
+        wgnx::IpcApiVersion,
         config::WgnxTunnelSourceIpv4,
         config::WgnxUdpSourcePort,
         config::WgnxUdpEchoDestinationIpv4,

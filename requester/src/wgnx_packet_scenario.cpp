@@ -249,10 +249,9 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
         result.detail = "GetApiVersion CMIF failure";
         return result;
     }
-    if (api_version != config::WgnxExpectedApiVersion || api_version != wgnx::IpcApiVersion) {
-        result.detail = "API version mismatch expected=" +
-            std::to_string(config::WgnxExpectedApiVersion) +
-            " compiled=" + std::to_string(wgnx::IpcApiVersion) +
+    if (api_version != wgnx::IpcApiVersion) {
+        result.detail = "API version mismatch compiled=" +
+            std::to_string(wgnx::IpcApiVersion) +
             " actual=" + std::to_string(api_version);
         return result;
     }
