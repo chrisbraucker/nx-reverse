@@ -7,6 +7,8 @@ $(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/de
 endif
 
 TOPDIR ?= $(CURDIR)
+-include $(TOPDIR)/config.local.mk
+
 include $(DEVKITPRO)/libnx/switch_rules
 
 TARGET      := requester
@@ -40,9 +42,9 @@ LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*
 
 LIBS := -lcurl -lz -lnx -lm
 
-WGNX_LIBS	?= $(TOPDIR)/libs/wireguard-nx/common
+WGNX_COMMON ?= $(TOPDIR)/libs/wireguard-nx/common
 
-LIBDIRS := $(PORTLIBS) $(LIBNX) $(WGNX_LIBS)
+LIBDIRS := $(PORTLIBS) $(LIBNX) $(WGNX_COMMON)
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 

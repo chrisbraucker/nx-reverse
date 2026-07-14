@@ -69,9 +69,18 @@ internals.
 The experimental WireGuard packet scenario is the one deliberate cross-repo
 dependency. Its build consumes the public API headers from
 `wireguard-nx.git/common/include` so that command IDs, result layouts, and the
-API version cannot silently diverge. The Makefile defaults to the sibling
-workspace layout and accepts `WGNX_COMMON_INCLUDE=/path/to/common/include` for
-other layouts.
+API version cannot silently diverge. The Makefile defaults to the pinned
+`requester/libs/wireguard-nx` submodule so a fresh clone has a reproducible
+dependency. Set `WGNX_COMMON=/path/to/wireguard-nx/common` on the `make` command
+line or in the ignored `requester/config.local.mk` file to consume another
+checkout during parallel development. For example, this workspace uses:
+
+```make
+WGNX_COMMON := /workspaces/switch-workspace/wireguard-nx.git/common
+```
+
+The submodule pointer can then be updated at explicit compatibility checkpoints
+instead of for every in-progress API-header change.
 
 ## Runtime Behavior
 
