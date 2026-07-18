@@ -10,10 +10,14 @@ RUN apt-get update \
     build-essential \
     ca-certificates \
     ccache \
+    clang \
+    clang-format \
+    cppcheck \
     curl \
     file \
     flex \
     git \
+    libclang-rt-dev \
     jq \
     openssh-client \
     python3 \
