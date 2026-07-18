@@ -27,6 +27,16 @@ void PrintSummary(AppContext& ctx, const std::vector<ScenarioResult>& results) {
     }
 }
 
+bool HasFailedScenario(const std::vector<ScenarioResult>& results) {
+    for (const auto& result : results) {
+        if (!result.skipped && !result.success) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -244,7 +254,12 @@ int main(int argc, char **argv) {
     logger::Bootstrap("main: RunScenarios complete count=%zu", results.size());
     PrintSummary(ctx, results);
 
-    logger::Status(ctx, "Requester finished; exiting in %u seconds", config::ExitDelayMs / 1000U);
+    const bool has_failed_scenario = HasFailedScenario(results);
+    if (has_failed_scenario) {
+        logger::Status(ctx, "Requester finished with failures; exiting in %u seconds", config::ExitDelayMs / 1000U);
+    } else {
+        logger::Status(ctx, "Requester finished; exiting immediately");
+    }
     logger::Log(ctx, "requester finished");
     logger::Bootstrap("main: cleanup begin");
 
@@ -274,7 +289,9 @@ int main(int argc, char **argv) {
     logger::CloseLog(ctx);
     logger::Bootstrap("main: cleanup complete");
 
-    SleepMilliseconds(config::ExitDelayMs);
+    if (has_failed_scenario) {
+        SleepMilliseconds(config::ExitDelayMs);
+    }
     consoleExit(nullptr);
     logger::Bootstrap("main: exit");
     return 0;

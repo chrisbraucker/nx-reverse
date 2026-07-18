@@ -115,7 +115,7 @@ constexpr std::uint32_t ScenarioStepDelayMs = 250;
 constexpr std::uint32_t IdleSocketHoldMs = 1500;
 constexpr std::uint32_t ConcurrentSocketHoldMs = 1000;
 constexpr std::uint32_t ConcurrentSocketCount = 3;
-constexpr std::uint32_t ExitDelayMs = 3000;
+constexpr std::uint32_t ExitDelayMs = 5000;
 constexpr std::size_t ReadBufferSize = 1024;
 constexpr std::size_t CurlReadBufferSize = 2048;
 
