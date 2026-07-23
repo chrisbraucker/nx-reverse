@@ -2102,6 +2102,12 @@ void GetNifmObjectKindAndCommandName(
                 case 12:
                     std::snprintf(command_name, command_name_size, "SetPersistent");
                     break;
+                case 24:
+                    std::snprintf(command_name, command_name_size, "RegisterSocketDescriptor");
+                    break;
+                case 25:
+                    std::snprintf(command_name, command_name_size, "UnregisterSocketDescriptor");
+                    break;
             }
         }
     }
@@ -2144,6 +2150,14 @@ void FormatNifmSemanticRequestSummary(
             case 12:
                 if (request_decode.payload_size >= 1) {
                     std::snprintf(out, out_size, "persistent=%s", request_decode.payload_bytes[0] ? "true" : "false");
+                }
+                break;
+            case 24:
+            case 25:
+                if (request_decode.payload_size >= sizeof(s32)) {
+                    s32 descriptor = -1;
+                    std::memcpy(std::addressof(descriptor), request_decode.payload_bytes, sizeof(descriptor));
+                    std::snprintf(out, out_size, "socket_descriptor=%d", descriptor);
                 }
                 break;
         }

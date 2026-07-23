@@ -135,6 +135,8 @@ bool IsDiagnosticOverrideEnabled(const ::ams::sm::MitmProcessInfo &client_info, 
 
 const char *GetRequesterForwarderBsdMitmModeName();
 
+const char *GetNifmSystemMitmTargetName();
+
 void LogBuildPolicy() {
     wgnx::net_probe::logger::Log(
         "MITM targets: nifm:u=%u nifm:s=%u bsd:u=%u bsd:s=%u bsd:a=%u ssl=%u ssl:s=%u",
@@ -145,6 +147,10 @@ void LogBuildPolicy() {
         static_cast<unsigned>(cfg::EnableMitmBsdAdmin),
         static_cast<unsigned>(cfg::EnableMitmSslUser),
         static_cast<unsigned>(cfg::EnableMitmSslSystem));
+    wgnx::net_probe::logger::Log(
+        "nifm:s trace target=%s (%u)",
+        GetNifmSystemMitmTargetName(),
+        static_cast<unsigned>(cfg::NifmSystemTraceTarget));
     wgnx::net_probe::logger::Log(
         "Diagnostic overrides: bsd:s[npns=%u eupld=%u olsc=%u bsdsockets=%u ssl=%u nim=%u sphaira-wrapper=%u requester-forwarder=%u] bsd:a[qlaunch=%u] ssl[npns=%u eupld=%u olsc=%u]",
         static_cast<unsigned>(cfg::AllowBsdSystemNpns),
@@ -196,6 +202,7 @@ enum class ShouldMitmPolicyReason : u32 {
     BsdSystemSessionOutstanding = 4,
     DiagnosticOverride = 5,
     RequesterForwarderOrdinalDeny = 6,
+    NifmSystemNotTargeted = 7,
 };
 
 bool IsBsdSystemServiceName(const ::ams::sm::ServiceName &service_name) {
@@ -262,6 +269,21 @@ const char *GetRequesterForwarderBsdMitmModeName() {
             return "second-only";
         case cfg::RequesterForwarderBsdMitmMode::Both:
             return "both";
+        default:
+            return "unknown";
+    }
+}
+
+const char *GetNifmSystemMitmTargetName() {
+    switch (cfg::NifmSystemTraceTarget) {
+        case cfg::NifmSystemMitmTarget::None:
+            return "none";
+        case cfg::NifmSystemMitmTarget::Nim:
+            return "nim";
+        case cfg::NifmSystemMitmTarget::Qlaunch:
+            return "qlaunch";
+        case cfg::NifmSystemMitmTarget::All:
+            return "all";
         default:
             return "unknown";
     }
@@ -461,7 +483,41 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
         }
 
         static bool ShouldMitmNifmSystem(const ::ams::sm::MitmProcessInfo &client_info) {
-            return ShouldMitmForService("nifm:s", client_info);
+            if (IsSelfProgram(client_info)) {
+                RecordShouldMitmPolicyDecision(
+                    "nifm:s",
+                    client_info,
+                    false,
+                    ShouldMitmPolicyReason::SelfProgram,
+                    0,
+                    0);
+                return false;
+            }
+
+            bool should_mitm = false;
+            switch (cfg::NifmSystemTraceTarget) {
+                case cfg::NifmSystemMitmTarget::Nim:
+                    should_mitm = client_info.program_id == NimProgramId;
+                    break;
+                case cfg::NifmSystemMitmTarget::Qlaunch:
+                    should_mitm = client_info.program_id == QlaunchProgramId;
+                    break;
+                case cfg::NifmSystemMitmTarget::All:
+                    should_mitm = true;
+                    break;
+                case cfg::NifmSystemMitmTarget::None:
+                default:
+                    break;
+            }
+
+            RecordShouldMitmPolicyDecision(
+                "nifm:s",
+                client_info,
+                should_mitm,
+                should_mitm ? ShouldMitmPolicyReason::DefaultAllow : ShouldMitmPolicyReason::NifmSystemNotTargeted,
+                0,
+                0);
+            return should_mitm;
         }
 
         static bool ShouldMitmBsdUser(const ::ams::sm::MitmProcessInfo &client_info) {

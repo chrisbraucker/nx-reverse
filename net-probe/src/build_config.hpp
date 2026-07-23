@@ -10,12 +10,26 @@ namespace wgnx::net_probe::build_config {
  */
 
 inline constexpr bool EnableMitmNifmUser = false;
-inline constexpr bool EnableMitmNifmSystem = false;
+inline constexpr bool EnableMitmNifmSystem = true;
 inline constexpr bool EnableMitmBsdUser = false;
-inline constexpr bool EnableMitmBsdSystem = true;
+inline constexpr bool EnableMitmBsdSystem = false;
 inline constexpr bool EnableMitmBsdAdmin = false;
 inline constexpr bool EnableMitmSslUser = false;
 inline constexpr bool EnableMitmSslSystem = false;
+
+/*
+ * Run B: trace NIM's native nifm:s request lifecycle from early boot.
+ * Keep this narrowed to one title; do not use All for this experiment.
+ */
+enum class NifmSystemMitmTarget : unsigned int {
+    None = 0,
+    Nim = 1,
+    Qlaunch = 2,
+    All = 3,
+};
+
+inline constexpr NifmSystemMitmTarget NifmSystemTraceTarget =
+    NifmSystemMitmTarget::Nim;
 
 /*
  * Historically fragile system clients stay denylisted by default. Flip an
