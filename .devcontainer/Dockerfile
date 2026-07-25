@@ -11,8 +11,8 @@ RUN apt-get update \
  && install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
     | gpg --dearmor -o /etc/apt/keyrings/llvm.gpg \
- && echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] https://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-16 main" \
-    > /etc/apt/sources.list.d/llvm-16.list \
+ && echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] https://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-21 main" \
+    > /etc/apt/sources.list.d/llvm-21.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
     bash \
@@ -20,14 +20,14 @@ RUN apt-get update \
     build-essential \
     ca-certificates \
     ccache \
-    clang-16 \
-    clang-format-16 \
+    clang-21 \
+    clang-format-21 \
     cppcheck \
     curl \
     file \
     flex \
     git \
-    libclang-rt-16-dev \
+    libclang-rt-21-dev \
     jq \
     openssh-client \
     python3 \
@@ -39,9 +39,9 @@ RUN apt-get update \
     zip \
  && apt-get -y autoremove --purge \
  && apt-get -y clean \
- && ln -sf /usr/bin/clang-16 /usr/local/bin/clang \
- && ln -sf /usr/bin/clang++-16 /usr/local/bin/clang++ \
- && ln -sf /usr/bin/clang-format-16 /usr/local/bin/clang-format \
+ && ln -sf /usr/bin/clang-21 /usr/local/bin/clang \
+ && ln -sf /usr/bin/clang++-21 /usr/local/bin/clang++ \
+ && ln -sf /usr/bin/clang-format-21 /usr/local/bin/clang-format \
  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 RUN adduser --disabled-password "$CUSER" \
