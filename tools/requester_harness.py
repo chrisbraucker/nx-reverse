@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import http.server
+import argparse
 import signal
 import socketserver
 import ssl
 import threading
+from collections import Counter, defaultdict
 from pathlib import Path
 
 # Easy-to-edit endpoint configuration.
@@ -31,6 +33,82 @@ TLS_KEY_FILE = TLS_DIR / "requester-local.key"
 
 def log(message: str) -> None:
     print(message, flush=True)
+
+
+class UdpWorkloadStats:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._received = Counter[tuple[int, int]]()
+        self._echoed = Counter[tuple[int, int]]()
+        self._bytes_received = Counter[tuple[int, int]]()
+        self._bytes_echoed = Counter[tuple[int, int]]()
+        self._sources: dict[tuple[int, int], set[str]] = defaultdict(set)
+        self._sequences: dict[tuple[int, int], set[int]] = defaultdict(set)
+        self._last_sequence: dict[tuple[int, int], int] = {}
+        self._duplicates = Counter[tuple[int, int]]()
+        self._reordered = Counter[tuple[int, int]]()
+        self._unexpected = 0
+        self._malformed = 0
+
+    def record(self, data: bytes, source: str, echoed: bool) -> str | None:
+        identity, malformed = parse_workload_identity(data)
+        with self._lock:
+            if identity is None:
+                if malformed:
+                    self._malformed += 1
+                else:
+                    self._unexpected += 1
+                return None
+            workload_id, flow_index, sequence, seed = identity
+            key = (workload_id, flow_index)
+            self._received[key] += 1
+            self._bytes_received[key] += len(data)
+            self._sources[key].add(source)
+            if sequence in self._sequences[key]:
+                self._duplicates[key] += 1
+            self._sequences[key].add(sequence)
+            previous = self._last_sequence.get(key)
+            if previous is not None and sequence < previous:
+                self._reordered[key] += 1
+            self._last_sequence[key] = max(sequence, previous) if previous is not None else sequence
+            if echoed:
+                self._echoed[key] += 1
+                self._bytes_echoed[key] += len(data)
+        return f"workload={workload_id} flow={flow_index} sequence={sequence} seed=0x{seed:08x}"
+
+    def log_summary(self) -> None:
+        with self._lock:
+            keys = sorted(set(self._received) | set(self._echoed))
+            for workload_id, flow_index in keys:
+                key = (workload_id, flow_index)
+                log(
+                    "[udp-summary] "
+                    f"workload={workload_id} flow={flow_index} "
+                    f"received={self._received[key]} received_bytes={self._bytes_received[key]} "
+                    f"echoed={self._echoed[key]} echoed_bytes={self._bytes_echoed[key]} "
+                    f"duplicates={self._duplicates[key]} reordered={self._reordered[key]} "
+                    f"sources={sorted(self._sources[key])}"
+                )
+            if self._unexpected:
+                log(f"[udp-summary] unexpected_datagrams={self._unexpected}")
+            if self._malformed:
+                log(f"[udp-summary] malformed_workload_datagrams={self._malformed}")
+
+
+def parse_workload_identity(data: bytes) -> tuple[tuple[int, int, int, int] | None, bool]:
+    if data[:7] != b"NXRVWG1":
+        return None, False
+    if len(data) < 24 or data[7] != 0:
+        return None, True
+    return (
+        int.from_bytes(data[8:12], "big"),
+        int.from_bytes(data[12:16], "big"),
+        int.from_bytes(data[16:20], "big"),
+        int.from_bytes(data[20:24], "big"),
+    ), False
+
+
+UDP_STATS = UdpWorkloadStats()
 
 
 class ThreadedTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -66,8 +144,13 @@ class UdpHandler(socketserver.BaseRequestHandler):
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
         local_port = self.server.server_address[1]
         reply = data if UDP_ECHO_INPUT else UDP_FIXED_REPLY
-        log(f"[udp:{local_port}] peer={peer} recv={data[:64]!r} reply={reply[:64]!r}")
-        sock.sendto(reply, self.client_address)
+        workload = UDP_STATS.record(data, peer, UDP_ECHO_INPUT)
+        if workload is None:
+            log(f"[udp:{local_port}] peer={peer} recv={data[:64]!r} reply={reply[:64]!r}")
+        else:
+            log(f"[udp:{local_port}] peer={peer} {workload} bytes={len(data)} echo={UDP_ECHO_INPUT}")
+        if UDP_ECHO_INPUT:
+            sock.sendto(reply, self.client_address)
 
 
 class CannedHttpHandler(http.server.BaseHTTPRequestHandler):
@@ -127,7 +210,22 @@ def build_https_server() -> QuietHttpServer:
     return server
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Controlled requester counterparty")
+    parser.add_argument("--listen-host", default=LISTEN_HOST)
+    parser.add_argument("--udp-ports", default=",".join(str(port) for port in UDP_PORTS))
+    parser.add_argument("--udp-no-echo", action="store_true", help="record UDP traffic without replying")
+    return parser.parse_args()
+
+
 def main() -> int:
+    global LISTEN_HOST, UDP_PORTS, UDP_ECHO_INPUT
+    args = parse_args()
+    LISTEN_HOST = args.listen_host
+    UDP_PORTS = tuple(int(value) for value in args.udp_ports.split(",") if value)
+    if not UDP_PORTS or any(port < 1 or port > 65535 for port in UDP_PORTS):
+        raise SystemExit("--udp-ports must contain one or more ports in 1..65535")
+    UDP_ECHO_INPUT = not args.udp_no_echo
     tcp_server = ThreadedTcpServer((LISTEN_HOST, TCP_ACK_PORT), PlainTcpHandler)
     http_server = QuietHttpServer((LISTEN_HOST, HTTP_PORT), CannedHttpHandler)
     #https_server = build_https_server()
@@ -168,6 +266,7 @@ def main() -> int:
             log(f"stopping {label}")
             server.shutdown()
             server.server_close()
+        UDP_STATS.log_summary()
 
     return 0
 

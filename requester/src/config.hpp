@@ -54,7 +54,8 @@ constexpr bool EnableScenarioUdpEcho = false;
 constexpr bool EnableUdpEchoSocketTimeouts = false;
 constexpr bool EnableUdpEchoPoll = true;
 constexpr bool EnableScenarioConcurrentTcpBurst = false;
-constexpr bool EnableScenarioWgnxUdpEcho = true;
+constexpr bool EnableScenarioWgnxUdpEcho = false;
+constexpr bool EnableScenarioWgnxTunnelUdpWorkload = true;
 
 /* Direct inner-packet test through the experimental wgnx:ctl API. */
 constexpr char WgnxTunnelSourceIpv4[] = "10.0.0.2";
@@ -65,6 +66,18 @@ constexpr char WgnxUdpPayloadPrefix[] = "nxrv-wgnx-udp:";
 constexpr std::uint32_t WgnxPacketTimeoutMs = 5000;
 constexpr std::uint32_t WgnxPacketPollIntervalMs = 25;
 constexpr bool WgnxSubmitMalformedIpv4Checksum = false;
+
+/* Direct wgnx:tun workload without caller-supplied inner packet headers. */
+constexpr char WgnxTunnelDestinationIpv4[] = "10.1.0.2";
+constexpr std::uint16_t WgnxTunnelDestinationPort = 29000;
+constexpr std::uint32_t WgnxTunnelWorkloadId = 1;
+constexpr std::size_t WgnxTunnelPayloadBytes = 48;
+constexpr std::uint32_t WgnxTunnelDatagramCount = 1;
+constexpr std::uint32_t WgnxTunnelPacingMs = 0;
+constexpr std::uint32_t WgnxTunnelConcurrentFlows = 1;
+constexpr std::uint32_t WgnxTunnelReceiveDeadlineMs = 5000;
+constexpr std::uint32_t WgnxTunnelPayloadSeed = 0x4E585256U;
+constexpr bool WgnxTunnelEchoReplies = true;
 
 constexpr SocketInitConfig SocketConfigApplication = {
     .tcp_tx_buf_size = 1024 * 64,
