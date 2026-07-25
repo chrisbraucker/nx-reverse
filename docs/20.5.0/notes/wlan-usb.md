@@ -4,8 +4,8 @@
 
 ### `wlan_main`: same `anif::drv` object model on the live Wi-Fi medium
 
-The initial `wlan_main` pass shows that it is not a thin radio helper. It contains the same
-high-level `anif::drv` ladder already recovered in `eth_main`:
+The initial `wlan_main` pass shows that it is not a thin radio helper.
+It contains the same high-level `anif::drv` ladder already recovered in `eth_main`:
 
 - `ISfDriverServiceCreator`
 - `ISfDriverService`
@@ -35,20 +35,15 @@ That function:
 - configures `nn.wlan.SharedMemoryTx` and `nn.wlan.SharedMemoryRx`
 - starts the `nn.wlan.AnifHipcServer` worker via `FUN_7100007760(...)`
 
-This is the strongest static evidence so far that the same `anif` driver-service /
-network-interface architecture exists on the active Wi-Fi medium, not just in the wired ethernet
-stack.
+This is the strongest static evidence so far that the same `anif` driver-service / network-interface architecture exists on the active Wi-Fi medium, not just in the wired ethernet stack.
 
 Notable implication:
 
-- even without a plain preserved `wlan:nd` string, `wlan_main` looks like a viable next reverse
-  target for understanding the generic `anif` object model on a transport that is actually present
-  during ordinary testing
+- even without a plain preserved `wlan:nd` string, `wlan_main` looks like a viable next reverse target for understanding the generic `anif` object model on a transport that is actually present during ordinary testing
 
 ## 2026-06-20: recovered `wlan_main` `ISfDriverService` public command table
 
-The next `wlan_main` pass shows that its public driver-service layer is structurally very close to
-the one already recovered in `eth_main`.
+The next `wlan_main` pass shows that its public driver-service layer is structurally very close to the one already recovered in `eth_main`.
 
 ### Creator-side entrypoint for probing
 
@@ -123,8 +118,7 @@ The first four entries are framework/lifecycle support:
 - `0x71000f41cc`
   - thin helper that adjusts to `self + 0x80` and branches into a lock/helper path
 - `0x71000f41d4`
-  - paired helper that operates on the object at `self + 0x88` and dispatches via vtable slot
-    `+0x18` with object offset `0x90`
+  - paired helper that operates on the object at `self + 0x88` and dispatches via vtable slot `+0x18` with object offset `0x90`
 - `0x71000a9e50`
   - returns zero
 - `0x71000a4bc4`
@@ -171,8 +165,7 @@ That helper:
 - compares the first `0x10` bytes of the serialized candidate against the caller-supplied filter
 - returns `0x48425` when no candidate matches
 
-So this is the same high-level contract already seen in `eth_main`: `OpenNetworkInterface` is a
-real filter-based open path over a set of already-registered interfaces.
+So this is the same high-level contract already seen in `eth_main`: `OpenNetworkInterface` is a real filter-based open path over a set of already-registered interfaces.
 
 #### `GetDriverInfo`
 
@@ -185,8 +178,7 @@ That helper:
 - calls `FUN_71000f2740(...)`
 - writes one returned `u64` into the caller's out location
 
-`FUN_71000f2740(...)` packs bytes from backing-state offsets `+8..+0xf` into a compact 8-byte
-value, which is a direct fit for `GetDriverInfo`.
+`FUN_71000f2740(...)` packs bytes from backing-state offsets `+8..+0xf` into a compact 8-byte value, which is a direct fit for `GetDriverInfo`.
 
 #### `GetNetworkInterfaceList`
 
@@ -194,8 +186,7 @@ value, which is a direct fit for `GetDriverInfo`.
 
 - `FUN_71000f467c(...)`
 
-The decompiler under-types that wrapper, but the surrounding disassembly shows it loading a buffer
-pointer/count pair from one incoming parameter block and forwarding a separate out-count slot.
+The decompiler under-types that wrapper, but the surrounding disassembly shows it loading a buffer pointer/count pair from one incoming parameter block and forwarding a separate out-count slot.
 
 The helper it reaches:
 
@@ -223,7 +214,8 @@ Those simply export handles from:
 - `self + 0x18`
 - `self + 0x48`
 
-respectively. That matches the documented two-event shape.
+respectively.
+That matches the documented two-event shape.
 
 #### Ioctl family
 
@@ -254,17 +246,12 @@ The wrapper shapes line up with the documented ioctl family:
 
 ### Practical implication
 
-This is the strongest evidence so far that `wlan_main` exposes essentially the same
-`ISfDriverService` surface as `eth_main`, but on a medium that is already live during ordinary
-testing.
+This is the strongest evidence so far that `wlan_main` exposes essentially the same `ISfDriverService` surface as `eth_main`, but on a medium that is already live during ordinary testing.
 
 Two useful consequences follow:
 
-1. `wlan_main` can be used to continue recovering the generic `anif` driver-service contract
-   without waiting for a physical USB ethernet adapter.
-2. The repeated `OpenNetworkInterface` pattern strengthens the current hypothesis that both
-   `wlan_main` and `eth_main` sit on top of an existing registered-interface set rather than
-   inventing arbitrary interfaces on demand.
+1. `wlan_main` can be used to continue recovering the generic `anif` driver-service contract without waiting for a physical USB ethernet adapter.
+2. The repeated `OpenNetworkInterface` pattern strengthens the current hypothesis that both `wlan_main` and `eth_main` sit on top of an existing registered-interface set rather than inventing arbitrary interfaces on demand.
 3. A WLAN-only `net-probe` variant now has a concrete minimal path:
    - open `wlan:nd`
    - call creator cmd `0` `CreateDriverService`
@@ -275,14 +262,11 @@ Two useful consequences follow:
      - cmd `131` `GetNetworkInterfaceListUpdatedEvent`
      - optionally cmd `0` `OpenNetworkInterface`
 
-The command IDs in that last list are supported by Switchbrew's `wlan:nd` documentation, and the
-local wrapper semantics match that documented ordering closely enough to treat it as the current
-best probe surface.
+The command IDs in that last list are supported by Switchbrew's `wlan:nd` documentation, and the local wrapper semantics match that documented ordering closely enough to treat it as the current best probe surface.
 
 ## 2026-06-20: visible `wlan_main` network-interface layer is compact and ioctl-oriented
 
-The first obvious `ISfNetworkInterfaceService`-related block in `wlan_main` does not look like the
-rich 20+ entry wrapper table recovered in `eth_main`.
+The first obvious `ISfNetworkInterfaceService`-related block in `wlan_main` does not look like the rich 20+ entry wrapper table recovered in `eth_main`.
 
 ### Visible metadata block
 
@@ -299,9 +283,8 @@ It points at a compact 6-entry run:
 - `0x71000f4ccc`
 - `0x71000f4d20`
 
-The adjacent type metadata still says `ISfNetworkInterfaceService`, so this is not a random
-unrelated object. But the visible command surface is much narrower than the one already pinned in
-`eth_main`.
+The adjacent type metadata still says `ISfNetworkInterfaceService`, so this is not a random unrelated object.
+But the visible command surface is much narrower than the one already pinned in `eth_main`.
 
 ### What the 6 visible entries do
 
@@ -339,8 +322,7 @@ The wrapper family chooses callback mode `2` or `3` depending on the flag at:
 
 - `self + 0x48`
 
-So the currently visible `wlan_main` network-interface object behaves more like a compact
-callback/ioctl adapter than like the richer explicit method surface already recovered in `eth_main`.
+So the currently visible `wlan_main` network-interface object behaves more like a compact callback/ioctl adapter than like the richer explicit method surface already recovered in `eth_main`.
 
 ### Supporting details
 
@@ -362,19 +344,16 @@ The constructor path used by `OpenNetworkInterface`:
 - stores the per-interface object pointer into that table
 - returns `0x40625` when no slot is available
 
-`FUN_71000f3cd0(...)` still serializes a full `0xb0`-byte interface record, just like the
-driver-service list/open logic. So the compact visible surface is not because the underlying data is
-small; it is because the exposed object layer currently visible in `wlan_main` is narrower.
+`FUN_71000f3cd0(...)` still serializes a full `0xb0`-byte interface record, just like the driver-service list/open logic.
+So the compact visible surface is not because the underlying data is small; it is because the exposed object layer currently visible in `wlan_main` is narrower.
 
 ### Current interpretation
 
 The safest reading right now is:
 
 1. `wlan_main` definitely has the same top-level `anif` driver-service model as `eth_main`.
-2. The first clearly visible returned network-interface object in `wlan_main` exposes a compact
-   callback/ioctl-oriented layer.
-3. A second, richer network-interface wrapper table like the one in `eth_main` has not yet been
-   found in the obvious metadata path.
+2. The first clearly visible returned network-interface object in `wlan_main` exposes a compact callback/ioctl-oriented layer.
+3. A second, richer network-interface wrapper table like the one in `eth_main` has not yet been found in the obvious metadata path.
 
 That means the next `wlan_main` reverse target, if we continue deeper, should be one of:
 
@@ -384,8 +363,7 @@ That means the next `wlan_main` reverse target, if we continue deeper, should be
 
 ### `usb_main`: explicit physical-interface inventory layer under `usb:hs`
 
-The first `usb_main` pass is much more consistent with a real physical-inventory backend than with
-an abstract virtual-interface API.
+The first `usb_main` pass is much more consistent with a real physical-inventory backend than with an abstract virtual-interface API.
 
 Confirmed public service registration:
 
@@ -412,28 +390,22 @@ That function:
 - allocates a `0xb10`-byte object named `DeviceManager::ManagedInterface`
 - initializes it and stores the resulting object pointer back at slot offset `+0x220`
 
-This is strong evidence that `usb_main` owns a concrete managed-interface inventory layer for
-physical USB interfaces. It fits the working hypothesis that `eth_main` does not synthesize
-arbitrary devices itself; instead, it likely consumes already-discovered USB interface inventory
-from lower layers like `usb:hs`.
+This is strong evidence that `usb_main` owns a concrete managed-interface inventory layer for physical USB interfaces.
+It fits the working hypothesis that `eth_main` does not synthesize arbitrary devices itself; instead, it likely consumes already-discovered USB interface inventory from lower layers like `usb:hs`.
 
 Practical implication:
 
-- if `eth:nd::OpenNetworkInterface(...)` only succeeds when a real USB ethernet interface has
-  already been discovered, `usb_main` is the most likely upstream module to explain where those
-  candidate records originate and how they are observed
+- if `eth:nd::OpenNetworkInterface(...)` only succeeds when a real USB ethernet interface has already been discovered, `usb_main` is the most likely upstream module to explain where those candidate records originate and how they are observed
 
 ### Priority update after this triage
 
 Current reverse priority should be:
 
 1. `wlan_main`, to recover the same `anif` driver-service command surface on a live medium
-2. `usb_main`, to understand the physical USB interface discovery / observation path that likely
-   feeds `eth_main`
+2. `usb_main`, to understand the physical USB interface discovery / observation path that likely feeds `eth_main`
 3. `netConnect_main`, only for the proxy fallback path
 
-This does not change the current `eth` expectation: the next high-value runtime probe is still on
-a genuinely wired device. But it does add a second strong static path:
+This does not change the current `eth` expectation: the next high-value runtime probe is still on a genuinely wired device.
+But it does add a second strong static path:
 
-- `wlan_main` can likely teach us more about the generic `anif` service contract without waiting for
-  a USB NIC
+- `wlan_main` can likely teach us more about the generic `anif` service contract without waiting for a USB NIC

@@ -43,35 +43,22 @@ This directory is now split by topic so the `eth` and `anif` work stays readable
 
 ## Current Summary
 
-- `bsdsockets_main` almost certainly owns the `bsd:nu` / `ISfUserServiceCreator` side, even though
-  the plain `bsd:nu` string is not preserved, and the `ISfUserService` public table now lines up
-  with Switchbrew's `Assign` / `GetUserInfo` / `GetStateChangedEvent` description.
+- `bsdsockets_main` almost certainly owns the `bsd:nu` / `ISfUserServiceCreator` side, even though the plain `bsd:nu` string is not preserved, and the `ISfUserService` public table now lines up with Switchbrew's `Assign` / `GetUserInfo` / `GetStateChangedEvent` description.
 - `bsdsockets_main` also definitely owns the resolver IPC surface on `20.5.0`:
   - `sfdnsres`
   - `dns:priv`
   - eight `nn.socket.ResolverIpcServer` workers
-- `eth_main` definitely owns a real `ISfDriverService` / `ISfNetworkInterfaceService` stack, and
-  `OpenNetworkInterface` is a real implementation that currently fails on-device with
-  `0x00048425` when no eligible wired interface matches.
+- `eth_main` definitely owns a real `ISfDriverService` / `ISfNetworkInterfaceService` stack, and `OpenNetworkInterface` is a real implementation that currently fails on-device with `0x00048425` when no eligible wired interface matches.
 - `wlan_main` mirrors the same `anif::drv` object model on the live Wi-Fi medium.
-- `usb_main` appears to own a concrete physical USB interface inventory layer, which is the
-  strongest current explanation for where `eth_main` gets real NIC candidates.
-- passive MITM is now intentionally narrowed to `nifm:u` in `net-probe`, with added `sm`
-  lifecycle tracing so the next run can separate duplicate-registration state from ordinary
-  `nifm` traffic.
-- DNS should now be treated as a `bsdsockets`-hosted sibling IPC path rather than an unresolved
-  generic socket side effect. The best current runtime target is `sfdnsres`.
-- `pkg2` inventory does not reveal any hidden network sysmodule in the boot package, which pushes
-  the kernel hypothesis toward generic IPC/memory/object primitives rather than a buried netstack.
-- `sm.kip1` now gives us a concrete service-manager angle on the probe instability: `0x815` is
-  part of the real registration logic, so the `RegisterMitmServer(nifm:u)` failures are grounded
-  in `sm` service-table state, not just wrapper behavior.
+- `usb_main` appears to own a concrete physical USB interface inventory layer, which is the strongest current explanation for where `eth_main` gets real NIC candidates.
+- passive MITM is now intentionally narrowed to `nifm:u` in `net-probe`, with added `sm` lifecycle tracing so the next run can separate duplicate-registration state from ordinary `nifm` traffic.
+- DNS should now be treated as a `bsdsockets`-hosted sibling IPC path rather than an unresolved generic socket side effect.
+  The best current runtime target is `sfdnsres`.
+- `pkg2` inventory does not reveal any hidden network sysmodule in the boot package, which pushes the kernel hypothesis toward generic IPC/memory/object primitives rather than a buried netstack.
+- `sm.kip1` now gives us a concrete service-manager angle on the probe instability: `0x815` is part of the real registration logic, so the `RegisterMitmServer(nifm:u)` failures are grounded in `sm` service-table state, not just wrapper behavior.
 
 ## Current Priority
 
-1. Add a narrow passive MITM for `sfdnsres` and correlate it with the controlled requester DNS
-   scenario.
-2. Keep `bsd:u` and `ssl` tracing focused on transport behavior while the resolver path is mapped
-   separately.
-3. Continue lower-boundary `pkg2` / KIP reversing in parallel, but only where it helps answer the
-   system-wide VPN integration question.
+1. Add a narrow passive MITM for `sfdnsres` and correlate it with the controlled requester DNS scenario.
+2. Keep `bsd:u` and `ssl` tracing focused on transport behavior while the resolver path is mapped separately.
+3. Continue lower-boundary `pkg2` / KIP reversing in parallel, but only where it helps answer the system-wide VPN integration question.

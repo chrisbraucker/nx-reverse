@@ -13,19 +13,12 @@ The current `net-probe` build was updated to match the recovered `ISfDriverServi
 
 This means future `eth` probe results should now be interpreted as follows:
 
-- A successful `GetDriverInfo` should return a stable nonzero `u64` without immediately closing the
-  driver session.
-- A successful `GetNetworkInterfaceList` should return an emitted entry count and one or more
-  `0xb0`-byte serialized interface records in the output buffer.
-- On a device with a real wired adapter/dock path present, `OpenNetworkInterface` may stop
-  returning `0x00048425`; if it still returns `0x00048425`, that strongly suggests no eligible
-  ethernet interface matched the supplied filter.
-- The two driver event getters should return valid handles without poisoning the fresh session used
-  for metadata probing.
+- A successful `GetDriverInfo` should return a stable nonzero `u64` without immediately closing the driver session.
+- A successful `GetNetworkInterfaceList` should return an emitted entry count and one or more `0xb0`-byte serialized interface records in the output buffer.
+- On a device with a real wired adapter/dock path present, `OpenNetworkInterface` may stop returning `0x00048425`; if it still returns `0x00048425`, that strongly suggests no eligible ethernet interface matched the supplied filter.
+- The two driver event getters should return valid handles without poisoning the fresh session used for metadata probing.
 
-Because all known `eth` behavior so far is consistent with physical ethernet inventory, the next
-high-value run is on a device that is actually connected via wired ethernet, not another Wi-Fi-only
-probe.
+Because all known `eth` behavior so far is consistent with physical ethernet inventory, the next high-value run is on a device that is actually connected via wired ethernet, not another Wi-Fi-only probe.
 
 ## 2026-06-20: dual `eth:nd` and `wlan:nd` probe path
 
@@ -43,14 +36,10 @@ For each service it now:
   - `GetNetworkInterfaceList`
   - `GetStateChangedEvent`
   - `GetNetworkInterfaceListUpdatedEvent`
-- if `GetNetworkInterfaceList` emits any `0xb0` interface records, creates a second fresh
-  `ISfDriverService` and tries `OpenNetworkInterface` using the first `0x10` bytes of each emitted
-  record as the filter key
-- if `OpenNetworkInterface` succeeds and `bsd:nu` is available, attempts
-  `CreateUserService -> Assign -> AddSession`
+- if `GetNetworkInterfaceList` emits any `0xb0` interface records, creates a second fresh `ISfDriverService` and tries `OpenNetworkInterface` using the first `0x10` bytes of each emitted record as the filter key
+- if `OpenNetworkInterface` succeeds and `bsd:nu` is available, attempts `CreateUserService -> Assign -> AddSession`
 
-If a service reports no interface records, the probe logs that explicitly and skips record-based
-open attempts for that service instead of continuing to blind zero-filled guesses.
+If a service reports no interface records, the probe logs that explicitly and skips record-based open attempts for that service instead of continuing to blind zero-filled guesses.
 
 ## 2026-06-20: three-run `eth:nd` / `wlan:nd` results and WLAN crash note
 
@@ -70,30 +59,25 @@ Observed behavior:
 - `wlan:nd`
   - `GetDriverInfo` succeeds
   - `GetNetworkInterfaceList` emits exactly one `0xb0` interface record in all three runs
-  - in the first two runs, `OpenNetworkInterface` on the first `0x10` bytes of that record
-    succeeds and returns a live `ISfNetworkInterfaceService`
+  - in the first two runs, `OpenNetworkInterface` on the first `0x10` bytes of that record succeeds and returns a live `ISfNetworkInterfaceService`
   - in those same two runs, `bsd:nu::Assign` rejects the returned WLAN interface with `0x00010425`
-  - with Wi-Fi actively connected, the same `OpenNetworkInterface` attempt no longer succeeds and
-    instead fails with `0x0000F601` (`KernelError_ConnectionClosed`)
+  - with Wi-Fi actively connected, the same `OpenNetworkInterface` attempt no longer succeeds and instead fails with `0x0000F601` (`KernelError_ConnectionClosed`)
 
 The connected Wi-Fi run also coincided with a crash in:
 
 - `wlan.autoge` (`Program ID 0100000000000016`)
 
-The fatal report PC lands in a raw SVC wrapper and the visible stack is already in the fatal
-reporting path, so it does not preserve the original failing WLAN routine. However, the crash is
-still strongly correlated with the connected-state `wlan:nd::OpenNetworkInterface` probe, because:
+The fatal report PC lands in a raw SVC wrapper and the visible stack is already in the fatal reporting path, so it does not preserve the original failing WLAN routine.
+However, the crash is still strongly correlated with the connected-state `wlan:nd::OpenNetworkInterface` probe, because:
 
 - `net-probe` itself exits cleanly
 - the crash only appears on the connected Wi-Fi run
-- the fatal report TLS still contains the same `SFCI` command context and serialized WLAN interface
-  record bytes seen in the probe log
+- the fatal report TLS still contains the same `SFCI` command context and serialized WLAN interface record bytes seen in the probe log
 
 Practical conclusion:
 
 - offline/disconnected WLAN probing is useful and currently stable enough to continue
-- connected-state WLAN `OpenNetworkInterface` probing is currently risky and should be avoided until
-  the contract is better understood
+- connected-state WLAN `OpenNetworkInterface` probing is currently risky and should be avoided until the contract is better understood
 
 ## 2026-06-20: guard connected Wi-Fi before `wlan:nd::OpenNetworkInterface`
 
@@ -109,13 +93,11 @@ then the probe:
 - still runs the safe `wlan:nd` metadata path
 - but skips the risky `wlan:nd::OpenNetworkInterface` call and logs the reason
 
-This keeps the useful `wlan:nd` inventory and event probing available while avoiding the connected
-state that previously triggered `0x0000F601` and a `wlan.autoge` fatal report.
+This keeps the useful `wlan:nd` inventory and event probing available while avoiding the connected state that previously triggered `0x0000F601` and a `wlan.autoge` fatal report.
 
 ## 2026-06-20: extend offline WLAN probe with direct interface-method calls
 
-The next probe revision keeps the connected-Wi-Fi guard above, but deepens the offline/disconnected
-`wlan:nd` branch once `OpenNetworkInterface` succeeds.
+The next probe revision keeps the connected-Wi-Fi guard above, but deepens the offline/disconnected `wlan:nd` branch once `OpenNetworkInterface` succeeds.
 
 On the returned `ISfNetworkInterfaceService` it now attempts:
 
@@ -129,26 +111,21 @@ On the returned `ISfNetworkInterfaceService` it now attempts:
 - `GetNetworkInterfaceInfo` again
 - `bsd:nu::Assign` as before
 
-For each `GetNetworkInterfaceInfo` call the probe logs a preview of the full `0xb0` descriptor and
-also logs `memcmp` deltas against the original descriptor snapshot.
+For each `GetNetworkInterfaceInfo` call the probe logs a preview of the full `0xb0` descriptor and also logs `memcmp` deltas against the original descriptor snapshot.
 
 Expectation for a successful run:
 
 - flight mode or disconnected Wi-Fi should remain the preferred environment
-- the probe should now tell us whether the public WLAN interface object itself can promote the
-  descriptor state that `bsd:nu::Assign` currently rejects with `0x00010425`
-- if `BringUp` / `BringDown` are only thin lifecycle wrappers, the descriptor will likely remain
-  unchanged and the result codes will make that explicit
+- the probe should now tell us whether the public WLAN interface object itself can promote the descriptor state that `bsd:nu::Assign` currently rejects with `0x00010425`
+- if `BringUp` / `BringDown` are only thin lifecycle wrappers, the descriptor will likely remain unchanged and the result codes will make that explicit
 
 ## 2026-06-20: isolate WLAN interface experiments onto fresh sessions
 
 The previous offline WLAN deepening pass still had one important ambiguity:
 
 - `GetNetworkInterfaceInfo` was attempted first on the newly opened interface
-- if that command shape or command ID is wrong for the returned WLAN object, it may close the
-  session immediately
-- that would make all later `0x0000F601` results artifacts of the first bad call rather than
-  independent evidence
+- if that command shape or command ID is wrong for the returned WLAN object, it may close the session immediately
+- that would make all later `0x0000F601` results artifacts of the first bad call rather than independent evidence
 
 To remove that ambiguity, `net-probe` now keeps two layers of WLAN probing:
 
@@ -170,17 +147,12 @@ The ordering is now intentional:
 
 - the state-transition experiments run first on clean fresh sessions
 - `StopCommunication` and `BringDown` are attempted as cleanup after the start/communication path
-- the more suspicious `GetNetworkInterfaceInfo` / `Duplicate` calls run last, since they are still
-  the strongest candidates for "wrong command shape closes the session"
+- the more suspicious `GetNetworkInterfaceInfo` / `Duplicate` calls run last, since they are still the strongest candidates for "wrong command shape closes the session"
 
 Expected value from the next run:
 
-- if only the baseline multi-call pass collapses into `0x0000F601`, but one or more isolated
-  experiments return distinct results, then the first invalid command was poisoning the session and
-  the WLAN object is still worth pursuing
-- if every isolated experiment also fails the same way on a fresh session, then the returned
-  `wlan:nd::OpenNetworkInterface` object is much less likely to be a directly usable path for
-  `bsd:nu::Assign`
+- if only the baseline multi-call pass collapses into `0x0000F601`, but one or more isolated experiments return distinct results, then the first invalid command was poisoning the session and the WLAN object is still worth pursuing
+- if every isolated experiment also fails the same way on a fresh session, then the returned `wlan:nd::OpenNetworkInterface` object is much less likely to be a directly usable path for `bsd:nu::Assign`
 
 ## 2026-06-20: latest fresh-session interpretation changed
 
@@ -202,35 +174,28 @@ The latest fresh-session logs showed:
 The important correction is interpretive, not just numeric:
 
 - these results no longer support "WLAN bring-up failed"
-- they are more consistent with "the opened WLAN object does not match the richer interface-method
-  contract we assumed from `eth_main`"
+- they are more consistent with "the opened WLAN object does not match the richer interface-method contract we assumed from `eth_main`"
 
 Supporting static reverse in `bsdsockets_main` now shows:
 
-- `Assign` reads the descriptor through a local proxy object that forwards to remote vtable slot
-  `+0x58`
+- `Assign` reads the descriptor through a local proxy object that forwards to remote vtable slot `+0x58`
 - that proxy exposes a larger forwarded method table than the first visible WLAN-opened object
-- `bsdsockets_main` also has an internal `nn.socket.AnifWorker` path that constructs this richer
-  proxy class itself
+- `bsdsockets_main` also has an internal `nn.socket.AnifWorker` path that constructs this richer proxy class itself
 
 So the current WLAN probe should be read as:
 
 - `Assign -> 0x00010425` is still a real semantic admission failure on descriptor byte `0xa8`
-- `0x00010425` on our current `BringUp` label is not evidence that we found the real WLAN
-  bring-up method
-- `0x0000F601` on `GetNetworkInterfaceInfo` / `Duplicate` remains strong evidence that at least
-  some current command IDs or shapes are wrong for the returned WLAN object
+- `0x00010425` on our current `BringUp` label is not evidence that we found the real WLAN bring-up method
+- `0x0000F601` on `GetNetworkInterfaceInfo` / `Duplicate` remains strong evidence that at least some current command IDs or shapes are wrong for the returned WLAN object
 
 Practical implication:
 
 - another blind probe pass against the same assumed WLAN interface table is lower value now
-- the next useful runtime change should wait until the `bsdsockets_main` proxy surface, or a
-  safer bridge into it, is understood more exactly
+- the next useful runtime change should wait until the `bsdsockets_main` proxy surface, or a safer bridge into it, is understood more exactly
 
 ## 2026-06-20: next targeted probe shape
 
-Static reverse now gives a much tighter probe target for the candidate interface object consumed by
-`bsd:nu::Assign`.
+Static reverse now gives a much tighter probe target for the candidate interface object consumed by `bsd:nu::Assign`.
 
 The assign preflight is:
 
@@ -252,9 +217,7 @@ Recovered behavior behind those commands:
 - command `0x81`
   - returns a packed `u32 + valid-byte` style result
 - commands `0x82` and `0x83`
-  - return multi-part configuration records that are immediately parsed into local state by
-    `FUN_7100079b1c(...)` / `FUN_7100079b88(...)` and
-    `FUN_710007993c(...)` / `FUN_71000799a8(...)`
+  - return multi-part configuration records that are immediately parsed into local state by `FUN_7100079b1c(...)` / `FUN_7100079b88(...)` and `FUN_710007993c(...)` / `FUN_71000799a8(...)`
 
 So the next runtime probe should stop trying broad guessed method families and instead:
 
@@ -268,9 +231,6 @@ So the next runtime probe should stop trying broad guessed method families and i
 
 Expected value:
 
-- if `0x82` or `0x83` already fails, then the candidate object likely is not the same family that
-  `Assign` expects
-- if `0x82` and `0x83` succeed but `5` fails, then the object family may match while the runtime
-  state is still wrong
-- if `5` succeeds and `0x80` still yields `0xa8 != 1`, then we are very close and need the final
-  state transition that toggles descriptor admission
+- if `0x82` or `0x83` already fails, then the candidate object likely is not the same family that `Assign` expects
+- if `0x82` and `0x83` succeed but `5` fails, then the object family may match while the runtime state is still wrong
+- if `5` succeeds and `0x80` still yields `0xa8 != 1`, then we are very close and need the final state transition that toggles descriptor admission

@@ -4,8 +4,7 @@ This is the shortest reproducible path for the `aarch64` setup we used.
 
 ## Devcontainer
 
-The repo now ships its own `.devcontainer/` based on the `wireguard-nx`
-baseline, but with the reversing toolchain baked into the image.
+The repo now ships its own `.devcontainer/` based on the `wireguard-nx` baseline, but with the reversing toolchain baked into the image.
 
 Included in the container image:
 
@@ -63,8 +62,7 @@ The default install shape is:
 - `/opt/toolchain/rustup`
 - `/opt/toolchain/bin`
 
-Persistent workspace state stays in-repo under `workspace/` and is initialized by
-`.devcontainer/toolchain/init-workspace.sh` or the devcontainer `postStart` hook:
+Persistent workspace state stays in-repo under `workspace/` and is initialized by `.devcontainer/toolchain/init-workspace.sh` or the devcontainer `postStart` hook:
 
 - `workspace/ghidra/projects`
 - `workspace/config`
@@ -78,17 +76,12 @@ Installed components:
 - Adubbz Switch loader, built against local Ghidra
 - `linux_arm_64` native `decompile` and `sleigh` binaries under Ghidra's `build/os/` tree
 
-It also applies the local compatibility patches in
-[ghidra-cli-g12.patch](/workspaces/nx-reversing.git/.devcontainer/toolchain/patches/ghidra-cli-g12.patch:1)
-and
-[ghidra-switch-loader-g12.patch](/workspaces/nx-reversing.git/.devcontainer/toolchain/patches/ghidra-switch-loader-g12.patch:1).
+It also applies the local compatibility patches in [ghidra-cli-g12.patch](/workspaces/nx-reversing.git/.devcontainer/toolchain/patches/ghidra-cli-g12.patch:1) and [ghidra-switch-loader-g12.patch](/workspaces/nx-reversing.git/.devcontainer/toolchain/patches/ghidra-switch-loader-g12.patch:1).
 
 ## Use
 
-Use the wrappers from the installed toolchain `bin/` directory, not the raw
-cargo binary. The generated `workspace/toolchain-env.sh` file exports
-`JAVA_HOME`, `CARGO_HOME`, `RUSTUP_HOME`, `XDG_CONFIG_HOME`, and the required
-`PATH` entries.
+Use the wrappers from the installed toolchain `bin/` directory, not the raw cargo binary.
+The generated `workspace/toolchain-env.sh` file exports `JAVA_HOME`, `CARGO_HOME`, `RUSTUP_HOME`, `XDG_CONFIG_HOME`, and the required `PATH` entries.
 
 Quick import:
 
@@ -113,7 +106,11 @@ ghidra-cli function decompile 7100000100 --project switch-test --program bsdsock
 
 ## Known Limits
 
-- Official Ghidra `12.1.2` on Linux `aarch64` does not ship the native decompiler binary here. The setup script compensates by building the `Decompiler` module's `linux_arm_64` natives locally.
-- The `ghidra-cli` patch deliberately starts a project-scoped bridge and imports/opens programs over TCP. This avoids the Ghidra 12 issues we hit with hidden script paths and unreliable `-process` / `-import` startup behavior.
-- `ghidra-cli analyze` is patched to stop the bridge, run `analyzeHeadless -process <program>`, then reopen the program through the bridge. That path is deliberate; bridge-side analysis was unreliable on this host.
-- The native build is intentionally scoped to `Ghidra/Features/Decompiler` with `buildNatives_linux_arm_64`. That is enough for working decompilation on this host without paying for a full cross-module native build.
+- Official Ghidra `12.1.2` on Linux `aarch64` does not ship the native decompiler binary here.
+  The setup script compensates by building the `Decompiler` module's `linux_arm_64` natives locally.
+- The `ghidra-cli` patch deliberately starts a project-scoped bridge and imports/opens programs over TCP.
+  This avoids the Ghidra 12 issues we hit with hidden script paths and unreliable `-process` / `-import` startup behavior.
+- `ghidra-cli analyze` is patched to stop the bridge, run `analyzeHeadless -process <program>`, then reopen the program through the bridge.
+  That path is deliberate; bridge-side analysis was unreliable on this host.
+- The native build is intentionally scoped to `Ghidra/Features/Decompiler` with `buildNatives_linux_arm_64`.
+  That is enough for working decompilation on this host without paying for a full cross-module native build.

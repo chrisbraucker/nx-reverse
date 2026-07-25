@@ -1,7 +1,6 @@
 # Docs Workspace
 
-This directory holds the publishable part of the reversing workspace: derived
-analysis, plans, methods, and setup documentation.
+This directory holds the publishable part of the reversing workspace: derived analysis, plans, methods, and setup documentation.
 
 Primary documents:
 
@@ -18,5 +17,4 @@ Repository split:
 2. keep local firmware inputs and all persistent reversing state under `workspace/`
 3. keep raw local captures under `traces/<version>/local/`
 
-When module identity is uncertain, preserve the original local filename under
-`workspace/` and document the mapping in the relevant note.
+When module identity is uncertain, preserve the original local filename under `workspace/` and document the mapping in the relevant note.

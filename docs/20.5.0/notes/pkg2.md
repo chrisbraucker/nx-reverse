@@ -45,8 +45,7 @@ Notably absent from both `main` and `safe` `pkg2`:
 
 That matters because it narrows the kernel/KIP question:
 
-- if we want a lower-than-`wlan` insertion point, it is unlikely to be "another
-  hidden networking KIP in `pkg2`"
+- if we want a lower-than-`wlan` insertion point, it is unlikely to be "another hidden networking KIP in `pkg2`"
 - it is more likely to be:
   - a generic kernel object/memory/event boundary
   - a Mesosphere or custom-KIP patch
@@ -65,8 +64,8 @@ The kernels are different binaries:
   - size: `3.6M`
   - SHA-256: `4bfc8f59fe221afc0c9d23c45a10cdd527754e990dff8b9b8ac27365a2939e3a`
 
-They are not just trivially padded copies. The first visible byte difference
-appears well before EOF and the safe kernel is materially larger.
+They are not just trivially padded copies.
+The first visible byte difference appears well before EOF and the safe kernel is materially larger.
 
 ### Kernel format
 
@@ -81,13 +80,11 @@ The first few decoded instructions are identical between `main` and `safe`:
 - initial branch from offset `0x0` to `0x75000`
 - a small low-address stub region around `0x800`
 
-This is enough to justify importing `kernel.bin` into Ghidra as a raw
-`AARCH64:LE:64` binary for the next pass.
+This is enough to justify importing `kernel.bin` into Ghidra as a raw `AARCH64:LE:64` binary for the next pass.
 
 ### Early privileged register use
 
-A quick disassembly scan of the main kernel shows immediate privileged-register
-activity, including:
+A quick disassembly scan of the main kernel shows immediate privileged-register activity, including:
 
 - `mrs ... daif`
 - `msr daif, ...`
@@ -95,8 +92,7 @@ activity, including:
 - `mrs ... ttbr1_el1`
 - `mrs ... tcr_el1`
 
-This is low-level kernel bring-up / MMU / interrupt control territory, not
-network-specific logic.
+This is low-level kernel bring-up / MMU / interrupt control territory, not network-specific logic.
 
 ## KIP inventory observations
 
@@ -121,8 +117,7 @@ Safe-only extras:
 
 Implication:
 
-- `sm`, `Loader`, and `spl` are stable enough between `main` and `safe` that one
-  reverse pass can likely cover both.
+- `sm`, `Loader`, and `spl` are stable enough between `main` and `safe` that one reverse pass can likely cover both.
 - `ProcessMana` remains worth prioritizing for process/service context.
 - none of these names suggest a hidden network implementation path on their own.
 
@@ -140,8 +135,7 @@ But the current behavior is uneven:
 
 - `kernel.bin` does not auto-import through the loader path
   - current result: `Import failed: No load spec found`
-- `ghidra-cli analyze` on imported KIPs currently leaves suspiciously thin
-  metadata behind
+- `ghidra-cli analyze` on imported KIPs currently leaves suspiciously thin metadata behind
   - function count still reports as `1`
   - program `analyzed` state does not become trustworthy
 
@@ -149,14 +143,11 @@ Practical takeaway:
 
 - KIP1 import is working well enough to begin labeled manual reversing
 - `kernel.bin` needs a raw-binary import path in Ghidra
-- for now, GUI/manual analysis remains more trustworthy than relying on the CLI
-  analysis status for KIPs
+- for now, GUI/manual analysis remains more trustworthy than relying on the CLI analysis status for KIPs
 
 ## Current interpretation for the VPN effort
 
-The first `pkg2` pass shifts the kernel hypothesis from "find the networking
-stack in package2" to "find the generic kernel primitives that userland network
-sysmodules rely on".
+The first `pkg2` pass shifts the kernel hypothesis from "find the networking stack in package2" to "find the generic kernel primitives that userland network sysmodules rely on".
 
 That means the kernel-focused checklist should now prioritize:
 
@@ -187,40 +178,32 @@ Then recover:
 - the service-manager object model in `sm.kip1`
 - the process capability / context structures in `ProcessMana.kip1`
 
-That is the lowest-friction path to determine whether a synthetic uplink could
-be attached below the current `wlan` / `eth` userland services.
+That is the lowest-friction path to determine whether a synthetic uplink could be attached below the current `wlan` / `eth` userland services.
 
 ## 2026-06-23: `sm.kip1` service-manager pass
 
-A first real `sm.kip1` pass is now captured separately in
-[sm.md](/workspaces/nx-reversing.git/docs/20.5.0/notes/sm.md:1).
+A first real `sm.kip1` pass is now captured separately in [sm.md](/workspaces/nx-reversing.git/docs/20.5.0/notes/sm.md:1).
 
 Most important current result:
 
-- the registration path candidate at `0x71000020b0` hardcodes `0x815` before
-  scanning the main service table at `0x7100019000`
+- the registration path candidate at `0x71000020b0` hardcodes `0x815` before scanning the main service table at `0x7100019000`
 
-That strongly supports the current runtime interpretation that
-`RegisterMitmServer(nifm:u) failed rc=0x00000815` is a genuine `sm`
-service-table registration result rather than a higher-level tracing artifact.
+That strongly supports the current runtime interpretation that `RegisterMitmServer(nifm:u) failed rc=0x00000815` is a genuine `sm` service-table registration result rather than a higher-level tracing artifact.
 
 ## 2026-06-28: first raw `kernel.bin` exception map
 
-The raw-binary path is now useful enough to record the first concrete kernel
-control-flow anchors even without a clean Ghidra import.
+The raw-binary path is now useful enough to record the first concrete kernel control-flow anchors even without a clean Ghidra import.
 
 Tools used:
 
 - `aarch64-none-elf-objdump -D -b binary -m aarch64`
-- focused windows around the early branch target and later exception-heavy
-  regions
+- focused windows around the early branch target and later exception-heavy regions
 
 ### Early boot / bring-up anchor
 
 The first word still branches from offset `0x0` to `0x75000`.
 
-The block at `0x75000` is now clearly a privileged bring-up path, not just a
-branch landing pad:
+The block at `0x75000` is now clearly a privileged bring-up path, not just a branch landing pad:
 
 - masks interrupts with `msr daifset, #0xf`
 - checks `CurrentEL`
@@ -262,21 +245,18 @@ At `0x2ba000`:
 Current interpretation:
 
 - `0x64a10` looks like a reusable EL1 "install current vector state" helper
-- `0x2ba000` looks more like a later-stage relocation / trampoline path that
-  temporarily points EL1 at a local vector table while transferring control
+- `0x2ba000` looks more like a later-stage relocation / trampoline path that temporarily points EL1 at a local vector table while transferring control
 
 ### First sync-exception split
 
-The block at `0x62424` is now the first clear sync-exception gate worth
-tracking.
+The block at `0x62424` is now the first clear sync-exception gate worth tracking.
 
 Recovered shape:
 
 - reads `ESR_EL1`
 - branches on exception class (`ESR_EL1 >> 26`)
 - has fast paths for a handful of classes
-- otherwise falls back to a full register-save path and helper call at
-  `0x66e80`
+- otherwise falls back to a full register-save path and helper call at `0x66e80`
 
 Important branch targets:
 
@@ -288,8 +268,7 @@ Important branch targets:
   - performs targeted `TLBI`
   - otherwise falls through to the heavier save/dispatch path
 
-The exact Arm architectural labels are not hard-confirmed in this note, but
-the `0x15` branch is the strongest current AArch64 SVC-path candidate.
+The exact Arm architectural labels are not hard-confirmed in this note, but the `0x15` branch is the strongest current AArch64 SVC-path candidate.
 
 ### SVC-dispatch candidate
 
@@ -306,24 +285,19 @@ Recovered behavior:
 - calls the selected handler
 - restores context and returns with `eret`
 
-There is a sibling-looking path at `0x63cd4` with the same broad structure but
-a different dispatch table rooted near `0x77350`.
+There is a sibling-looking path at `0x63cd4` with the same broad structure but a different dispatch table rooted near `0x77350`.
 
 Practical conclusion:
 
-- the current kernel evidence still points toward generic syscall/exception
-  plumbing, not a dedicated networking subsystem in `pkg2`
-- this is still valuable, because it identifies where deeper runtime tracing or
-  Mesosphere comparison should start if we later need to understand:
+- the current kernel evidence still points toward generic syscall/exception plumbing, not a dedicated networking subsystem in `pkg2`
+- this is still valuable, because it identifies where deeper runtime tracing or Mesosphere comparison should start if we later need to understand:
   - IPC object flow
   - memory mapping primitives
   - event/wait behavior
 
 ## 2026-06-28: Mesosphere-guided SVC naming
 
-The vendored Atmosphere tree in this repo is now enough to tighten the naming
-of the first two kernel exception branches without claiming an exact
-address-for-address source match.
+The vendored Atmosphere tree in this repo is now enough to tighten the naming of the first two kernel exception branches without claiming an exact address-for-address source match.
 
 Relevant local source:
 
@@ -356,23 +330,17 @@ That makes the earlier raw branch labels materially stronger:
 
 This is still guidance, not hard proof:
 
-- the Nintendo kernel at 20.5.0 is not being claimed to be source-identical to
-  vendored Mesosphere
-- the claim is only that the recovered control-flow shape and the exception
-  class split line up closely enough that these names are now the best working
-  labels
+- the Nintendo kernel at 20.5.0 is not being claimed to be source-identical to vendored Mesosphere
+- the claim is only that the recovered control-flow shape and the exception class split line up closely enough that these names are now the best working labels
 
 Practical impact for the `pkg2` checklist:
 
-- `0x63954` is now the best first anchor for later syscall-side tracing or hook
-  experiments against 64-bit userland
-- `0x63cd4` is the sibling worth keeping for 32-bit compatibility paths, but
-  is probably secondary for current homebrew/sysmodule work
+- `0x63954` is now the best first anchor for later syscall-side tracing or hook experiments against 64-bit userland
+- `0x63cd4` is the sibling worth keeping for 32-bit compatibility paths, but is probably secondary for current homebrew/sysmodule work
 
 ## 2026-06-28: `ProcessMana.kip1` first orientation
 
-`ProcessMana.kip1` imports cleanly into the local `pkg2-test` project, but the
-first CLI pass suggests it will not yield much through strings alone.
+`ProcessMana.kip1` imports cleanly into the local `pkg2-test` project, but the first CLI pass suggests it will not yield much through strings alone.
 
 Observed so far:
 
@@ -385,15 +353,12 @@ Observed so far:
 
 Practical conclusion:
 
-- `ProcessMana.kip1` should be treated as a function/disassembly-driven target,
-  not a strings-driven one
-- the next useful pass there is to locate process creation / capability /
-  service-access enforcement logic directly, not to mine more string tables
+- `ProcessMana.kip1` should be treated as a function/disassembly-driven target, not a strings-driven one
+- the next useful pass there is to locate process creation / capability / service-access enforcement logic directly, not to mine more string tables
 
 ## 2026-06-28: `ProcessMana.kip1` uncompressed service surface
 
-A raw KIP pass with `hactool` is now enough to turn `ProcessMana` into a much
-more concrete target, even without deep function recovery yet.
+A raw KIP pass with `hactool` is now enough to turn `ProcessMana` into a much more concrete target, even without deep function recovery yet.
 
 Command used:
 
@@ -434,8 +399,9 @@ Recovered section layout:
   - address `0x0002d000`
   - size `0xd000`
 
-The declared SVC set is also informative. `ProcessMana` is not a tiny passive
-helper. It has enough privilege to:
+The declared SVC set is also informative.
+`ProcessMana` is not a tiny passive helper.
+It has enough privilege to:
 
 - create and start threads
 - connect to named ports and issue sync IPC
@@ -445,14 +411,11 @@ helper. It has enough privilege to:
 - query process info
 - create and tune resource limits
 
-That alone makes it a strong candidate for later service-access and
-process-lifecycle reversing.
+That alone makes it a strong candidate for later service-access and process-lifecycle reversing.
 
 ### Useful RO strings from the uncompressed image
 
-After extracting the uncompressed RX/RO/RW blobs from the KIP container, the RO
-surface yields a much better orientation set than the imported Ghidra strings
-did.
+After extracting the uncompressed RX/RO/RW blobs from the KIP container, the RO surface yields a much better orientation set than the imported Ghidra strings did.
 
 Service and dependency strings:
 
@@ -483,8 +446,7 @@ Practical interpretation:
   - talks to the service manager through `sm:m`
   - depends on secure-platform services through `spl:`
 
-This is useful for the longer MITM / capability path because it narrows where
-service access and launch policy are likely to be stitched together:
+This is useful for the longer MITM / capability path because it narrows where service access and launch policy are likely to be stitched together:
 
 - `sm.kip1`
   - service registration and MITM tables
@@ -514,8 +476,7 @@ The KIP import status is now:
   - section map usable
   - only obvious exported string so far: `"ldr.nss"`
 
-CLI analysis on these KIPs is still too thin to trust for automated function
-recovery, but the imports are sufficient for:
+CLI analysis on these KIPs is still too thin to trust for automated function recovery, but the imports are sufficient for:
 
 - memory-map inspection
 - string extraction
@@ -523,19 +484,15 @@ recovery, but the imports are sufficient for:
 
 ## Current next kernel step
 
-With the exception anchors now identified, the next useful kernel/KIP pass
-should be:
+With the exception anchors now identified, the next useful kernel/KIP pass should be:
 
-1. compare the `0x63954` / `0x63cd4` dispatch paths against Mesosphere or other
-   public kernel references for naming only
-2. inspect `ProcessMana.kip1` specifically for process capability / context
-   structures that govern service access
+1. compare the `0x63954` / `0x63cd4` dispatch paths against Mesosphere or other public kernel references for naming only
+2. inspect `ProcessMana.kip1` specifically for process capability / context structures that govern service access
 3. continue `sm.kip1` only where it clarifies MITM registration state
 
 ## 2026-06-28: `Loader.kip1` and `ProcessMana.kip1` now split cleanly by role
 
-The next pass below userland is now concrete enough to stop talking about
-`Loader` and `ProcessMana` as generic "core KIPs".
+The next pass below userland is now concrete enough to stop talking about `Loader` and `ProcessMana` as generic "core KIPs".
 
 ### `Loader.kip1`: process image construction and NPDM-facing code path
 
@@ -578,8 +535,7 @@ But it does not have the PM-side lifecycle calls such as:
 - `svcTerminateProcess`
 - resource-limit management
 
-That split already points to `Loader` as the image-construction side of program
-bring-up, not the supervisor.
+That split already points to `Loader` as the image-construction side of program bring-up, not the supervisor.
 
 Useful string anchors from the uncompressed image:
 
@@ -602,16 +558,12 @@ Practical interpretation:
 - `Loader` exposes the expected `ldr:*` service family
 - it talks to `fsp-ldr`, not directly to any network service
 - it mounts code filesystems and explicitly opens `code:/main.npdm`
-- it also carries the usual RTLD / subsdk / relocation plumbing for Nintendo's
-  userspace image format
+- it also carries the usual RTLD / subsdk / relocation plumbing for Nintendo's userspace image format
 
-For the networking effort, the important conclusion is not "Loader does
-networking". It is:
+For the networking effort, the important conclusion is not "Loader does networking".
+It is:
 
-- if a later KIP-level strategy needs to alter service-access or capability
-  policy for a networking sysmodule, `Loader` is the first realistic place to
-  look because it is the KIP that visibly touches NPDM-backed program images
-  and owns `svcCreateProcess`
+- if a later KIP-level strategy needs to alter service-access or capability policy for a networking sysmodule, `Loader` is the first realistic place to look because it is the KIP that visibly touches NPDM-backed program images and owns `svcCreateProcess`
 
 ### `ProcessMana.kip1`: lifecycle supervision, not image construction
 
@@ -650,10 +602,8 @@ But it does not have:
 Practical interpretation:
 
 - `ProcessMana` supervises process lifecycle after construction
-- `Loader` constructs the process image and likely materializes NPDM-derived
-  policy and capabilities
-- `ProcessMana` then tracks, starts, limits, and terminates the resulting
-  process while coordinating with:
+- `Loader` constructs the process image and likely materializes NPDM-derived policy and capabilities
+- `ProcessMana` then tracks, starts, limits, and terminates the resulting process while coordinating with:
   - `ldr:pm`
   - `fsp-pr`
   - `sm:m`
@@ -680,11 +630,9 @@ then the current best order is:
 This also strengthens a negative conclusion:
 
 - none of these KIPs show signs of hiding a separate network stack
-- what they do show is the policy and launch machinery around userland
-  networking sysmodules
+- what they do show is the policy and launch machinery around userland networking sysmodules
 
-That is useful because it tells us where a custom-KIP strategy would have to
-patch the platform:
+That is useful because it tells us where a custom-KIP strategy would have to patch the platform:
 
 - not by finding a secret `nifm`/`wlan` implementation in `pkg2`
 - but by changing service policy, process policy, or generic kernel plumbing

@@ -1,7 +1,6 @@
 # `ghidra-cli` Best Practices On This Host
 
-This is the shortest set of habits that avoided the recurring `ghidra-cli`
-failures on the ephemeral Linux `aarch64` setup.
+This is the shortest set of habits that avoided the recurring `ghidra-cli` failures on the ephemeral Linux `aarch64` setup.
 
 ## Environment
 
@@ -15,23 +14,18 @@ which ghidra-cli
 which analyzeHeadless
 ```
 
-The wrappers carry the required `JAVA_HOME`, `XDG_CONFIG_HOME`, and the
-installed toolchain paths.
+The wrappers carry the required `JAVA_HOME`, `XDG_CONFIG_HOME`, and the installed toolchain paths.
 
 ## Operational rules
 
 - Prefer serialized `ghidra-cli` access per project/program.
-- Do not fire multiple bridge-backed queries against the same project in
-  parallel.
-- After import, always verify the actual saved program name with
-  `ghidra-cli program list --project <name>`.
+- Do not fire multiple bridge-backed queries against the same project in parallel.
+- After import, always verify the actual saved program name with `ghidra-cli program list --project <name>`.
 
 Reason:
 
-- the CLI bridge has been reliable enough for single-step use, but not robust
-  enough to treat as a parallel query service
-- `import --program <alias>` may still save the program under the original file
-  basename instead of the requested alias
+- the CLI bridge has been reliable enough for single-step use, but not robust enough to treat as a parallel query service
+- `import --program <alias>` may still save the program under the original file basename instead of the requested alias
 
 ## Known import quirk
 
@@ -42,8 +36,7 @@ ghidra-cli import workspace/20.5.0/pkg/main/pkg2/ini/sm.kip1 \
   --project sm-test --program sm_20_5_0
 ```
 
-imported the file but then errored because the saved program name was still
-`sm.kip1`.
+imported the file but then errored because the saved program name was still `sm.kip1`.
 
 Practical rule:
 
@@ -53,8 +46,7 @@ Practical rule:
 
 ## KIP-specific limitation
 
-KIP1 import through the Switch loader works, but headless analysis is still not
-fully trustworthy here.
+KIP1 import through the Switch loader works, but headless analysis is still not fully trustworthy here.
 
 Symptoms seen on this host:
 
@@ -62,10 +54,8 @@ Symptoms seen on this host:
 - memory map looks correct
 - strings can be queried
 - `ghidra-cli analyze` reports success
-- function metadata still stays effectively empty, for example `function_count:
-  1`
-- direct disassembly requests may fail with "address may be data or unanalyzed
-  code"
+- function metadata still stays effectively empty, for example `function_count: 1`
+- direct disassembly requests may fail with "address may be data or unanalyzed code"
 
 ## Reliable fallback for KIPs
 
@@ -117,5 +107,4 @@ ghidra-cli strings list --project <project> --program <actual-name>
 ghidra-cli analyze --project <project> --program <actual-name>
 ```
 
-If analysis still looks implausibly thin, stop trusting the CLI analysis result
-and switch to manual KIP decompression plus `objdump`.
+If analysis still looks implausibly thin, stop trusting the CLI analysis result and switch to manual KIP decompression plus `objdump`.

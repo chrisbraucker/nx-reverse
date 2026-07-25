@@ -13,16 +13,14 @@ Verified against:
 
 ## Answer
 
-On Horizon `20.5.0`, the current evidence says the DNS resolver service does exist inside the
-`bsdsockets` title.
+On Horizon `20.5.0`, the current evidence says the DNS resolver service does exist inside the `bsdsockets` title.
 
 The important service names present in `bsdsockets_main` are:
 
 - `sfdnsres`
 - `dns:priv`
 
-This is no longer just a strings-only guess. `bsdsockets_main` contains a concrete registration
-routine for both services.
+This is no longer just a strings-only guess. `bsdsockets_main` contains a concrete registration routine for both services.
 
 Cross-check across the current extracted `*_main` set:
 
@@ -34,8 +32,8 @@ Cross-check across the current extracted `*_main` set:
   - `nifm_main`
   - `netConnect_main`
 
-That split matters. It supports treating `sfdnsres` / `dns:priv` as the resolver IPC surface,
-while `nsd:u` remains a more general shared service dependency.
+That split matters.
+It supports treating `sfdnsres` / `dns:priv` as the resolver IPC surface, while `nsd:u` remains a more general shared service dependency.
 
 ## Confirmed registration path in `bsdsockets_main`
 
@@ -66,9 +64,7 @@ The surrounding bootstrap function is:
   - initializes the resolver-server state block
   - calls `FUN_71000d0bcc(...)`
 
-This matches the already recovered `bsd:s` / `bsd:a` / `bsd:u` registration style closely enough
-that the resolver should be treated as another real IPC surface hosted by `bsdsockets_main`, not
-just a library-only helper.
+This matches the already recovered `bsd:s` / `bsd:a` / `bsd:u` registration style closely enough that the resolver should be treated as another real IPC surface hosted by `bsdsockets_main`, not just a library-only helper.
 
 ## Resolver code present in `bsdsockets_main`
 
@@ -82,8 +78,7 @@ The binary also contains the expected libc-style resolver entry points and label
 
 Important note:
 
-- `ResolverSetDnsServersIntoTLS` here appears to refer to thread-local storage for the resolver
-  state, not Transport Layer Security.
+- `ResolverSetDnsServersIntoTLS` here appears to refer to thread-local storage for the resolver state, not Transport Layer Security.
 
 Recovered helpers:
 
@@ -94,12 +89,11 @@ Recovered helpers:
   - `gethostbyaddr`-side helper
   - explicitly routes through a `"hosts"` source first
 - `FUN_710008a6b0(...)`
-  - updates resolver per-thread state and logs
-    `__res_thread structure is NULL for %s`
+  - updates resolver per-thread state and logs `__res_thread structure is NULL for %s`
   - called with the label `ResolverSetDnsServersIntoTLS`
 
-So the resolver is not only registered as an IPC service. The expected socket resolver
-implementation also lives in the same binary.
+So the resolver is not only registered as an IPC service.
+The expected socket resolver implementation also lives in the same binary.
 
 ## Correlation with local SDK headers
 
@@ -122,11 +116,9 @@ Two points matter:
 That second point is especially useful:
 
 - it suggests `nsd` is a selectable backend/input to resolver requests
-- it does not suggest that generic socket DNS bypasses `sfdnsres` entirely in favor of a separate
-  public `nsd`-only path
+- it does not suggest that generic socket DNS bypasses `sfdnsres` entirely in favor of a separate public `nsd`-only path
 
-`/opt/devkitpro/libnx/include/netdb.h` also explicitly tells users to use the standard BSD-style
-resolver surface:
+`/opt/devkitpro/libnx/include/netdb.h` also explicitly tells users to use the standard BSD-style resolver surface:
 
 - `gethostbyname`
 - `gethostbyaddr`
@@ -143,11 +135,11 @@ The clearest currently observed strings are in `account_main` and `nifm_main`:
 
 - `Couldn't resolve proxy name`
 - `Error: Failed to allocate memory for nn::nsd::ResolveEx().`
-- `Error: nn::nsd::ResolveEx() failed. Err Desc: %d`
+- `Error: nn::nsd::ResolveEx() failed.
+  Err Desc: %d`
 - `nsd:u`
 
-This is strong evidence that those modules do perform `nsd`-backed name resolution for at least
-some higher-level tasks, especially proxy handling and service/FQDN lookups.
+This is strong evidence that those modules do perform `nsd`-backed name resolution for at least some higher-level tasks, especially proxy handling and service/FQDN lookups.
 
 Current interpretation:
 
@@ -158,8 +150,7 @@ Current interpretation:
   - likely for specific higher-level name-resolution tasks
   - not yet proven to be the ordinary `getaddrinfo` path used by application sockets
 
-That last point is still an inference, but it is the best fit with the combined binary and header
-evidence.
+That last point is still an inference, but it is the best fit with the combined binary and header evidence.
 
 ## What this means for probing
 
@@ -169,17 +160,13 @@ The earlier ambiguity is now resolved enough to guide the next runtime step:
 - the first resolver-specific trace target should be `sfdnsres`
 - `dns:priv` should be treated as a likely private companion surface
 
-`bsd:u` still matters for actual TCP/UDP transport, but resolver traffic is now best modeled as a
-parallel IPC path hosted by the same `bsdsockets` title.
+`bsd:u` still matters for actual TCP/UDP transport, but resolver traffic is now best modeled as a parallel IPC path hosted by the same `bsdsockets` title.
 
 ## Current open questions
 
-- whether ordinary `getaddrinfo()` from user titles reaches `sfdnsres` directly or through another
-  local wrapper first
-- whether `dns:priv` is only used internally by `sfdnsres`, or whether some privileged callers use
-  it directly
-- whether the resolver path is what we previously failed to observe while tracing only
-  `nifm:u`, `bsd:u`, and `ssl`
+- whether ordinary `getaddrinfo()` from user titles reaches `sfdnsres` directly or through another local wrapper first
+- whether `dns:priv` is only used internally by `sfdnsres`, or whether some privileged callers use it directly
+- whether the resolver path is what we previously failed to observe while tracing only `nifm:u`, `bsd:u`, and `ssl`
 - whether any part of the resolver lifecycle still depends on `bsd:a`
 
 ## Practical next step
@@ -191,5 +178,4 @@ For the runtime probe, the next DNS-focused step should be:
 3. rerun the controlled requester DNS scenario
 4. correlate `getaddrinfo()` with the observed `sfdnsres` command flow
 
-That should answer the remaining question of where requester DNS lives on-device without having to
-guess from `bsd:a` side effects alone.
+That should answer the remaining question of where requester DNS lives on-device without having to guess from `bsd:a` side effects alone.

@@ -6,14 +6,11 @@ This note covers the first static pass over:
 
 - `workspace/20.5.0/pkg/main/pkg2/ini/sm.kip1`
 
-The immediate goal was to understand the service-manager side of Atmosphere MITM
-registration, because recent probe crashes implicated title ID
-`0100000000000004` and a failed `RegisterMitmServer(nifm:u)` path.
+The immediate goal was to understand the service-manager side of Atmosphere MITM registration, because recent probe crashes implicated title ID `0100000000000004` and a failed `RegisterMitmServer(nifm:u)` path.
 
 ## Practical status
 
-`ghidra-cli` imports `sm.kip1` through the Switch loader, but CLI-side analysis
-is still too thin to trust on its own:
+`ghidra-cli` imports `sm.kip1` through the Switch loader, but CLI-side analysis is still too thin to trust on its own:
 
 - import works
 - image base resolves to `0x7100000000`
@@ -77,8 +74,7 @@ These line up with the expected service-manager bootstrap and manager/user split
 
 ## Atmosphere MITM command context
 
-The passive MITM probe currently reaches `sm` through Atmosphere-added TIPC
-commands, not purely through stock Nintendo `sm:` behavior.
+The passive MITM probe currently reaches `sm` through Atmosphere-added TIPC commands, not purely through stock Nintendo `sm:` behavior.
 
 From the vendored `libstratosphere` command definitions:
 
@@ -92,9 +88,7 @@ From the vendored `libstratosphere` command definitions:
 - `65100` `AtmosphereGetServiceRecord`
 - `65101` `AtmosphereListServiceRecords`
 
-For the current probe failures, the important point is that stock `sm`
-registration logic still appears to own the backing service-name tables and the
-duplicate/ownership error paths.
+For the current probe failures, the important point is that stock `sm` registration logic still appears to own the backing service-name tables and the duplicate/ownership error paths.
 
 ## Candidate functions
 
@@ -128,8 +122,7 @@ Observed behavior:
 
 Current interpretation:
 
-- main-thread startup that initializes the service-manager state and spawns the
-  dispatcher thread
+- main-thread startup that initializes the service-manager state and spawns the dispatcher thread
 
 ### `0x7100001610`
 
@@ -150,8 +143,7 @@ Notable return codes visible in this helper family:
 
 Current interpretation:
 
-- helper used by higher-level registration logic to install or validate
-  service-table records
+- helper used by higher-level registration logic to install or validate service-table records
 
 ### `0x71000020b0`
 
@@ -191,8 +183,7 @@ Most important sub-block:
 
 Current interpretation:
 
-- this is the duplicate-registration / already-present path that explains the
-  runtime `RegisterMitmServer(nifm:u) failed rc=0x00000815` result
+- this is the duplicate-registration / already-present path that explains the runtime `RegisterMitmServer(nifm:u) failed rc=0x00000815` result
 
 This does not yet prove whether the duplicate owner is:
 
@@ -200,8 +191,7 @@ This does not yet prove whether the duplicate owner is:
 - a prior probe instance
 - or an Atmosphere MITM bookkeeping artifact
 
-But it does confirm that `0x815` is a service-table registration result from
-inside `sm`, not an unrelated higher-layer wrapper code.
+But it does confirm that `0x815` is a service-table registration result from inside `sm`, not an unrelated higher-layer wrapper code.
 
 ### `0x7100002370`
 
@@ -234,16 +224,13 @@ Current interpretation:
 
 The current `sm` pass gives us one firm conclusion already:
 
-- `0x815` is not speculative anymore; it is directly embedded in the
-  service-registration search path that scans the main service table
+- `0x815` is not speculative anymore; it is directly embedded in the service-registration search path that scans the main service table
 
 That is enough to tighten the next runtime checks:
 
-1. confirm whether `nifm:u` is already present in the stock service table when
-   the probe tries to MITM-register
+1. confirm whether `nifm:u` is already present in the stock service table when the probe tries to MITM-register
 2. confirm whether a stale MITM/future-MITM state survives probe shutdown
-3. distinguish normal duplicate-registration from ownership/manager-table
-   failures in the `0x415` / `0x1015` family
+3. distinguish normal duplicate-registration from ownership/manager-table failures in the `0x415` / `0x1015` family
 
 ## Next static step
 
@@ -254,5 +241,4 @@ The next useful `sm` work items are:
 3. map the exact structure layout of:
    - the main table at `0x7100019000`
    - the manager/aux table at `0x710001b410`
-4. line up those paths with Atmosphere's MITM registration flow to see where
-   future-MITM or MITM-owner state is layered on top of stock records
+4. line up those paths with Atmosphere's MITM registration flow to see where future-MITM or MITM-owner state is layered on top of stock records

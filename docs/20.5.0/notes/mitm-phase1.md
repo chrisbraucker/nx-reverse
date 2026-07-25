@@ -39,40 +39,33 @@ The immediate runtime goal is to recover:
 
 ## 2026-06-21: compiled passive observation layer
 
-Phase 1 now exists in `net-probe` and compiles into the probe title rather than
-the main WireGuard sysmodule.
+Phase 1 now exists in `net-probe` and compiles into the probe title rather than the main WireGuard sysmodule.
 
-The current MITM coverage is intentionally passive and currently narrowed to
-one target while `sm` registration state is being stabilized:
+The current MITM coverage is intentionally passive and currently narrowed to one target while `sm` registration state is being stabilized:
 
 - `nifm:u`
 
 ## Temporary fork warning
 
-This Phase 1 MITM path is temporary instrumentation, not an upstream-compatible
-integration shape.
+This Phase 1 MITM path is temporary instrumentation, not an upstream-compatible integration shape.
 
-The current build depends on local changes inside the vendored
-`net-probe/lib/Atmosphere-libs` subtree. Those changes are compiled into the
-probe itself, so they do not require a patched Atmosphere installation on the
-device. They do, however, create a source-level fork of `libstratosphere`.
+The current build depends on local changes inside the vendored `net-probe/lib/Atmosphere-libs` subtree.
+Those changes are compiled into the probe itself, so they do not require a patched Atmosphere installation on the device.
+They do, however, create a source-level fork of `libstratosphere`.
 
 Treat the current MITM build accordingly:
 
 - use it to gather runtime traces and protocol observations
 - do not treat the patched libstratosphere path as product architecture
-- do not build further permanent abstractions on top of the local fork unless
-  strictly needed for data collection
-- plan to remove or isolate the vendored library changes after the current
-  trace-gathering pass
+- do not build further permanent abstractions on top of the local fork unless strictly needed for data collection
+- plan to remove or isolate the vendored library changes after the current trace-gathering pass
 
 Cleanup requirement:
 
-- before hardening the real VPN integration path, revert the vendored
-  `Atmosphere-libs` modifications and re-implement only the minimum necessary
-  MITM/probe functionality against upstream/public APIs
+- before hardening the real VPN integration path, revert the vendored `Atmosphere-libs` modifications and re-implement only the minimum necessary MITM/probe functionality against upstream/public APIs
 
-The forward path is unchanged. The MITM layer only:
+The forward path is unchanged.
+The MITM layer only:
 
 - accepts MITM sessions
 - keeps the original forward `Service`
@@ -131,8 +124,7 @@ Captured fields now include:
 
 ## libstratosphere changes made locally
 
-The bundled `libstratosphere` was extended so the passive MITM layer can observe
-forwarded traffic without changing service behavior.
+The bundled `libstratosphere` was extended so the passive MITM layer can observe forwarded traffic without changing service behavior.
 
 Key local changes:
 
@@ -142,15 +134,13 @@ Key local changes:
   - local MITM session ID
 - MITM forwarding now exposes a monitoring callback
 - `sm::mitm` lifecycle calls now expose a monitoring callback
-- MITM server registration now accepts an explicit query callback instead of
-  requiring `Interface::ShouldMitm`
+- MITM server registration now accepts an explicit query callback instead of requiring `Interface::ShouldMitm`
 
-This last change was necessary because the generated service interface type and
-the implementation type have different template roles in Atmosphere's object
-factory. Using the generated interface directly was the clean path.
+This last change was necessary because the generated service interface type and the implementation type have different template roles in Atmosphere's object factory.
+Using the generated interface directly was the clean path.
 
-These modifications are acceptable only as temporary instrumentation. They
-should not remain the default long-term dependency shape of this repository.
+These modifications are acceptable only as temporary instrumentation.
+They should not remain the default long-term dependency shape of this repository.
 
 ## What is still unverified
 
@@ -167,32 +157,28 @@ should not remain the default long-term dependency shape of this repository.
 
 ## Immediate next runtime task
 
-Deploy the newly built `net-probe` binary and collect the first passive traces
-for:
+Deploy the newly built `net-probe` binary and collect the first passive traces for:
 
 1. flight mode
 2. Wi-Fi enabled but unassociated
 3. Wi-Fi connected
 
-The goal of the next trace run is not packet work yet. It is to recover:
+The goal of the next trace run is not packet work yet.
+It is to recover:
 
 1. `sm` MITM lifecycle state for `nifm:u`
 2. real `nifm:u` session flow and command ordering
 
 ## 2026-06-28: `nifm:s` tracer refinement
 
-The passive tracer now keeps a local, trace-only map of forwarded domain object
-IDs per MITM session. This does not change forwarding behavior; it only makes
-the JSON trace easier to read.
+The passive tracer now keeps a local, trace-only map of forwarded domain object IDs per MITM session.
+This does not change forwarding behavior; it only makes the JSON trace easier to read.
 
 New trace behavior:
 
-- `ipc_request`, `ipc_response`, `ipc_decode_*`, and `ipc_handle` now include an
-  `object_path` field
+- `ipc_request`, `ipc_response`, `ipc_decode_*`, and `ipc_handle` now include an `object_path` field
 - the first converted session object is recorded as `root`
-- returned domain objects are named from the parent path plus the creating
-  command, e.g. `nifm:s.root.cmd5[0]`, then
-  `nifm:s.root.cmd5[0].cmd4[0]`
+- returned domain objects are named from the parent path plus the creating command, e.g. `nifm:s.root.cmd5[0]`, then `nifm:s.root.cmd5[0].cmd4[0]`
 - `ipc_decode_request` and `ipc_decode_response` now include:
   - `payload_size`
   - `payload_word0..3`
@@ -201,17 +187,13 @@ New trace behavior:
 
 Expected value of the next `nifm:s` run:
 
-- the `qlaunch` monitor chain should no longer appear as a flat sequence on
-  `nifm:s.root`
-- command `17` / `18` replies can be compared by payload fields directly,
-  instead of decoding them manually from the CMIF envelope
-- command `15` / `36` replies should surface their small payloads and help
-  distinguish status polling from configuration queries
+- the `qlaunch` monitor chain should no longer appear as a flat sequence on `nifm:s.root`
+- command `17` / `18` replies can be compared by payload fields directly, instead of decoding them manually from the CMIF envelope
+- command `15` / `36` replies should surface their small payloads and help distinguish status polling from configuration queries
 
 ## 2026-06-28: `nifm:s` client map and command graph
 
-Latest passive traces show that the active public surface in these runs is
-`nifm:s`, not `nifm:u`.
+Latest passive traces show that the active public surface in these runs is `nifm:s`, not `nifm:u`.
 
 Observed service usage:
 
@@ -247,8 +229,7 @@ Observed per-client patterns:
 - `am`
   - only observed creating the root child with cmd `5`
 - `nim`
-  - short setup sequence through root cmd `5`, child cmd `4`, then leaf cmds
-    `2`, `6`, `4`, `0`, `1`
+  - short setup sequence through root cmd `5`, child cmd `4`, then leaf cmds `2`, `6`, `4`, `0`, `1`
   - explicitly closes its leaf object in the clean trace
 - `olsc`
   - uses the same root cmd `5` and child cmd `4` pattern as `nim`
@@ -276,25 +257,18 @@ Crash classification:
 
 - the failure is a `User Break`, not a `Data Abort`
 - crash report result: `0x81B` (`2027-0004`)
-- this looks like an internal invariant/assert trip in `olsc`, not raw memory
-  corruption in the client
+- this looks like an internal invariant/assert trip in `olsc`, not raw memory corruption in the client
 
 Current working hypothesis:
 
-- the highest-value suspect is copied-handle or session/domain identity
-  semantics around `bsd:s` `RegisterClient`
-- plain CMIF payload forwarding is less likely, because the visible request and
-  response path completes successfully before `olsc` aborts
+- the highest-value suspect is copied-handle or session/domain identity semantics around `bsd:s` `RegisterClient`
+- plain CMIF payload forwarding is less likely, because the visible request and response path completes successfully before `olsc` aborts
 
 Operational decision for now:
 
-- `olsc` is denylisted from passive `bsd:s` MITM together with `npns` and
-  `eupld`
-- this keeps boot stable while the tracer continues collecting from less
-  sensitive `bsd:s` clients
-- `net-probe` now also has build-time diagnostic overrides so those clients can
-  be re-enabled one at a time without deleting the stable default denylist
-  policy:
+- `olsc` is denylisted from passive `bsd:s` MITM together with `npns` and `eupld`
+- this keeps boot stable while the tracer continues collecting from less sensitive `bsd:s` clients
+- `net-probe` now also has build-time diagnostic overrides so those clients can be re-enabled one at a time without deleting the stable default denylist policy:
   - `make EXTRA_DEFINES='-DWGNX_DIAG_ALLOW_BSD_SYSTEM_OLSC=1'`
   - related toggles exist for `npns`, `eupld`, `qlaunch`, and the `ssl` family
 
@@ -314,10 +288,8 @@ Current interpretation:
 
 - the passive MITM no longer appears to perturb the public `nifm:u` path
 - the active compatibility surface for the current system state is `nifm:s`
-- `nim` is not the only sensitive client; `qlaunch` is the more valuable
-  lifecycle target because it keeps a long-lived polling session open
-- future shutdown and transparency fixes should be validated primarily against
-  the `qlaunch` `17` / `18` polling loop
+- `nim` is not the only sensitive client; `qlaunch` is the more valuable lifecycle target because it keeps a long-lived polling session open
+- future shutdown and transparency fixes should be validated primarily against the `qlaunch` `17` / `18` polling loop
 
 ## 2026-06-28: `nifm:s` `nim` sequence vs. SwitchBrew
 
@@ -329,13 +301,10 @@ Reference page:
 
 Why the caveat matters:
 
-- the static service registration recovered from `nifm_main` currently shows
-  `nifm:s` with `0x15`, while the public wiki documents max sessions `0x10`
-- the wiki is still the best public map for naming the public IPC surface, but
-  the binary and the live trace remain the authoritative sources for 20.5.0
+- the static service registration recovered from `nifm_main` currently shows `nifm:s` with `0x15`, while the public wiki documents max sessions `0x10`
+- the wiki is still the best public map for naming the public IPC surface, but the binary and the live trace remain the authoritative sources for 20.5.0
 
-That said, the observed `nim` sequence now correlates strongly with the public
-`nifm:s` contracts documented there.
+That said, the observed `nim` sequence now correlates strongly with the public `nifm:s` contracts documented there.
 
 Observed `nim` runtime path:
 
@@ -355,9 +324,7 @@ SwitchBrew-guided interpretation:
 
 - `nifm:s.root` cmd `5`
   - likely `CreateGeneralService`
-  - this is already strongly supported by static reversing because the root
-    handler consumes a PID-tagged 8-byte argument and returns the first child
-    wrapper
+  - this is already strongly supported by static reversing because the root handler consumes a PID-tagged 8-byte argument and returns the first child wrapper
 - `nifm:s.root.cmd5[0]`
   - likely `IGeneralService`
 - `nifm:s.root.cmd5[0]` cmd `4`
@@ -380,10 +347,8 @@ The leaf object match is especially strong:
 
 Practical conclusion:
 
-- for the current passive `nifm:s` work, the `nim` path is best modeled as
-  `IStaticService -> IGeneralService -> IRequest`
-- this is still a model, not a final name proof, but it is now consistent
-  across:
+- for the current passive `nifm:s` work, the `nim` path is best modeled as `IStaticService -> IGeneralService -> IRequest`
+- this is still a model, not a final name proof, but it is now consistent across:
   - live IPC shape
   - handle counts
   - payload widths
@@ -392,8 +357,7 @@ Practical conclusion:
 
 ## 2026-06-28: `nifm:u` root-child static correlation
 
-Static reversing of `nifm_main` now lines up with the passive `sphaira` trace
-well enough to pin down the first useful `nifm:u` object chain.
+Static reversing of `nifm_main` now lines up with the passive `sphaira` trace well enough to pin down the first useful `nifm:u` object chain.
 
 Recovered registration path:
 
@@ -420,17 +384,13 @@ Recovered `nifm:u` root dispatcher:
 
 Direct binary interpretation of `FUN_7100090980`:
 
-- regardless of public naming, root cmd `5` is unquestionably a
-  "take one `u64`, return one child object" command on 20.5.0
-- the all-zero 8-byte payload observed in the live trace is therefore not
-  incidental; it is part of the real command contract
+- regardless of public naming, root cmd `5` is unquestionably a "take one `u64`, return one child object" command on 20.5.0
+- the all-zero 8-byte payload observed in the live trace is therefore not incidental; it is part of the real command contract
 
 SwitchBrew-guided naming:
 
 - SwitchBrew documents `nifm:u` cmd `5` as `CreateGeneralService`
-- that matches the recovered 20.5.0 shape well enough that using the name is
-  now reasonable, as long as it is treated as a public-label hypothesis rather
-  than a substitute for the binary
+- that matches the recovered 20.5.0 shape well enough that using the name is now reasonable, as long as it is treated as a public-label hypothesis rather than a substitute for the binary
 
 This matches the observed runtime path:
 
@@ -440,19 +400,15 @@ This matches the observed runtime path:
 
 Important trace clarification:
 
-- the apparent `nifm:u.root` cmd `0` in the passive trace is not a real public
-  NIFM command
-- it is the HIPC close packet (`raw_word0 = 0x00000002`) being carried through
-  the generic request/response logger during object shutdown
-- this removes the contradiction with the static root dispatcher, which only
-  handles cmds `4` and `5`
+- the apparent `nifm:u.root` cmd `0` in the passive trace is not a real public NIFM command
+- it is the HIPC close packet (`raw_word0 = 0x00000002`) being carried through the generic request/response logger during object shutdown
+- this removes the contradiction with the static root dispatcher, which only handles cmds `4` and `5`
 
 Recovered first child dispatcher:
 
 - `FUN_7100090c50`
   - broad switch over the child object command set
-  - observed live `sphaira` traffic fits this dispatcher, not the other nearby
-    NIFM dispatchers
+  - observed live `sphaira` traffic fits this dispatcher, not the other nearby NIFM dispatchers
 
 Confirmed `sphaira`-relevant child commands:
 
@@ -474,11 +430,8 @@ Confirmed `sphaira`-relevant child commands:
   - handled by case `0xf`
   - calls `*param_2 + 0x88`
   - returns a 24-byte inline payload
-  - observed payload is stable across polls:
-    `01c0a840a7ffffff00c0a840bc01c0a840bc000000000000`
-  - the static packing now matches `IpAddressSetting` (`0xd`) plus
-    `DnsSetting` (`0x9`) from SwitchBrew, for `0x16` bytes total plus wire
-    padding
+  - observed payload is stable across polls: `01c0a840a7ffffff00c0a840bc01c0a840bc000000000000`
+  - the static packing now matches `IpAddressSetting` (`0xd`) plus `DnsSetting` (`0x9`) from SwitchBrew, for `0x16` bytes total plus wire padding
   - decoded current sample:
     - `IpAddressSetting`
       - `is_auto = 1`
@@ -493,52 +446,38 @@ Confirmed `sphaira`-relevant child commands:
 - cmd `18`
   - handled by case `0x12`
   - calls `*param_2 + 0xa0`
-  - writes a 3-byte status tuple into the reply body, padded to 4 bytes on the
-    wire
+  - writes a 3-byte status tuple into the reply body, padded to 4 bytes on the wire
   - observed payload: `01 03 04 00`
-  - this value stayed stable across the `sphaira` polling loop in the healthy
-    trace
-  - the wire layout matches the documented
-    `u8 NetworkInterfaceType, u8 wifiStrength, u8 connectionStatus`
+  - this value stayed stable across the `sphaira` polling loop in the healthy trace
+  - the wire layout matches the documented `u8 NetworkInterfaceType, u8 wifiStrength, u8 connectionStatus`
   - the first two bytes line up cleanly with `Ieee80211` and strong Wi-Fi
   - the semantic meaning of status value `4` is still inferred, not proven
   - SwitchBrew-guided name: `GetInternetConnectionStatus`
 
 Current interpretation:
 
-- `sphaira`'s practical "internet available" path on `nifm:u` is centered on
-  the child returned by root cmd `5`
-- the first child returned by `FUN_7100090980` is now best modeled as
-  `IGeneralService`
+- `sphaira`'s practical "internet available" path on `nifm:u` is centered on the child returned by root cmd `5`
+- the first child returned by `FUN_7100090980` is now best modeled as `IGeneralService`
 - cmd `12` is effectively confirmed as current IPv4 address
-- cmd `15` is effectively confirmed as current IP config info, not an opaque
-  route blob
+- cmd `15` is effectively confirmed as current IP config info, not an opaque route blob
 - cmd `18` is effectively confirmed as a 3-field connection-status tuple
-- cmd `5`, `12`, `15`, and `18` now form a coherent, SwitchBrew-aligned
-  `IGeneralService` subset instead of four isolated observations
+- cmd `5`, `12`, `15`, and `18` now form a coherent, SwitchBrew-aligned `IGeneralService` subset instead of four isolated observations
 
 Next static target inside `nifm_main`:
 
-- keep identifying the concrete vtable behind the child wrapper installed by
-  `FUN_7100090980`
-- correlate more `FUN_7100090c50` cases against the public `IGeneralService`
-  list
-- determine whether the `nifm:s` and `nifm:u` root cmd `5` paths land on the
-  same concrete backend type or only on sibling interfaces with parallel
-  command numbering
+- keep identifying the concrete vtable behind the child wrapper installed by `FUN_7100090980`
+- correlate more `FUN_7100090c50` cases against the public `IGeneralService` list
+- determine whether the `nifm:s` and `nifm:u` root cmd `5` paths land on the same concrete backend type or only on sibling interfaces with parallel command numbering
 
 ## 2026-06-28: shared root glue and `qlaunch` hot commands
 
-Static reversing now tightens the relationship between `nifm:a`, `nifm:s`, and
-`nifm:u`.
+Static reversing now tightens the relationship between `nifm:a`, `nifm:s`, and `nifm:u`.
 
 Recovered registration detail from `FUN_710008f33c`:
 
-- all three services are registered through the same root CMIF wrapper
-  `PTR_PTR_710011d558`
+- all three services are registered through the same root CMIF wrapper `PTR_PTR_710011d558`
 - the wrapper points at the same root dispatch glue table at `0x71001189d0`
-- the difference between `a`, `s`, and `u` is therefore not the outer CMIF
-  parser itself, but the backing object pointer passed to registration
+- the difference between `a`, `s`, and `u` is therefore not the outer CMIF parser itself, but the backing object pointer passed to registration
 
 Observed registration shape:
 
@@ -557,22 +496,16 @@ Observed registration shape:
 
 Practical interpretation:
 
-- `FUN_7100090698` is now best treated as shared root glue for at least
-  `nifm:s` and `nifm:u`
-- it is reasonable that the same root cmd numbering is reused while the
-  concrete backend implementation differs by service flavor
+- `FUN_7100090698` is now best treated as shared root glue for at least `nifm:s` and `nifm:u`
+- it is reasonable that the same root cmd numbering is reused while the concrete backend implementation differs by service flavor
 
 Additional root clarification:
 
-- root cmd `4` (`FUN_71000907d8`) and root cmd `5` (`FUN_7100090980`) both
-  return the same child wrapper `PTR_PTR_710011d570`
-- that wrapper points at dispatch glue `FUN_7100090b48`, which forwards into
-  the large child dispatcher `FUN_7100090c50`
+- root cmd `4` (`FUN_71000907d8`) and root cmd `5` (`FUN_7100090980`) both return the same child wrapper `PTR_PTR_710011d570`
+- that wrapper points at dispatch glue `FUN_7100090b48`, which forwards into the large child dispatcher `FUN_7100090c50`
 
-That means the active `nifm:s.root.cmd5[0]` object seen in the passive traces
-and the active `nifm:u.root.cmd5[0]` object seen from `sphaira` are not just
-superficially similar. They share the same CMIF dispatch glue and differ at the
-backend-object layer.
+That means the active `nifm:s.root.cmd5[0]` object seen in the passive traces and the active `nifm:u.root.cmd5[0]` object seen from `sphaira` are not just superficially similar.
+They share the same CMIF dispatch glue and differ at the backend-object layer.
 
 This makes the current model stronger:
 
@@ -585,8 +518,7 @@ This makes the current model stronger:
 
 ### `qlaunch` polling commands on the shared child
 
-Because `qlaunch` stays on `nifm:s.root.cmd5[0]`, the hot commands in its
-polling loop are commands on `FUN_7100090c50`.
+Because `qlaunch` stays on `nifm:s.root.cmd5[0]`, the hot commands in its polling loop are commands on `FUN_7100090c50`.
 
 `cmd 17` / `0x11`
 
@@ -629,9 +561,7 @@ This is important for the runtime traces:
   - coarse connection status
   - current access-point metadata
 
-That is a better explanation for why the Home UI can become "network confused"
-while actual outbound traffic still works: the UI is likely sensitive to the
-shape and freshness of this higher-level `nifm:s` polling surface.
+That is a better explanation for why the Home UI can become "network confused" while actual outbound traffic still works: the UI is likely sensitive to the shape and freshness of this higher-level `nifm:s` polling surface.
 
 ### Leaf object returned by child cmd `4`
 
@@ -647,8 +577,7 @@ Recovered child-creation edge:
   - points at glue dispatcher `FUN_710009640c`
   - which immediately forwards into `FUN_7100096514`
 
-`FUN_7100096514` static command surface now matches the earlier `nim` trace well
-enough to reinforce the `IRequest` hypothesis:
+`FUN_7100096514` static command surface now matches the earlier `nim` trace well enough to reinforce the `IRequest` hypothesis:
 
 - cmd `0`
   - no input
@@ -672,17 +601,13 @@ enough to reinforce the `IRequest` hypothesis:
 
 Practical conclusion:
 
-- `nifm:s.root.cmd5[0]` and `nifm:u.root.cmd5[0]` are now best modeled as the
-  same shared `IGeneralService`-style glue object
-- `cmd 4` on that object returns a separate leaf object under
-  `FUN_7100096514`, which remains the strongest `IRequest` candidate
-- another child-creation edge also exists on cmd `2`, returning wrapper
-  `PTR_PTR_710011d590`; that object is not yet named
+- `nifm:s.root.cmd5[0]` and `nifm:u.root.cmd5[0]` are now best modeled as the same shared `IGeneralService`-style glue object
+- `cmd 4` on that object returns a separate leaf object under `FUN_7100096514`, which remains the strongest `IRequest` candidate
+- another child-creation edge also exists on cmd `2`, returning wrapper `PTR_PTR_710011d590`; that object is not yet named
 
 ## 2026-06-28: shared child cmd `2` is most likely `CreateScanRequest`
 
-The remaining unnamed child returned by the shared `IGeneralService`-style
-dispatcher is now narrow enough to label provisionally.
+The remaining unnamed child returned by the shared `IGeneralService`-style dispatcher is now narrow enough to label provisionally.
 
 Static shape from `FUN_7100090c50` case `2`:
 
@@ -695,22 +620,18 @@ Wrapper layout:
 - `PTR_PTR_710011d590`
   - first slot `0x71001189e0`
   - second slot `0x71000e54aa`
-- this matches the same wrapper pattern used by the already-correlated
-  `IRequest` child:
+- this matches the same wrapper pattern used by the already-correlated `IRequest` child:
   - `PTR_PTR_710011d5a0`
     - first slot `0x71001189e8`
     - second slot `0x71000e581e`
 
 Important correction:
 
-- the second slot here is not directly executable code in the current Ghidra
-  project
+- the second slot here is not directly executable code in the current Ghidra project
 - it resolves to a descriptor-like data region, not a discovered function
-- that means this child is being described through the same generic CMIF object
-  machinery as the `IRequest` leaf, not through a one-off hand-written wrapper
+- that means this child is being described through the same generic CMIF object machinery as the `IRequest` leaf, not through a one-off hand-written wrapper
 
-Public guidance from SwitchBrew's `Network_Interface_services` page now fits
-this static edge very closely:
+Public guidance from SwitchBrew's `Network_Interface_services` page now fits this static edge very closely:
 
 - on `IGeneralService`
   - cmd `2` is documented as `CreateScanRequest`
@@ -722,8 +643,7 @@ this static edge very closely:
   - takes an input `s32 RequirementPreset`
   - returns `IRequest`
 
-This is an unusually strong match for the two child-creation cases already
-recovered:
+This is an unusually strong match for the two child-creation cases already recovered:
 
 - shared child cmd `2`
   - no input
@@ -746,8 +666,7 @@ Current best model:
 Confidence:
 
 - medium-high
-- this still depends partly on public service documentation, not only on
-  private implementation detail recovered from the binary
+- this still depends partly on public service documentation, not only on private implementation detail recovered from the binary
 
 Most useful next confirmation target:
 
@@ -757,13 +676,11 @@ Most useful next confirmation target:
   - `IsProcessing`
   - `GetResult`
   - `GetSystemEventReadableHandle`
-  - optional `SetChannels`
-  then the label can be treated as effectively confirmed
+  - optional `SetChannels` then the label can be treated as effectively confirmed
 
 ## 2026-06-28: root cmd `4` and the `IScanRequest` leaf now line up cleanly
 
-Two more static edges now fit the public `nifm` model tightly enough to use as
-working labels.
+Two more static edges now fit the public `nifm` model tightly enough to use as working labels.
 
 ### Root cmd `4` is the older no-input general-service constructor
 
@@ -811,8 +728,7 @@ Confidence:
 
 ### The unnamed child returned by shared child cmd `2` now reduces to `IScanRequest`
 
-The dispatch pointer at `0x71001189e0` lands at code entry `0x7100095d10`,
-which validates CMIF framing and forwards into:
+The dispatch pointer at `0x71001189e0` lands at code entry `0x7100095d10`, which validates CMIF framing and forwards into:
 
 - `FUN_7100095e18(...)`
 
@@ -842,16 +758,13 @@ Recovered command surface:
   - best label: `GetSystemEventReadableHandle`
 - cmd `4`
   - present on 20.5.0
-  - consumes an input buffer and passes `(ptr, size >> 1)` to backend offset
-    `*param_2 + 0x40`
+  - consumes an input buffer and passes `(ptr, size >> 1)` to backend offset `*param_2 + 0x40`
   - best label: `SetChannels`
 
 Important note on cmd `4`:
 
-- the `size >> 1` conversion strongly suggests the backend expects a count of
-  16-bit channel entries rather than a raw byte count
-- that matches the public idea of "set the channels to scan", even though the
-  exact element type is still inferred from the binary shape
+- the `size >> 1` conversion strongly suggests the backend expects a count of 16-bit channel entries rather than a raw byte count
+- that matches the public idea of "set the channels to scan", even though the exact element type is still inferred from the binary shape
 
 Practical conclusion:
 
@@ -873,8 +786,8 @@ This is now one of the cleaner parts of the `nifm` reverse:
 
 ## Recommended next autoboot probe runs
 
-If time permits, collect two runs instead of one. They answer different
-questions and are easier to compare when kept separate.
+If time permits, collect two runs instead of one.
+They answer different questions and are easier to compare when kept separate.
 
 Run A: passive boot and settings path
 
@@ -887,8 +800,7 @@ Run A: passive boot and settings path
 Goal:
 
 - capture the steady-state `qlaunch` polling baseline
-- see whether the settings path introduces new `nifm:s` clients or command
-  sequences
+- see whether the settings path introduces new `nifm:s` clients or command sequences
 
 Run B: passive boot and homebrew path
 
@@ -903,17 +815,14 @@ Run B: passive boot and homebrew path
 Goal:
 
 - capture the delta between Home-only traffic and a live homebrew consumer
-- verify whether `sphaira` causes additional `nifm:s` sessions beyond the
-  already-known system clients
+- verify whether `sphaira` causes additional `nifm:s` sessions beyond the already-known system clients
 
-If only one run is practical, prefer Run A first. It gives the cleanest
-baseline for the `qlaunch` polling path.
+If only one run is practical, prefer Run A first.
+It gives the cleanest baseline for the `qlaunch` polling path.
 
 ## 2026-06-28: broad `IGeneralService` surface now lines up through 20.5.0
 
-The large shared child dispatcher `FUN_7100090c50` can now be read as a mostly
-coherent `IGeneralService` implementation rather than a handful of isolated
-matches.
+The large shared child dispatcher `FUN_7100090c50` can now be read as a mostly coherent `IGeneralService` implementation rather than a handful of isolated matches.
 
 Public reference points used here:
 
@@ -925,13 +834,11 @@ Public reference points used here:
 The caution from earlier still applies:
 
 - the binary remains authoritative for 20.5.0
-- SwitchBrew and `libnx` are being used as naming guidance where the signature
-  overlap is high
+- SwitchBrew and `libnx` are being used as naming guidance where the signature overlap is high
 
 ### High-confidence `IGeneralService` command map
 
-The following cases now line up cleanly by command ID, input shape, output
-shape, and where available live trace behavior.
+The following cases now line up cleanly by command ID, input shape, output shape, and where available live trace behavior.
 
 - cmd `1`
   - `GetClientId`
@@ -1054,9 +961,7 @@ shape, and where available live trace behavior.
 
 ### 20.x tail: network-emulation and rewrite commands are present
 
-The same dispatcher continues through cmd `57`, which matters because it shows
-that the 20.5.0 `nifm` surface already includes the newer debug/emulation
-controls documented publicly for 18.x to 20.x.
+The same dispatcher continues through cmd `57`, which matters because it shows that the 20.5.0 `nifm` surface already includes the newer debug/emulation controls documented publicly for 18.x to 20.x.
 
 High-confidence signature matches:
 
@@ -1118,15 +1023,13 @@ High-confidence signature matches:
 
 Practical conclusion:
 
-- 20.5.0 does not just implement the older connectivity subset that most
-  homebrew wrappers expose
+- 20.5.0 does not just implement the older connectivity subset that most homebrew wrappers expose
 - the private dispatcher already carries the later emulation/rewrite surface
 - that is still policy/state machinery, not packet-routing machinery
 
 ## 2026-06-28: cmd `14` is a real child-object edge, best modeled as `INetworkProfile`
 
-The earlier uncertainty around shared child cmd `14` is now resolved enough to
-name it provisionally.
+The earlier uncertainty around shared child cmd `14` is now resolved enough to name it provisionally.
 
 Recovered creation path from `FUN_7100090c50` case `0xe`:
 
@@ -1166,13 +1069,11 @@ Current best model:
 Confidence:
 
 - medium-high on the object identity
-- lower on exact per-command naming inside the child, because this pass only
-  established the 3-command leaf shape cleanly
+- lower on exact per-command naming inside the child, because this pass only established the 3-command leaf shape cleanly
 
 ## 2026-06-28: `IRequest` late commands now line up with the public API too
 
-The `IRequest` leaf `FUN_7100096514` now reduces cleanly against both
-SwitchBrew and the installed `libnx` header.
+The `IRequest` leaf `FUN_7100096514` now reduces cleanly against both SwitchBrew and the installed `libnx` header.
 
 Previously confirmed:
 
@@ -1251,19 +1152,14 @@ Additional high-confidence matches:
 
 Why cmds `24` and `25` matter for the VPN project:
 
-- this is the concrete user-visible edge where `nifm` tracks a socket against
-  request lifecycle
-- SwitchBrew notes that registered request sockets later feed
-  `wlan:inf` sleep-entry handling
-- that is one of the few public places where `nifm` and WLAN state management
-  meet a specific socket object rather than only abstract connectivity policy
+- this is the concrete user-visible edge where `nifm` tracks a socket against request lifecycle
+- SwitchBrew notes that registered request sockets later feed `wlan:inf` sleep-entry handling
+- that is one of the few public places where `nifm` and WLAN state management meet a specific socket object rather than only abstract connectivity policy
 
 Practical conclusion:
 
 - `nifm` already has a formal notion of socket lifecycle attachment
-- that is still not routing control, but it is highly relevant to making any
-  tunneled transport survive sleep, interface loss, and foreground/background
-  transitions
+- that is still not routing control, but it is highly relevant to making any tunneled transport survive sleep, interface loss, and foreground/background transitions
 
 ## 2026-06-29: tracer refined for the next passive `nifm` run
 
@@ -1273,8 +1169,7 @@ Behavioral intent:
 
 - keep request forwarding unchanged
 - avoid reopening the earlier shutdown / transparency regressions
-- make the next `nifm` trace materially easier to interpret without offline
-  manual decoding
+- make the next `nifm` trace materially easier to interpret without offline manual decoding
 
 New trace behavior:
 
@@ -1285,8 +1180,7 @@ New trace behavior:
   - `hipc_command_type_name`
   - `root_close`
   - `domain_close`
-- a new `nifm_semantic` event is emitted for the currently understood hot
-  paths:
+- a new `nifm_semantic` event is emitted for the currently understood hot paths:
   - `IStaticService`
     - `CreateGeneralServiceOld`
     - `CreateGeneralService`
@@ -1303,8 +1197,8 @@ New trace behavior:
     - `SetRequirementPreset`
     - `SetPersistent`
 
-The semantic record does not replace the raw CMIF logs. It only adds summaries
-for fields we already have high confidence in, for example:
+The semantic record does not replace the raw CMIF logs.
+It only adds summaries for fields we already have high confidence in, for example:
 
 - `reserved_pid`
 - `requirement_preset`
@@ -1318,12 +1212,9 @@ for fields we already have high confidence in, for example:
 
 Expected value of the next run:
 
-- earlier apparent root cmd `0` noise should now collapse into explicit close
-  traffic instead of looking like a public API contradiction
-- `qlaunch` and `nim` lifecycles should be readable directly from the JSONL
-  without separate hand-decoding of payload bytes
-- the next comparison between `nifm:s` and `nifm:u` should be about semantic
-  behavior, not CMIF framing ambiguity
+- earlier apparent root cmd `0` noise should now collapse into explicit close traffic instead of looking like a public API contradiction
+- `qlaunch` and `nim` lifecycles should be readable directly from the JSONL without separate hand-decoding of payload bytes
+- the next comparison between `nifm:s` and `nifm:u` should be about semantic behavior, not CMIF framing ambiguity
 
 ## 2026-06-29: current manual-launch probe result
 
@@ -1341,11 +1232,9 @@ Observed trace shape:
 - only one real `nifm` client was captured
 - all semantic traffic hit `nifm:u`
 - no client traffic hit `nifm:s`
-- the entire `nifm:u` burst completed roughly 100 ms after MITM start, then
-  the trace stayed quiet until shutdown
+- the entire `nifm:u` burst completed roughly 100 ms after MITM start, then the trace stayed quiet until shutdown
 
-Captured `nifm:u` traffic was limited to the already understood
-`IGeneralService` polling loop:
+Captured `nifm:u` traffic was limited to the already understood `IGeneralService` polling loop:
 
 - `CreateGeneralService`
 - `GetCurrentNetworkProfile`
@@ -1356,16 +1245,12 @@ Captured `nifm:u` traffic was limited to the already understood
 Practical interpretation:
 
 - the tracer is now passive and stable enough to capture the startup poll loop
-- the Home-launched probe is still late for long-lived clients that opened
-  handles before MITM registration
-- for `nifm:s` and deeper `nim` lifecycle work, autoboot remains the higher
-  value capture mode
+- the Home-launched probe is still late for long-lived clients that opened handles before MITM registration
+- for `nifm:s` and deeper `nim` lifecycle work, autoboot remains the higher value capture mode
 
 ## 2026-07-01: `bsd:a` connection-test sensitivity in `qlaunch`
 
-An autoboot run that stayed on Home, entered Internet Settings, executed the
-connection test, and attempted to return Home crashed `qlaunch`
-(`0x0100000000001000`).
+An autoboot run that stayed on Home, entered Internet Settings, executed the connection test, and attempted to return Home crashed `qlaunch` (`0x0100000000001000`).
 
 Observed `bsd:a` sequence for `qlaunch`:
 
@@ -1386,24 +1271,18 @@ Crash classification:
 Operational conclusion:
 
 - passive `bsd:a` MITM is not yet transparent for `qlaunch`
-- this is structurally similar to the earlier `olsc` / `bsd:s` failure:
-  `RegisterClient` / monitoring setup appears sensitive to session, handle, or
-  domain identity semantics even when the visible CMIF payloads round-trip
-  successfully
+- this is structurally similar to the earlier `olsc` / `bsd:s` failure: `RegisterClient` / monitoring setup appears sensitive to session, handle, or domain identity semantics even when the visible CMIF payloads round-trip successfully
 
 Immediate mitigation:
 
 - `qlaunch` is now denylisted from `bsd:a` MITM
-- keep `bsd:a` tracing enabled for non-`qlaunch` clients while the
-  `RegisterClient` path is analyzed further
+- keep `bsd:a` tracing enabled for non-`qlaunch` clients while the `RegisterClient` path is analyzed further
 
 This note is guidance from runtime traces, not a proven root cause.
 
 ## 2026-07-03: `bsd:s` autoboot trace and tracer refinement
 
-An autobooted run that waited on Home, launched `sphaira`, started and aborted
-an update, then rebooted cleanly produced the first stable `bsd:s` trace that
-is useful for socket-sequence analysis.
+An autobooted run that waited on Home, launched `sphaira`, started and aborted an update, then rebooted cleanly produced the first stable `bsd:s` trace that is useful for socket-sequence analysis.
 
 Observed `bsd:s` client map in that run:
 
@@ -1451,22 +1330,17 @@ Concrete local state recovered from the trace:
 
 Practical interpretation:
 
-- the current passive MITM is transparent enough for at least one real
-  homebrew `bsd:s` client under autoboot
-- the trace already shows the expected nonblocking connect lifecycle around
-  `Connect` plus `GetSockOpt(SO_ERROR)`
-- the captured run still did not expose payload-bearing `Send` / `Recv`
-  operations, so either:
+- the current passive MITM is transparent enough for at least one real homebrew `bsd:s` client under autoboot
+- the trace already shows the expected nonblocking connect lifecycle around `Connect` plus `GetSockOpt(SO_ERROR)`
+- the captured run still did not expose payload-bearing `Send` / `Recv` operations, so either:
   - this scenario did not drive the data path we expected
   - the actual transfer path uses a different service/client mix
-  - or HTTPS payload I/O moved behind `ssl` after a connected socket
-    descriptor handoff
+  - or HTTPS payload I/O moved behind `ssl` after a connected socket descriptor handoff
   - or the interesting payload path is still outside the captured window
 
 Tracer refinement made after this run:
 
-- root `ipc_request` / `ipc_response` records now also carry a decoded
-  `command_name`
+- root `ipc_request` / `ipc_response` records now also carry a decoded `command_name`
 - `ipc_decode_request` / `ipc_decode_response` now also carry:
   - `object_kind`
   - `command_name`
@@ -1480,25 +1354,19 @@ Tracer refinement made after this run:
 
 Expected value of the next run:
 
-- binds and connects should no longer show impossible raw families such as
-  `512` or `518`
-- `GetSockOpt(SO_ERROR)` should surface the returned scalar directly in the
-  semantic record
-- manual offline correlation against the `.bin` stream should be needed less
-  often for routine `bsd:s` socket-state analysis
+- binds and connects should no longer show impossible raw families such as `512` or `518`
+- `GetSockOpt(SO_ERROR)` should surface the returned scalar directly in the semantic record
+- manual offline correlation against the `.bin` stream should be needed less often for routine `bsd:s` socket-state analysis
 
 ## 2026-07-06: `bsd:s` lifecycle instrumentation for repeated-client freezes
 
-Latest `bsd:s`-only traces point away from a simple socket-command forwarding
-bug and toward a session/domain lifecycle issue.
+Latest `bsd:s`-only traces point away from a simple socket-command forwarding bug and toward a session/domain lifecycle issue.
 
 Observed shape from the failing `sphaira` sequence:
 
-- first `sphaira` launch reaches `bsd:s`, opens two MITM sessions, performs
-  normal `RegisterClient` / `StartMonitoring` / socket activity, and exits
+- first `sphaira` launch reaches `bsd:s`, opens two MITM sessions, performs normal `RegisterClient` / `StartMonitoring` / socket activity, and exits
 - the later freeze happens before the second launch reaches `bsd:s` at all
-- standalone `requester` traffic can still succeed in runs where the repeated
-  `sphaira` launch later freezes
+- standalone `requester` traffic can still succeed in runs where the repeated `sphaira` launch later freezes
 
 Working hypothesis:
 
@@ -1518,21 +1386,17 @@ Tracer refinement added for this phase:
   - whether a `DispatchClose` was observed
 - per-session domain snapshots at disconnect time
 - passive-service destructor logging of the forward `Service` state
-- a low-rate watchdog that emits session and domain snapshots every two seconds
-  while MITM sessions are still active
+- a low-rate watchdog that emits session and domain snapshots every two seconds while MITM sessions are still active
 
 Practical goal of the next runs:
 
-- verify whether the first `sphaira` launch leaves any tracked `bsd:s` domain
-  objects alive at disconnect
+- verify whether the first `sphaira` launch leaves any tracked `bsd:s` domain objects alive at disconnect
 - compare the clean `requester` path against the repeated-client freeze path
-- determine whether the sensitive state is rooted in the short
-  `StartMonitoring` child session or in the main `RegisterClient` session
+- determine whether the sensitive state is rooted in the short `StartMonitoring` child session or in the main `RegisterClient` session
 
 ## 2026-07-07: `CloneCurrentObject` overtakes `StartMonitoring` as primary `bsd:s` suspect
 
-The next static + runtime pass tightened the `bsd:s` picture enough to narrow
-the repeated-client freeze further.
+The next static + runtime pass tightened the `bsd:s` picture enough to narrow the repeated-client freeze further.
 
 Runtime shape from the failing `sphaira` sequence:
 
@@ -1540,37 +1404,30 @@ Runtime shape from the failing `sphaira` sequence:
 - session `1` performs:
   - `RegisterClient`
   - repeated `CloneCurrentObject`
-  - normal socket-facing activity (`Socket`, `Fcntl`, `SetSockOpt`, `Bind`,
-    `Listen`, later another `Socket`)
+  - normal socket-facing activity (`Socket`, `Fcntl`, `SetSockOpt`, `Bind`, `Listen`, later another `Socket`)
 - session `2` performs only:
   - `StartMonitoring`
-- the two observed `CloneCurrentObject` calls on session `1` each return one
-  move handle
-- later freezes still tend to happen before a second launch reaches fresh
-  `bsd:s` traffic at all
+- the two observed `CloneCurrentObject` calls on session `1` each return one move handle
+- later freezes still tend to happen before a second launch reaches fresh `bsd:s` traffic at all
 
 Static reversing in `bsdsockets_main` now lines up with that shape:
 
 - `FUN_71000e41d0` is the `bsd:s` `StartMonitoring` wrapper
   - it sends plain root cmd `1`
   - it does not set up any returned child object or duplicate handle path
-- `FUN_71000e43f4` and `FUN_71000e487c` are representative `bsd:s` wrapper
-  methods that:
+- `FUN_71000e43f4` and `FUN_71000e487c` are representative `bsd:s` wrapper methods that:
   - lazily obtain a duplicate handle through `FUN_71000d7900`
   - cache it in the wrapper object
   - then issue the real socket-facing command over that duplicate
 - `FUN_71000d7900` is only a thin wrapper over `FUN_71000d8480`
 - `FUN_71000d79a0` is the sibling helper that calls `FUN_71000d7d00`
 - `FUN_71000d7d00` updates a caller-owned duplicate-handle slot
-- `FUN_71000d8050` explicitly replaces previous stored handles and closes old
-  ones via `FUN_71000c7c50`
+- `FUN_71000d8050` explicitly replaces previous stored handles and closes old ones via `FUN_71000c7c50`
 
 That shifts the working hypothesis:
 
-- `StartMonitoring` is still relevant as a secondary lifecycle signal, but it
-  is no longer the best explanation for the freeze by itself
-- the stronger suspect is now cloned forward-handle lifecycle on the main
-  `bsd:s` session
+- `StartMonitoring` is still relevant as a secondary lifecycle signal, but it is no longer the best explanation for the freeze by itself
+- the stronger suspect is now cloned forward-handle lifecycle on the main `bsd:s` session
   - duplicate-handle creation
   - duplicate-handle replacement
   - duplicate-handle teardown on wrapper destruction / client exit
@@ -1582,8 +1439,7 @@ Practical implication for the tracer:
   - every successful `CloneCurrentObject` / `CloneCurrentObjectEx`
   - the returned move handle
   - the outstanding duplicate count at disconnect time
-  - whether later control-path events still target a session that should have
-    been fully torn down
+  - whether later control-path events still target a session that should have been fully torn down
 
 ## 2026-07-07: new requester/requester vs sphaira/sphaira evidence
 
@@ -1592,44 +1448,29 @@ Fresh runtime comparison tightened the clone hypothesis further.
 `requester -> requester`:
 
 - both requester runs completed cleanly
-- under the `bsd:s`-only probe shape used for this run, the `bsd:s` trace never
-  progressed into the clone-heavy session pattern seen with `sphaira`
-- this means requester is currently not a reliable reproducer for the
-  `bsd:s` repeated-launch wedge
+- under the `bsd:s`-only probe shape used for this run, the `bsd:s` trace never progressed into the clone-heavy session pattern seen with `sphaira`
+- this means requester is currently not a reliable reproducer for the `bsd:s` repeated-launch wedge
 
 `sphaira -> sphaira`:
 
 - the first `sphaira` launch again accepted two `bsd:s` MITM sessions
-- the main logical session (`session_id = 1`) issued two successful
-  `CloneCurrentObject` calls
-- at disconnect time, the tracer still saw two outstanding clone records on
-  that logical session
-- the same logical session later emitted three close callbacks with different
-  server-side session handles
-  - this matches the expected shape of one original accepted MITM session plus
-    two clone-created MITM sessions
-- the second `sphaira` launch froze before any fresh `AcceptMitmConnection`
-  record appeared in the probe log
+- the main logical session (`session_id = 1`) issued two successful `CloneCurrentObject` calls
+- at disconnect time, the tracer still saw two outstanding clone records on that logical session
+- the same logical session later emitted three close callbacks with different server-side session handles
+  - this matches the expected shape of one original accepted MITM session plus two clone-created MITM sessions
+- the second `sphaira` launch froze before any fresh `AcceptMitmConnection` record appeared in the probe log
 
-That runtime shape aligns with the passive MITM implementation in the vendored
-Atmosphere-libs:
+That runtime shape aligns with the passive MITM implementation in the vendored Atmosphere-libs:
 
-- `CloneCurrentObjectImpl()` in
-  `sf_hipc_server_domain_session_manager.cpp` creates a fresh kernel session
-  pair with `hipc::CreateSession()`
-- for MITM sessions, it clones the upstream forward `Service` with
-  `serviceClone()`
+- `CloneCurrentObjectImpl()` in `sf_hipc_server_domain_session_manager.cpp` creates a fresh kernel session pair with `hipc::CreateSession()`
+- for MITM sessions, it clones the upstream forward `Service` with `serviceClone()`
 - it then registers the clone through `RegisterMitmSession(...)`
-- importantly, the cloned session is registered with the same logical
-  `m_mitm_session_id` used for monitor callbacks
+- importantly, the cloned session is registered with the same logical `m_mitm_session_id` used for monitor callbacks
 
 Implication:
 
-- the existing trace compression by logical `session_id` hides clone-created
-  MITM sessions as siblings of the original root session
-- the next targeted tracer needs to emit clone-registration events with the
-  newly created server session handle and cloned forward handle so those later
-  close callbacks can be matched to concrete clone registrations
+- the existing trace compression by logical `session_id` hides clone-created MITM sessions as siblings of the original root session
+- the next targeted tracer needs to emit clone-registration events with the newly created server session handle and cloned forward handle so those later close callbacks can be matched to concrete clone registrations
 
 ## 2026-07-07: updated `sphaira -> exit -> sphaira` teardown evidence
 
@@ -1650,29 +1491,19 @@ Observed:
   - clone session handle `786541`
   - root/monitor session handle `622705` for logical session `2`
   - root/main session handle `524403` for logical session `1`
-- `PassiveMitmService` destructor logs appear for logical session `2` and then
-  `1`
-- no second-launch `ShouldMitm(bsd:s)` / `AcceptMitmConnection(bsd:s)` appears
-  after the first launch has torn down
+- `PassiveMitmService` destructor logs appear for logical session `2` and then `1`
+- no second-launch `ShouldMitm(bsd:s)` / `AcceptMitmConnection(bsd:s)` appears after the first launch has torn down
 
 Current interpretation:
 
-- with present visibility, the first `sphaira` launch does complete its MITM-side
-  teardown
-- the freeze therefore moved from “missing disconnect callback” to “post-teardown
-  state still prevents a new `bsd:s` client from being created or acknowledged”
-- the next tracer improvement is to log root accepted session handles explicitly,
-  alongside clone-created session handles, so later disconnect/destructor events can
-  be mapped without inferring which handle belonged to the original accepted MITM
-  sessions
+- with present visibility, the first `sphaira` launch does complete its MITM-side teardown
+- the freeze therefore moved from “missing disconnect callback” to “post-teardown state still prevents a new `bsd:s` client from being created or acknowledged”
+- the next tracer improvement is to log root accepted session handles explicitly, alongside clone-created session handles, so later disconnect/destructor events can be mapped without inferring which handle belonged to the original accepted MITM sessions
 
 ## 2026-07-09: source-level `sphaira` + libnx correlation for `bsd:s`
 
-To reduce guesswork around the repeated-launch `bsd:s` wedge, the current
-upstream `sphaira` source and upstream libnx socket runtime were reviewed as
-guidance. This is not yet proof that the on-device `sphaira` binary matches the
-same revision exactly, but the recovered startup shape aligns closely with the
-live traces.
+To reduce guesswork around the repeated-launch `bsd:s` wedge, the current upstream `sphaira` source and upstream libnx socket runtime were reviewed as guidance.
+This is not yet proof that the on-device `sphaira` binary matches the same revision exactly, but the recovered startup shape aligns closely with the live traces.
 
 Source-level chain:
 
@@ -1690,14 +1521,11 @@ Source-level chain:
     - runs `curl_global_init()`
     - creates one queue thread
     - creates `MAX_THREADS = 4` worker threads
-    - creates one shared curl object with shared DNS / SSL-session /
-      connection state
+    - creates one shared curl object with shared DNS / SSL-session / connection state
 - `sphaira/source/ui/menus/main_menu.cpp`
-  - `MainMenu::MainMenu()` immediately starts an async HTTPS request to GitHub
-    releases metadata
+  - `MainMenu::MainMenu()` immediately starts an async HTTPS request to GitHub releases metadata
 - `sphaira/source/ui/menus/menu_base.cpp`
-  - the UI polls `nifmGetInternetConnectionStatus()` and
-    `nifmGetCurrentIpAddress()` about once per second for the status banner
+  - the UI polls `nifmGetInternetConnectionStatus()` and `nifmGetCurrentIpAddress()` about once per second for the status banner
 
 libnx-side meaning of that startup:
 
@@ -1720,17 +1548,13 @@ That directly explains the main runtime shape we keep seeing from `sphaira`:
 - one short `StartMonitoring` root `bsd:s` session
 - two `CloneCurrentObject` calls on the main root session
 
-For `num_bsd_sessions = 3`, those two clone calls are expected libnx behavior,
-not an application-specific anomaly.
+For `num_bsd_sessions = 3`, those two clone calls are expected libnx behavior, not an application-specific anomaly.
 
 Updated interpretation:
 
-- the current `sphaira` reproducer is valuable because it exercises the normal
-  libnx BSD session pool shape plus immediate async network work
-- the repeated-launch failure is now more likely inside passive MITM lifecycle
-  compatibility with libnx session pooling than in Sphaira-specific socket code
+- the current `sphaira` reproducer is valuable because it exercises the normal libnx BSD session pool shape plus immediate async network work
+- the repeated-launch failure is now more likely inside passive MITM lifecycle compatibility with libnx session pooling than in Sphaira-specific socket code
 - the next targeted tracer still needs to focus on:
   - accepted root-session ownership
   - clone-session registration / close ordering
-  - whether post-teardown state blocks a later client before a fresh
-    `AcceptMitmConnection(bsd:s)` occurs
+  - whether post-teardown state blocks a later client before a fresh `AcceptMitmConnection(bsd:s)` occurs

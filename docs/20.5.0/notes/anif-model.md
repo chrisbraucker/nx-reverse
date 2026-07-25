@@ -68,8 +68,7 @@ Confirmed behavior:
 Interpretation:
 
 - `bsdsockets_main` definitely contains active `anif` user-side machinery.
-- Even without a plain `bsd:nu` string, the binary is consistent with hosting the
-  `ISfUserServiceCreator` / `ISfUserService` side of the documented `bsd:nu` IPC surface.
+- Even without a plain `bsd:nu` string, the binary is consistent with hosting the `ISfUserServiceCreator` / `ISfUserService` side of the documented `bsd:nu` IPC surface.
 
 ### eth_main: confirmed
 
@@ -103,18 +102,15 @@ Confirmed runtime behavior:
 Interpretation:
 
 - `eth_main` is not just a thin IPC shim.
-- It owns concrete driver/network-interface objects and active worker threads for the
-  ethernet-side data path.
+- It owns concrete driver/network-interface objects and active worker threads for the ethernet-side data path.
 
 ### Current model
 
 This is the best-supported interpretation so far:
 
 1. `eth_main` owns the concrete `ISfNetworkInterfaceService` implementation.
-2. `bsdsockets_main` owns the `ISfUserServiceCreator` / `ISfUserService` side
-   documented as `bsd:nu`.
-3. `ISfUserService::Assign` likely binds a user-side wrapper to a service-session
-   handle for `ISfNetworkInterfaceService`, matching the SwitchBrew description.
+2. `bsdsockets_main` owns the `ISfUserServiceCreator` / `ISfUserService` side documented as `bsd:nu`.
+3. `ISfUserService::Assign` likely binds a user-side wrapper to a service-session handle for `ISfNetworkInterfaceService`, matching the SwitchBrew description.
 
 This matches the public docs:
 
@@ -129,8 +125,7 @@ This matches the public docs:
   - no plain `bsd:nu` string has been found
 - Exact `CreateUserService` dispatcher in `bsdsockets_main`
 - Exact `CreateDriverService` / `OpenNetworkInterface` dispatcher in `eth_main`
-- Exact handoff point where an `eth`-owned `ISfNetworkInterfaceService` session is
-  passed into the `bsdsockets` user-side path
+- Exact handoff point where an `eth`-owned `ISfNetworkInterfaceService` session is passed into the `bsdsockets` user-side path
 
 ### Next reverse targets
 
@@ -144,8 +139,7 @@ This matches the public docs:
 
 ## 2026-06-20: recovered `bsd:nu` public object tables and `Assign` gate
 
-The `bsdsockets_main` `anif` user-side path is now concrete enough to map the public
-`bsd:nu -> ISfUserService -> ISfAssignedNetworkInterfaceService` ladder.
+The `bsdsockets_main` `anif` user-side path is now concrete enough to map the public `bsd:nu -> ISfUserService -> ISfAssignedNetworkInterfaceService` ladder.
 
 ### Recovered metadata blocks
 
@@ -200,11 +194,10 @@ That helper:
 - queues the request wrapper into that larger state through `FUN_710007d0a4(...)`
 - finalizes the larger state via `FUN_710007d170(...)`
 - then performs the actual assignment gate through `FUN_710007ee20(...)`
-- on success, allocates and returns the `ISfAssignedNetworkInterfaceService` object (`0x38` bytes)
-  rooted at `PTR_LAB_71001722e0`
+- on success, allocates and returns the `ISfAssignedNetworkInterfaceService` object (`0x38` bytes) rooted at `PTR_LAB_71001722e0`
 
-So `Assign` is not a tiny direct validator. It builds a real user-side state object, attaches the
-incoming interface handle to it, and only then admits the interface into the assigned set.
+So `Assign` is not a tiny direct validator.
+It builds a real user-side state object, attaches the incoming interface handle to it, and only then admits the interface into the assigned set.
 
 ### Exact source of `0x00010425`
 
@@ -217,11 +210,8 @@ Inside:
 the first meaningful gate is:
 
 - it calls `FUN_710007dd30(&local_100, *param_2)`
-- that helper obtains an object from the queued handle set and invokes vtable slot `+0x58`
-  on the underlying interface object to serialize a full `0xb0`-byte descriptor into the local
-  buffer
-- `FUN_710007ee20(...)` then checks the first byte of the last qword in that descriptor, which is
-  byte offset `0xa8`
+- that helper obtains an object from the queued handle set and invokes vtable slot `+0x58` on the underlying interface object to serialize a full `0xb0`-byte descriptor into the local buffer
+- `FUN_710007ee20(...)` then checks the first byte of the last qword in that descriptor, which is byte offset `0xa8`
 
 If that byte is not equal to `1`, `FUN_710007ee20(...)` returns:
 
@@ -230,8 +220,7 @@ If that byte is not equal to `1`, `FUN_710007ee20(...)` returns:
 This matches the earlier WLAN reverse hypothesis exactly:
 
 - the `Assign` gate is keyed off serialized descriptor byte `0xa8`
-- our runtime `wlan:nd` handles are still presenting a descriptor whose `0xa8` byte is not in the
-  accepted state for `bsd:nu`
+- our runtime `wlan:nd` handles are still presenting a descriptor whose `0xa8` byte is not in the accepted state for `bsd:nu`
 
 ### Other `Assign` outcomes visible in the code
 
@@ -240,8 +229,7 @@ Also inside `FUN_710007ee20(...)`:
 - `0x10225`
   - user-side assignment state not initialized (`*(char *)(param_1 + 0xf) != 1`)
 - `0x4c425`
-  - duplicate assignment attempt: an existing assigned entry already matches the first `0x10`
-    bytes of the serialized descriptor
+  - duplicate assignment attempt: an existing assigned entry already matches the first `0x10` bytes of the serialized descriptor
 - `0x44425`
   - no free assignment slot remains
 
@@ -267,14 +255,11 @@ That helper:
 - records the incoming handle/input state into that wrapper
 - queues it into `param_1[2]` via `FUN_710007d0a4(...)`
 
-So `AddSession` reuses the same queueing primitive used during `Assign`, but against the already
-returned assigned-interface service state.
+So `AddSession` reuses the same queueing primitive used during `Assign`, but against the already returned assigned-interface service state.
 
 ### 2026-06-20: internal `bsdsockets_main` network-interface proxy behind `Assign`
 
-The static picture is now stronger than "some object eventually provides a `0xb0` descriptor".
-`bsdsockets_main` builds and owns a richer local proxy class for network-interface objects, and
-that proxy is what exposes the forwarded method table consumed by `Assign`.
+The static picture is now stronger than "some object eventually provides a `0xb0` descriptor". `bsdsockets_main` builds and owns a richer local proxy class for network-interface objects, and that proxy is what exposes the forwarded method table consumed by `Assign`.
 
 Recovered constructor chain:
 
@@ -317,7 +302,8 @@ There is also a smaller `0x30` wrapper path:
   - clears `this + 0x18` / `this + 0x20`
   - registers callback `FUN_710007fc7c` via `FUN_710007db90(...)`
 
-The public-facing wrapper table around `0x710007fb18 .. 0x710007fc78` now looks like:
+The public-facing wrapper table around `0x710007fb18 ..
+0x710007fc78` now looks like:
 
 - local wrapper -> remote vtable slot `+0x58`
   - `FUN_710007dd30(...)`
@@ -343,15 +329,12 @@ The forwarding helpers all share the same shape:
 - invoke the remote method
 - either return the borrowed object to the pool or release it
 
-This means `bsdsockets_main` does maintain a richer local proxy surface for assigned interfaces,
-but that does not by itself prove the caller must already provide a private local object class.
-The `Assign` input path also builds a separate thin request wrapper that forwards concrete IPC
-commands onto the caller-supplied interface object.
+This means `bsdsockets_main` does maintain a richer local proxy surface for assigned interfaces, but that does not by itself prove the caller must already provide a private local object class.
+The `Assign` input path also builds a separate thin request wrapper that forwards concrete IPC commands onto the caller-supplied interface object.
 
 ## 2026-06-20: `Assign` input wrapper command surface
 
-The object queued by `FUN_710007a810(...)` is a small `0x28` wrapper rooted at
-`PTR_LAB_7100172098` / `PTR_LAB_7100172190`.
+The object queued by `FUN_710007a810(...)` is a small `0x28` wrapper rooted at `PTR_LAB_7100172098` / `PTR_LAB_7100172190`.
 
 Its vtable entries used by `FUN_710007d170(...)` and `FUN_710007ee20(...)` are now recoverable:
 
@@ -405,21 +388,17 @@ Those helpers look like address/config record builders rather than arbitrary opa
   - each require a non-zero handle/pointer aligned to `0x1000`
   - build a larger record from that backing region
 
-This makes `0x82` / `0x83` the highest-value runtime probe targets, because they are the first
-commands `Assign` uses before the final descriptor admission gate.
+This makes `0x82` / `0x83` the highest-value runtime probe targets, because they are the first commands `Assign` uses before the final descriptor admission gate.
 
 ### Practical conclusion
 
 This materially strengthens the current runtime interpretation:
 
 1. `bsd:nu::Assign` is definitely the real command path we are calling from `net-probe`.
-2. The rejection is not generic handle invalidity; it is a specific semantic gate on serialized
-   interface-descriptor byte `0xa8`.
-3. The current `net-probe` WLAN method labels should not be trusted yet, but we no longer have to
-   guess blindly: the preflight command sequence is `0x82 -> 0x83 -> 5 -> 0x80`.
+2. The rejection is not generic handle invalidity; it is a specific semantic gate on serialized interface-descriptor byte `0xa8`.
+3. The current `net-probe` WLAN method labels should not be trusted yet, but we no longer have to guess blindly: the preflight command sequence is `0x82 -> 0x83 -> 5 -> 0x80`.
 4. The main open question is now narrower:
-   - does `wlan:nd::OpenNetworkInterface` return an object with this exact IPC surface but the
-     wrong runtime state
+   - does `wlan:nd::OpenNetworkInterface` return an object with this exact IPC surface but the wrong runtime state
    - or are we still probing the wrong object family entirely
 5. The next runtime step should therefore be targeted, not broad:
    - replay the exact `Assign` preflight commands directly on a fresh candidate interface session

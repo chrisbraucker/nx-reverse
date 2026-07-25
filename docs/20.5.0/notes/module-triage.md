@@ -1,7 +1,6 @@
 # 20.5.0 Module Triage
 
-When extracted binaries have opaque names, keep the original filename and sort
-candidates into these buckets based on strings, imports, and nearby notes.
+When extracted binaries have opaque names, keep the original filename and sort candidates into these buckets based on strings, imports, and nearby notes.
 
 High-priority targets:
 

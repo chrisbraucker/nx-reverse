@@ -2,13 +2,9 @@
 
 ## Purpose
 
-`requester` is a purpose-built user-mode homebrew application for generating
-repeatable, low-noise network activity while `net-probe` passively MITMs
-`nifm:*`, `bsd:*`, and `ssl:*`.
+`requester` is a purpose-built user-mode homebrew application for generating repeatable, low-noise network activity while `net-probe` passively MITMs `nifm:*`, `bsd:*`, and `ssl:*`.
 
-It exists to replace opportunistic probing through third-party titles such as
-`sphaira`, `switchfin`, or browser applets when we need deterministic behavior
-and a clean, self-described action timeline.
+It exists to replace opportunistic probing through third-party titles such as `sphaira`, `switchfin`, or browser applets when we need deterministic behavior and a clean, self-described action timeline.
 
 ## Design Goals
 
@@ -29,9 +25,7 @@ and a clean, self-described action timeline.
 
 ## Proposed Repo Shape
 
-The requester should be added as a separate application subtree, parallel to
-`net-probe`, and intentionally shaped similarly to the existing `manager`
-project:
+The requester should be added as a separate application subtree, parallel to `net-probe`, and intentionally shaped similarly to the existing `manager` project:
 
 ```text
 requester/
@@ -63,24 +57,19 @@ Notes:
 - `config.hpp`
   - compile-time defaults for target hosts, ports, and timeouts
 
-The app should remain self-contained and should not depend on `net-probe`
-internals.
+The app should remain self-contained and should not depend on `net-probe` internals.
 
-The experimental WireGuard packet scenario is the one deliberate cross-repo
-dependency. Its build consumes the public API headers from
-`wireguard-nx.git/common/include` so that command IDs, result layouts, and the
-API version cannot silently diverge. The Makefile defaults to the pinned
-`requester/libs/wireguard-nx` submodule so a fresh clone has a reproducible
-dependency. Set `WGNX_COMMON=/path/to/wireguard-nx/common` on the `make` command
-line or in the ignored `requester/config.local.mk` file to consume another
-checkout during parallel development. For example, this workspace uses:
+The experimental WireGuard packet scenario is the one deliberate cross-repo dependency.
+Its build consumes the public API headers from `wireguard-nx.git/common/include` so that command IDs, result layouts, and the API version cannot silently diverge.
+The Makefile defaults to the pinned `requester/libs/wireguard-nx` submodule so a fresh clone has a reproducible dependency.
+Set `WGNX_COMMON=/path/to/wireguard-nx/common` on the `make` command line or in the ignored `requester/config.local.mk` file to consume another checkout during parallel development.
+For example, this workspace uses:
 
 ```make
 WGNX_COMMON := /workspaces/switch-workspace/wireguard-nx.git/common
 ```
 
-The submodule pointer can then be updated at explicit compatibility checkpoints
-instead of for every in-progress API-header change.
+The submodule pointer can then be updated at explicit compatibility checkpoints instead of for every in-progress API-header change.
 
 ## Runtime Behavior
 
@@ -98,14 +87,12 @@ The requester should run as follows:
 
 Current implementation detail:
 
-- the requester now uses a Sphaira-like `socketInitialize(...)` configuration
-  with `num_bsd_sessions = 3` and `BsdServiceType_Auto`
-- it also initializes `libcurl` and runs explicit libcurl-backed HTTP/HTTPS
-  scenarios in addition to the existing raw socket and Horizon `ssl:*` paths
-- this exists specifically to see whether the `bsd:s` second-launch failure can
-  be reproduced with a smaller, controlled client before patching Sphaira
+- the requester now uses a Sphaira-like `socketInitialize(...)` configuration with `num_bsd_sessions = 3` and `BsdServiceType_Auto`
+- it also initializes `libcurl` and runs explicit libcurl-backed HTTP/HTTPS scenarios in addition to the existing raw socket and Horizon `ssl:*` paths
+- this exists specifically to see whether the `bsd:s` second-launch failure can be reproduced with a smaller, controlled client before patching Sphaira
 
-The grace period should default to about 3 seconds. Its purpose is:
+The grace period should default to about 3 seconds.
+Its purpose is:
 
 - allow the user to read the console summary
 - give `net-probe` time to flush deferred trace buffers
@@ -113,8 +100,8 @@ The grace period should default to about 3 seconds. Its purpose is:
 
 ## Console Contract
 
-The text UI should stay deliberately sparse. Each scenario should print a short
-line before it runs, for example:
+The text UI should stay deliberately sparse.
+Each scenario should print a short line before it runs, for example:
 
 - `Running NIFM status check`
 - `Running DNS resolve for example.com`
@@ -131,8 +118,8 @@ At the end it should print:
 - the log path used
 - `Requester finished; exiting in 3 seconds`
 
-The console is only a high-level operator view. Detailed evidence belongs in
-the log files and in the `net-probe` traces.
+The console is only a high-level operator view.
+Detailed evidence belongs in the log files and in the `net-probe` traces.
 
 ## Local Log Contract
 
@@ -162,16 +149,15 @@ The text log should include:
 - bytes sent/received
 - short previews or hashes of payloads when useful
 
-The requester log is the client-side intent log. It does not replace the
-service traces produced by `net-probe`.
+The requester log is the client-side intent log.
+It does not replace the service traces produced by `net-probe`.
 
 ## Host Harness
 
 Two helper scripts should be used with the requester:
 
 - `tools/requester_harness.py`
-  - starts one plain TCP endpoint, one HTTP endpoint, one HTTPS endpoint, and
-    one UDP endpoint at the same time
+  - starts one plain TCP endpoint, one HTTP endpoint, one HTTPS endpoint, and one UDP endpoint at the same time
   - keeps all listening ports as top-level constants so retargeting is trivial
 - `tools/generate_requester_https_certs.sh`
   - creates a minimal self-signed keypair for the HTTPS listener
@@ -179,13 +165,9 @@ Two helper scripts should be used with the requester:
 
 Important caveat:
 
-- the current requester HTTPS scenario uses Horizon `ssl` with normal peer and
-  hostname verification enabled
-- a self-signed certificate is therefore expected to fail validation unless the
-  requester is later adjusted to relax verification or a trusted certificate is
-  used instead
-- this is still useful for trace generation because the `ssl:*` handshake path
-  is exercised in a deterministic way
+- the current requester HTTPS scenario uses Horizon `ssl` with normal peer and hostname verification enabled
+- a self-signed certificate is therefore expected to fail validation unless the requester is later adjusted to relax verification or a trusted certificate is used instead
+- this is still useful for trace generation because the `ssl:*` handshake path is exercised in a deterministic way
 
 ## Initial Scenario Set
 
@@ -314,8 +296,8 @@ Minimum useful host-side services:
 - HTTPS server on a known port
 - UDP echo service
 
-This harness does not need to be complex. Its job is to make the Switch-side
-traffic predictable and easy to recognize in traces and packet captures.
+This harness does not need to be complex.
+Its job is to make the Switch-side traffic predictable and easy to recognize in traces and packet captures.
 
 ## Scenario Ordering
 
@@ -332,13 +314,11 @@ This order is intentional:
 
 - it starts with the lightest control-plane queries
 - it exercises `bsd:*` before `ssl:*`
-- it leaves UDP until the end because it is the least tied to higher-level app
-  semantics
+- it leaves UDP until the end because it is the least tied to higher-level app semantics
 
 ## Failure Handling
 
-The requester should not abort on the first failure unless initialization
-itself fails.
+The requester should not abort on the first failure unless initialization itself fails.
 
 Per-scenario failures should be:
 
@@ -362,9 +342,7 @@ To align requester logs with `net-probe` traces, each run should expose:
 - UTC timestamps
 - target hostnames and resolved addresses
 
-Later, if needed, we can add a tiny application-level marker payload format, but
-the first revision should avoid inventing extra protocol unless correlation is
-still ambiguous.
+Later, if needed, we can add a tiny application-level marker payload format, but the first revision should avoid inventing extra protocol unless correlation is still ambiguous.
 
 ## Output Example
 
@@ -403,28 +381,17 @@ Those can be added once the basic requester is producing useful traces.
 
 ## Direct WireGuard Packet Scenario
 
-`wgnx_packet_udp_echo` tests API v3 without initializing BSD. It constructs a
-complete inner IPv4/UDP datagram from the `Wgnx*` values in
-`requester/src/config.hpp`, adds a random per-run token, and submits it through
-`wgnx:ctl`. Receive polling is nonblocking and bounded by
-`WgnxPacketTimeoutMs`.
+`wgnx_packet_udp_echo` tests API v3 without initializing BSD.
+It constructs a complete inner IPv4/UDP datagram from the `Wgnx*` values in `requester/src/config.hpp`, adds a random per-run token, and submits it through `wgnx:ctl`.
+Receive polling is nonblocking and bounded by `WgnxPacketTimeoutMs`.
 
-API v3 accepts submissions from any process that can open `wgnx:ctl`; it no
-longer resolves the caller's Program ID or requires the requester forwarder's
-Title ID at sysmodule build time. Caller PID remains part of both commands so
-the sysmodule can pin one packet-stream owner, flush stale queues when a new
-process submits, and reject receives from non-owner processes.
+API v3 accepts submissions from any process that can open `wgnx:ctl`; it no longer resolves the caller's Program ID or requires the requester forwarder's Title ID at sysmodule build time.
+Caller PID remains part of both commands so the sysmodule can pin one packet-stream owner, flush stale queues when a new process submits, and reject receives from non-owner processes.
 
-A reply is accepted only when its IPv4 header, total length, fragmentation
-state, IPv4 checksum, UDP length, UDP checksum, source/destination addresses,
-ports, and random payload all match. Other decrypted packets are logged and
-ignored until the deadline. CMIF transport failures, packet API statuses,
-validation rejections, and timeouts remain distinguishable in the requester
-log.
+A reply is accepted only when its IPv4 header, total length, fragmentation state, IPv4 checksum, UDP length, UDP checksum, source/destination addresses, ports, and random payload all match.
+Other decrypted packets are logged and ignored until the deadline.
+CMIF transport failures, packet API statuses, validation rejections, and timeouts remain distinguishable in the requester log.
 
-The current next-test profile enables only this scenario and leaves
-`EnableSocketInitialize` false. Set the tunnel source address and echo endpoint
-to match the active WireGuard configuration before building. For the malformed
-submission acceptance test, set `WgnxSubmitMalformedIpv4Checksum` to `true`;
-success then means the sysmodule returned `MalformedPacket` without queueing
-the datagram.
+The current next-test profile enables only this scenario and leaves `EnableSocketInitialize` false.
+Set the tunnel source address and echo endpoint to match the active WireGuard configuration before building.
+For the malformed submission acceptance test, set `WgnxSubmitMalformedIpv4Checksum` to `true`; success then means the sysmodule returned `MalformedPacket` without queueing the datagram.

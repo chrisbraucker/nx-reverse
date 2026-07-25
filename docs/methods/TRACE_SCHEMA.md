@@ -1,7 +1,7 @@
 # Passive MITM Trace Schema
 
-This document defines the logging schema for passive service MITM work, starting
-with `nifm` and `wlan`. The immediate goal is to capture enough structure to:
+This document defines the logging schema for passive service MITM work, starting with `nifm` and `wlan`.
+The immediate goal is to capture enough structure to:
 
 - reconstruct call graphs and object lifetimes
 - correlate state transitions across services
@@ -9,22 +9,18 @@ with `nifm` and `wlan`. The immediate goal is to capture enough structure to:
 - avoid re-running expensive or risky probes because earlier logs were too thin
 
 The first target format is line-oriented JSON (`jsonl`), one event per line.
-Human-readable side logs can be added later, but the authoritative trace should
-stay machine-parseable.
+Human-readable side logs can be added later, but the authoritative trace should stay machine-parseable.
 
-For payload-bearing IPC buffers, the probe may additionally emit append-only
-binary streams per service family:
+For payload-bearing IPC buffers, the probe may additionally emit append-only binary streams per service family:
 
 - `probe-mitm-nifm.bin`
 - `probe-mitm-bsd.bin`
 - `probe-mitm-ssl.bin`
 
-These streams are not a replacement for the JSONL traces. They exist to preserve
-exact request/response buffer bytes while keeping filesystem I/O amortized
-through the same deferred flush path as the text logs.
+These streams are not a replacement for the JSONL traces.
+They exist to preserve exact request/response buffer bytes while keeping filesystem I/O amortized through the same deferred flush path as the text logs.
 
-`ipc_buffer` records may describe either a HIPC map-alias buffer or a
-pointer/static descriptor path used by CMIF auto-select buffers.
+`ipc_buffer` records may describe either a HIPC map-alias buffer or a pointer/static descriptor path used by CMIF auto-select buffers.
 
 ## Design Rules
 
@@ -102,8 +98,7 @@ All records must include `"event"` with one of the following values.
 - `svc_marker`
 - `debug_marker`
 
-These last two are reserved so later runtime debugging can insert matching
-timestamps or sequence IDs without changing the trace shape.
+These last two are reserved so later runtime debugging can insert matching timestamps or sequence IDs without changing the trace shape.
 
 ## Common Fields
 
@@ -238,8 +233,7 @@ Recommended fields:
 
 ## Binary Payload Records
 
-Binary streams should use a simple versioned record framing, little-endian,
-with a fixed-size header followed by raw payload bytes.
+Binary streams should use a simple versioned record framing, little-endian, with a fixed-size header followed by raw payload bytes.
 
 Recommended header fields:
 
@@ -266,9 +260,7 @@ Recommended header fields:
 - `payload_size`
 - `total_buffer_size`
 
-The matching `ipc_buffer` JSONL event should carry the same `request_id`,
-`buffer_index`, and phase metadata so offline tooling can join semantic logs to
-exact bytes without ambiguity.
+The matching `ipc_buffer` JSONL event should carry the same `request_id`, `buffer_index`, and phase metadata so offline tooling can join semantic logs to exact bytes without ambiguity.
 
 Current flag bits:
 
@@ -290,8 +282,7 @@ Current flag bits:
 - `wlan:nd.creator.driver`
 - `nifm:u.root.request`
 
-Decoded passive traces may also distinguish close packets explicitly so they do
-not masquerade as public command `0` traffic.
+Decoded passive traces may also distinguish close packets explicitly so they do not masquerade as public command `0` traffic.
 
 Observed `selected_kind` values now include:
 
@@ -301,8 +292,7 @@ Observed `selected_kind` values now include:
 - `domain_close`
 - `invalid`
 
-For `nifm`, the tracer may also emit a companion `nifm_semantic` record that
-keeps the raw IPC intact but adds decoded summaries for known hot commands.
+For `nifm`, the tracer may also emit a companion `nifm_semantic` record that keeps the raw IPC intact but adds decoded summaries for known hot commands.
 
 ## IPC Response Records
 
@@ -329,8 +319,7 @@ Recommended fields:
 
 ## Buffer Records
 
-Buffers should be logged separately as `ipc_buffer` records so request/response
-headers stay compact.
+Buffers should be logged separately as `ipc_buffer` records so request/response headers stay compact.
 
 Required fields:
 
@@ -361,8 +350,7 @@ Capture policy:
 - always hash full content if accessible
 - log only the first `64` bytes in `preview_hex` by default
 - expand to `176` bytes for known `0xb0` interface records
-- do not dump arbitrarily large buffers in full unless a debug mode explicitly
-  enables it
+- do not dump arbitrarily large buffers in full unless a debug mode explicitly enables it
 
 ## Handle Records
 
@@ -452,8 +440,7 @@ Primary questions:
 
 - which clients open `wlan:nd`
 - whether real consumers use only metadata/event commands or deeper commands
-- whether any public `wlan` command exchanges packet-adjacent or frame-adjacent
-  buffers
+- whether any public `wlan` command exchanges packet-adjacent or frame-adjacent buffers
 
 ## Scenario Metadata
 
@@ -484,17 +471,15 @@ Primary questions:
 }
 ```
 
-The exact enum names can be added later. The key point is to preserve a stable
-state snapshot so traces can be compared without guessing the environment.
+The exact enum names can be added later.
+The key point is to preserve a stable state snapshot so traces can be compared without guessing the environment.
 
 ## Safety Rules For Phase 1
 
 - Do not MITM commands by guessing unknown output buffer shapes.
 - Log opaque/raw command metadata even when command names are unknown.
-- If a command is known to destabilize `wlan` in connected state, log that it
-  was seen from other clients, but do not synthesize extra calls.
-- Do not expand buffers recursively or follow unknown returned objects
-  proactively during passive tracing.
+- If a command is known to destabilize `wlan` in connected state, log that it was seen from other clients, but do not synthesize extra calls.
+- Do not expand buffers recursively or follow unknown returned objects proactively during passive tracing.
 
 ## Minimum Useful Trace Set
 

@@ -45,7 +45,8 @@ Function slots after the two RTTI/destructor entries:
 - `0x71000185f0`
 - `0x71000188b0`
 
-These are internal service methods on the returned object. They are not yet mapped one-to-one to public cmd IDs, but one is now strongly identified:
+These are internal service methods on the returned object.
+They are not yet mapped one-to-one to public cmd IDs, but one is now strongly identified:
 
 - `0x71000185f0` is the `OpenNetworkInterface` implementation.
 
@@ -152,8 +153,7 @@ What remains open:
 
 ### Important correction
 
-The richer CMIF-facing descriptor block recovered around `0x7100050f98` is best interpreted as
-the `ISfNetworkInterfaceService` command layer, not the `ISfDriverService` command layer.
+The richer CMIF-facing descriptor block recovered around `0x7100050f98` is best interpreted as the `ISfNetworkInterfaceService` command layer, not the `ISfDriverService` command layer.
 
 Reasoning:
 
@@ -161,19 +161,14 @@ Reasoning:
   - `0x7100051080` -> `ISfNetworkInterfaceService` type metadata
   - `0x71000510e0` -> `ISfNetworkInterfaceService` interface/object metadata
   - `0x71000510f8` -> object-factory / command-descriptor block that `0x7100050f98` points into
-- the helper bodies reached from the stubs at `0x71000171d8` and later clearly operate on
-  network-interface state such as shared memory, queue state, MAC/MTU-style setters, and
-  communication state transitions
-- several of those helper bodies match the documented `ISfNetworkInterfaceService` surface far
-  better than the documented `ISfDriverService` surface
+- the helper bodies reached from the stubs at `0x71000171d8` and later clearly operate on network-interface state such as shared memory, queue state, MAC/MTU-style setters, and communication state transitions
+- several of those helper bodies match the documented `ISfNetworkInterfaceService` surface far better than the documented `ISfDriverService` surface
 
-This means the previous assumption that the block at `0x7100050f98` might describe
-`ISfDriverService` was too broad.
+This means the previous assumption that the block at `0x7100050f98` might describe `ISfDriverService` was too broad.
 
 ### Recovered command-wrapper layer
 
-The block starting at `0x7100050f98` contains a dense wrapper/stub table that forwards into
-concrete helper functions beginning at `0x71000175fc`.
+The block starting at `0x7100050f98` contains a dense wrapper/stub table that forwards into concrete helper functions beginning at `0x71000175fc`.
 
 Recovered wrapper targets include:
 
@@ -200,8 +195,7 @@ Recovered wrapper targets include:
 - `0x7100017c0c`
 - `0x7100017cb8`
 
-These wrappers consistently dereference `*(param_1 + 8)` as the backing state and are therefore
-working on the larger network-interface object, not on the earlier small driver-service wrapper.
+These wrappers consistently dereference `*(param_1 + 8)` as the backing state and are therefore working on the larger network-interface object, not on the earlier small driver-service wrapper.
 
 ### Semantics recovered from helper bodies
 
@@ -258,23 +252,19 @@ The following helpers are now characterized well enough to be useful:
 This is enough to say that:
 
 1. the returned larger object really does implement a rich network-interface command surface
-2. that surface includes communication-state control, exported info blobs, and ioctl-style
-   escape hatches
-3. the remaining unresolved part is still the smaller `ISfDriverService` wrapper, especially the
-   exact public contracts for cmd `128..131`
+2. that surface includes communication-state control, exported info blobs, and ioctl-style escape hatches
+3. the remaining unresolved part is still the smaller `ISfDriverService` wrapper, especially the exact public contracts for cmd `128..131`
 
 The immediate reverse target remains the same:
 
 - recover the smaller driver-service wrapper's public CMIF command layer
-- then correlate that layer to the documented `GetDriverInfo`, `GetNetworkInterfaceList`, and
-  event getters
+- then correlate that layer to the documented `GetDriverInfo`, `GetNetworkInterfaceList`, and event getters
 
 ## 2026-06-17: recovered `ISfDriverService` public command table
 
 ### Public-facing table location
 
-The smaller public `ISfDriverService` CMIF-facing handler table is best represented by the block
-starting at `0x7100050d80`.
+The smaller public `ISfDriverService` CMIF-facing handler table is best represented by the block starting at `0x7100050d80`.
 
 This block points at the following handler run:
 
@@ -342,16 +332,14 @@ Best current mapping:
 
 This is a direct fit for `OpenNetworkInterface`.
 
-`FUN_7100014a40(...)` also materially strengthens the earlier interpretation of the stable
-on-device `0x00048425`:
+`FUN_7100014a40(...)` also materially strengthens the earlier interpretation of the stable on-device `0x00048425`:
 
 - it iterates the registered interface set
 - serializes each interface candidate through `FUN_71000162b0(...)`
 - compares the first `0x10` bytes of that serialized blob against the caller-supplied filter
 - returns `0x48425` when no candidate matches
 
-So `0x00048425` is now very clearly the "no matching interface found" path in the real driver
-implementation.
+So `0x00048425` is now very clearly the "no matching interface found" path in the real driver implementation.
 
 #### `GetDriverInfo`
 
@@ -360,9 +348,8 @@ implementation.
 - calls `FUN_7100014d20(...)`
 - writes one returned `u64` into the caller-provided out location
 
-`FUN_7100014d20(...)` packs bytes from offsets `+8..+0xf` of the backing state into an 8-byte
-return value. This fits a compact driver-info identifier much better than any of the other public
-driver-service methods.
+`FUN_7100014d20(...)` packs bytes from offsets `+8..+0xf` of the backing state into an 8-byte return value.
+This fits a compact driver-info identifier much better than any of the other public driver-service methods.
 
 #### `GetNetworkInterfaceList`
 
@@ -399,8 +386,7 @@ That is the expected shape for:
 - `GetStateChangedEvent`
 - `GetNetworkInterfaceListUpdatedEvent`
 
-The exact ordering between those two names is still an inference, but it matches the documented
-ordering and the presence of two separate event-holder fields.
+The exact ordering between those two names is still an inference, but it matches the documented ordering and the presence of two separate event-holder fields.
 
 #### Ioctl family
 
@@ -446,8 +432,7 @@ For the small driver-service object, `FUN_7100014ccc(...)` installs:
 - callback stub `LAB_710001893c` at `+0xc8`
 - the small driver-service object pointer at `+0xd0`
 
-This explains why the ioctl family is implemented as a generic adapter layer rather than as fully
-distinct handwritten methods.
+This explains why the ioctl family is implemented as a generic adapter layer rather than as fully distinct handwritten methods.
 
 ### Practical implication for probing
 
