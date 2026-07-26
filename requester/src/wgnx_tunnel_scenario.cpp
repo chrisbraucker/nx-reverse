@@ -11,8 +11,8 @@
 #include <arpa/inet.h>
 #include <switch.h>
 
-#include "config.hpp"
 #include "logger.hpp"
+#include "runtime_config.hpp"
 #include "wgnx/tunnel_client.hpp"
 
 namespace requester {
@@ -20,13 +20,6 @@ namespace requester {
 namespace {
 
 constexpr std::size_t PayloadHeaderBytes = 24;
-
-static_assert(config::WgnxTunnelPayloadBytes >= PayloadHeaderBytes);
-static_assert(config::WgnxTunnelPayloadBytes <=
-              wgnx::tunnel::MaximumUdpPayloadBytes);
-static_assert(config::WgnxTunnelConcurrentFlows > 0);
-static_assert(config::WgnxTunnelConcurrentFlows <=
-              wgnx::tunnel::MaximumFlowsPerClient);
 
 const char *StatusName(wgnx::tunnel::ProtocolStatus status) {
   using wgnx::tunnel::ProtocolStatus;
@@ -91,15 +84,16 @@ void StoreBigEndian32(std::uint8_t *out, std::uint32_t value) {
 }
 
 void BuildPayload(std::span<std::uint8_t> payload, std::uint32_t sequence,
-                  std::uint32_t flow_index) {
+                  std::uint32_t flow_index,
+                  const TunnelUdpWorkloadConfig &config) {
   std::fill(payload.begin(), payload.end(), std::uint8_t{0});
   std::memcpy(payload.data(), "NXRVWG1", 7);
-  StoreBigEndian32(payload.data() + 8, config::WgnxTunnelWorkloadId);
+  StoreBigEndian32(payload.data() + 8, config.workload_id);
   StoreBigEndian32(payload.data() + 12, flow_index);
   StoreBigEndian32(payload.data() + 16, sequence);
-  StoreBigEndian32(payload.data() + 20, config::WgnxTunnelPayloadSeed);
-  std::uint32_t state =
-      config::WgnxTunnelPayloadSeed ^ sequence ^ (flow_index * 0x9E3779B9U);
+  StoreBigEndian32(payload.data() + 20, config.payload_seed);
+  std::uint32_t state = config.payload_seed ^ sequence ^
+                        (flow_index * 0x9E3779B9U);
   for (std::size_t index = PayloadHeaderBytes; index < payload.size();
        ++index) {
     payload[index] = static_cast<std::uint8_t>(NextPayloadByte(&state));
@@ -195,13 +189,13 @@ CompletionWaitResult WaitForEcho(wgnx::tunnel::client::ScopedClient &client,
 
 } // namespace
 
-ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx) {
+ScenarioResult RunWgnxTunnelUdpWorkload(
+    AppContext &ctx, const TunnelUdpWorkloadConfig &config) {
   using namespace wgnx::tunnel;
 
   ScenarioResult result{.name = "wgnx_tunnel_udp_workload"};
   logger::Status(ctx, "Running wgnx:tun UDP workload to %s:%u",
-                 config::WgnxTunnelDestinationIpv4,
-                 config::WgnxTunnelDestinationPort);
+                 config.destination_ipv4.c_str(), config.destination_port);
   if (!client::IsServiceRunning()) {
     result.detail = "wgnx:tun is not running";
     return result;
@@ -236,7 +230,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx) {
   Capabilities capabilities{};
   rc = client::GetCapabilities(tunnel_client, &capabilities);
   if (R_FAILED(rc) || capabilities.api_version != TunApiVersion ||
-      config::WgnxTunnelPayloadBytes > capabilities.maximum_udp_payload_bytes) {
+      config.payload_bytes > capabilities.maximum_udp_payload_bytes) {
     result.rc = rc;
     result.detail = R_FAILED(rc) ? "GetCapabilities CMIF failure"
                                  : "capability bounds mismatch";
@@ -254,7 +248,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx) {
   }
 
   std::array<std::uint8_t, 4> destination{};
-  if (!ParseIpv4(config::WgnxTunnelDestinationIpv4, &destination)) {
+  if (!ParseIpv4(config.destination_ipv4.c_str(), &destination)) {
     result.detail = "invalid configured workload destination";
     return result;
   }
@@ -269,16 +263,16 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx) {
   Event completion_event{};
   eventLoadRemote(&completion_event, event_handle, false);
 
-  std::array<FlowHandle, config::WgnxTunnelConcurrentFlows> flows{};
+  std::array<FlowHandle, MaximumFlowsPerClient> flows{};
   std::uint32_t opened_flows = 0;
-  for (; opened_flows < flows.size(); ++opened_flows) {
+  for (; opened_flows < config.concurrent_flows; ++opened_flows) {
     const OpenConnectedUdpFlowRequest request{
         .remote = {.address = {destination[0], destination[1], destination[2],
                                destination[3]},
-                   .port = config::WgnxTunnelDestinationPort,
+                   .port = config.destination_port,
                    .reserved = 0},
         .diagnostic_tag =
-            (static_cast<std::uint64_t>(config::WgnxTunnelWorkloadId) << 32U) |
+            (static_cast<std::uint64_t>(config.workload_id) << 32U) |
             opened_flows,
     };
     const auto opened = [&] {
@@ -295,7 +289,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx) {
     }
     flows[opened_flows] = opened.flow;
   }
-  if (opened_flows != flows.size()) {
+  if (opened_flows != config.concurrent_flows) {
     for (std::uint32_t index = 0; index < opened_flows; ++index) {
       ProtocolStatus ignored{};
       static_cast<void>(
@@ -305,21 +299,23 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx) {
     return result;
   }
 
-  std::array<std::uint8_t, config::WgnxTunnelPayloadBytes> payload{};
+  std::array<std::uint8_t, MaximumUdpPayloadBytes> payload_storage{};
+  const std::span<std::uint8_t> payload(payload_storage.data(),
+                                        config.payload_bytes);
   std::uint32_t accepted = 0;
   std::uint32_t echoed = 0;
   std::uint32_t ignored_completions = 0;
   std::uint32_t event_wakes = 0;
-  for (std::uint32_t sequence = 0; sequence < config::WgnxTunnelDatagramCount;
+  for (std::uint32_t sequence = 0; sequence < config.datagram_count;
        ++sequence) {
-    const std::uint32_t flow_index = sequence % flows.size();
-    BuildPayload(payload, sequence, flow_index);
+    const std::uint32_t flow_index = sequence % config.concurrent_flows;
+    BuildPayload(payload, sequence, flow_index, config);
     const DatagramDescriptor descriptor{
         .flow = flows[flow_index],
         .payload_offset = 0,
         .payload_size = static_cast<std::uint32_t>(payload.size()),
         .client_tag =
-            (static_cast<std::uint64_t>(config::WgnxTunnelWorkloadId) << 32U) |
+            (static_cast<std::uint64_t>(config.workload_id) << 32U) |
             sequence,
     };
     DatagramDisposition disposition{};
@@ -336,10 +332,10 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx) {
     ++accepted;
     result.bytes_sent += payload.size();
 
-    if (config::WgnxTunnelEchoReplies) {
+    if (config.echo_replies) {
       const CompletionWaitResult wait =
           WaitForEcho(tunnel_client, &completion_event, flows[flow_index],
-                      payload, config::WgnxTunnelReceiveDeadlineMs);
+                      payload, config.receive_deadline_ms);
       ignored_completions += wait.ignored;
       event_wakes += wait.wake_count;
       if (!wait.received_expected) {
@@ -349,12 +345,13 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx) {
       ++echoed;
       result.bytes_received += payload.size();
     }
-    if (config::WgnxTunnelPacingMs != 0) {
-      SleepMilliseconds(config::WgnxTunnelPacingMs);
+    if (config.pacing_ms != 0) {
+      SleepMilliseconds(config.pacing_ms);
     }
   }
 
-  for (FlowHandle flow : flows) {
+  for (std::uint32_t index = 0; index < config.concurrent_flows; ++index) {
+    const FlowHandle flow = flows[index];
     ProtocolStatus close_status{};
     const Result close_rc =
         client::CloseFlow(tunnel_client, flow, &close_status);
@@ -363,20 +360,24 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx) {
   }
   eventClose(&completion_event);
 
-  if (accepted == config::WgnxTunnelDatagramCount &&
-      (!config::WgnxTunnelEchoReplies || echoed == accepted)) {
+  if (accepted == config.datagram_count &&
+      (!config.echo_replies || echoed == accepted)) {
     result.success = true;
     result.detail =
         "api=" + std::to_string(capabilities.api_version) +
         " policy=" + std::to_string(policy.policy_generation) +
         " routes=" + std::to_string(policy.route_count) +
-        " flows=" + std::to_string(flows.size()) +
+        " flows=" + std::to_string(config.concurrent_flows) +
         " accepted=" + std::to_string(accepted) +
         " echoed=" + std::to_string(echoed) +
         " ignored_completions=" + std::to_string(ignored_completions) +
         " event_wakes=" + std::to_string(event_wakes);
   }
   return result;
+}
+
+ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx) {
+  return RunWgnxTunnelUdpWorkload(ctx, CompiledRuntimeDefaults().tunnel_udp);
 }
 
 } // namespace requester

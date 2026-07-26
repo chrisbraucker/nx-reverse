@@ -4,3 +4,6 @@
 [submodule "requester/libs/wireguard-nx"]
 	path = requester/libs/wireguard-nx
 	url = git@github.com:chrisbraucker/wireguard-nx.git
+[submodule "requester/libs/borealis"]
+	path = requester/libs/borealis
+	url = https://github.com/xfangfang/borealis.git

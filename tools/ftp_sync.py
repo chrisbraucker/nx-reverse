@@ -24,7 +24,7 @@ def load_title_id(meta_path) -> str:
 PROBE_TITLE_ID = load_title_id(PROBE_META)
 
 REMOTE_PROBE = PurePosixPath(f"sdmc:/atmosphere/contents/{PROBE_TITLE_ID}/exefs.nsp")
-REMOTE_REQUESTER = PurePosixPath("sdmc:/switch/requester.nro")
+REMOTE_REQUESTER = PurePosixPath("sdmc:/switch/requester/requester.nro")
 
 REMOTE_FATAL_ERROR_DIR = PurePosixPath("sdmc:/atmosphere/fatal_errors")
 REMOTE_FATAL_REPORT_DIR = PurePosixPath("sdmc:/atmosphere/fatal_reports")

@@ -1,0 +1,31 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "switch",
+      "displayName": "Nintendo Switch",
+      "description": "Build the requester NRO with devkitPro and Borealis.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "requester",
+      "displayName": "Requester NRO",
+      "configurePreset": "switch",
+      "targets": [
+        "requester_nro"
+      ]
+    }
+  ]
+}
