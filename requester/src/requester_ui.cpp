@@ -11,6 +11,7 @@
 #include <borealis.hpp>
 #include <borealis/core/touch/scroll_gesture.hpp>
 
+#include "bsd_system_udp_scenario.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "wgnx/client.hpp"
@@ -30,6 +31,8 @@ constexpr float SettingsSectionGap = 24.0F;
 constexpr float RequesterSidebarWidth = 250.0F;
 constexpr float LogFontSize = 16.0F;
 constexpr char ProjectUrl[] = APP_PROJECT_URL;
+constexpr int TunnelDataPathIndex = 0;
+constexpr int BsdSystemDataPathIndex = 1;
 
 class LogPanel;
 
@@ -54,11 +57,14 @@ struct UiModel {
 
 std::string FormatRuntimeConfig(const RuntimeConfig &config) {
   const auto &tunnel = config.tunnel_udp;
-  return "wgnx:tun UDP " + tunnel.destination_ipv4 + ":" +
+  const char *const data_path =
+      config.bsd_system_udp.enabled ? "bsd:s" : "Tunnel";
+  return "destination " + tunnel.destination_ipv4 + ":" +
          std::to_string(tunnel.destination_port) + " | payload " +
          std::to_string(tunnel.payload_bytes) + " B | datagrams " +
          std::to_string(tunnel.datagram_count) + " | flows " +
-         std::to_string(tunnel.concurrent_flows) + " | contract " +
+         std::to_string(tunnel.concurrent_flows) + " | data path " + data_path +
+         " | contract " +
          (config.tunnel_contract.enabled ? "enabled" : "disabled");
 }
 
@@ -207,10 +213,9 @@ public:
     content->setWidthPercentage(100.0F);
     setContentView(content);
 
-    AddHeader(content, "Tunnel UDP Workload",
-              "The current runtime-configurable direct flow scenario.");
-    enabled_ = AddBoolean(content, "Run tunnel UDP workload",
-                          &model_->config.tunnel_udp.enabled);
+    AddHeader(content, "UDP Workload",
+              "Configure shared traffic and choose the data path.");
+    data_path_ = AddDataPathSelector(content);
     datagram_count_ = AddU32(content, "Datagram count",
                              &model_->config.tunnel_udp.datagram_count, 4096,
                              "tunnel_udp.datagram_count");
@@ -227,14 +232,21 @@ public:
     AddHeader(content, "Tunnel Contract Validation",
               "Clone lifetime and mixed-batch API coverage.",
               SettingsSectionGap);
-    contract_enabled_ = AddBoolean(content, "Run contract validation",
-                                   &model_->config.tunnel_contract.enabled);
+    contract_enabled_ = new brls::BooleanCell();
+    contract_enabled_->init("Run contract validation",
+                            model_->config.tunnel_contract.enabled,
+                            [this](bool next) {
+                              model_->config.tunnel_contract.enabled = next;
+                              UpdateContractValidationAppearance();
+                            });
+    content->addView(contract_enabled_);
     verify_cloned_session_lifetime_ = AddBoolean(
         content, "Verify cloned session lifetime",
         &model_->config.tunnel_contract.verify_cloned_session_lifetime);
     verify_mixed_batch_ =
         AddBoolean(content, "Verify mixed batch dispositions",
                    &model_->config.tunnel_contract.verify_mixed_batch);
+    UpdateContractValidationAppearance();
 
     AddHeader(content, "Common Options", "", SettingsSectionGap);
 
@@ -325,6 +337,20 @@ private:
     return cell;
   }
 
+  brls::SelectorCell *AddDataPathSelector(brls::Box *content) {
+    auto *cell = new brls::SelectorCell();
+    const int selected = model_->config.bsd_system_udp.enabled
+                             ? BsdSystemDataPathIndex
+                             : TunnelDataPathIndex;
+    cell->init(
+        "Data path", {"Tunnel", "bsd:s"}, selected, [model = model_](int next) {
+          model->config.tunnel_udp.enabled = next == TunnelDataPathIndex;
+          model->config.bsd_system_udp.enabled = next == BsdSystemDataPathIndex;
+        });
+    content->addView(cell);
+    return cell;
+  }
+
   brls::InputCell *AddText(brls::Box *content, const char *title,
                            std::string *value) {
     auto *cell = new brls::InputCell();
@@ -377,9 +403,21 @@ private:
     return cell;
   }
 
+  void UpdateContractValidationAppearance() {
+    brls::Theme theme = brls::Application::getTheme();
+    const auto color = model_->config.tunnel_contract.enabled
+                           ? theme["brls/text"]
+                           : theme["brls/text_disabled"];
+    verify_cloned_session_lifetime_->setTextColor(color);
+    verify_mixed_batch_->setTextColor(color);
+  }
+
   void RefreshFields() {
     const auto &tunnel = model_->config.tunnel_udp;
-    enabled_->setOn(tunnel.enabled, false);
+    data_path_->setSelection(model_->config.bsd_system_udp.enabled
+                                 ? BsdSystemDataPathIndex
+                                 : TunnelDataPathIndex,
+                             true);
     destination_ipv4_->setValue(tunnel.destination_ipv4);
     destination_port_->setValue(tunnel.destination_port);
     workload_id_->setValue(static_cast<long>(tunnel.workload_id));
@@ -396,10 +434,11 @@ private:
     verify_cloned_session_lifetime_->setOn(
         contract.verify_cloned_session_lifetime, false);
     verify_mixed_batch_->setOn(contract.verify_mixed_batch, false);
+    UpdateContractValidationAppearance();
   }
 
   std::shared_ptr<UiModel> model_;
-  brls::BooleanCell *enabled_{};
+  brls::SelectorCell *data_path_{};
   brls::InputCell *destination_ipv4_{};
   brls::InputNumericCell *destination_port_{};
   brls::InputNumericCell *workload_id_{};
@@ -424,7 +463,7 @@ public:
 
     auto *scenario_header = new brls::Header();
     scenario_header->setTitle("Current Scenario");
-    scenario_header->setSubtitle("Configured direct WireGuard UDP workload.");
+    scenario_header->setSubtitle("Configured UDP workload.");
     addView(scenario_header);
 
     model_->main.scenario_label = new brls::Label();
@@ -498,6 +537,10 @@ private:
       if (runtime_config.tunnel_udp.enabled) {
         results.push_back(
             RunWgnxTunnelUdpWorkload(*context, runtime_config.tunnel_udp));
+      }
+      if (runtime_config.bsd_system_udp.enabled) {
+        results.push_back(
+            RunBsdSystemUdpWorkload(*context, runtime_config.tunnel_udp));
       }
       if (runtime_config.tunnel_contract.enabled) {
         results.push_back(

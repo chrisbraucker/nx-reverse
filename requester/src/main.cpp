@@ -22,13 +22,13 @@ void LogDiagnostics(requester::AppContext &context,
                          wgnx::tunnel::TunApiVersion);
   requester::logger::Log(
       context,
-      "runtime_config source=%s path=%s tunnel_udp_enabled=%u "
+      "runtime_config source=%s path=%s udp_data_path=%s "
       "destination=%s:%u "
       "payload=%zu datagrams=%u pacing_ms=%u flows=%u deadline_ms=%u seed=%u "
       "echo=%u tunnel_contract_enabled=%u clone_lifetime=%u mixed_batch=%u",
       report.loaded_from_file ? "file" : "compiled_defaults",
       requester::RuntimeConfigPath,
-      static_cast<unsigned>(config.tunnel_udp.enabled),
+      config.bsd_system_udp.enabled ? "bsd:s" : "tunnel",
       config.tunnel_udp.destination_ipv4.c_str(),
       config.tunnel_udp.destination_port, config.tunnel_udp.payload_bytes,
       config.tunnel_udp.datagram_count, config.tunnel_udp.pacing_ms,

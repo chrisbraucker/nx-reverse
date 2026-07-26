@@ -27,9 +27,14 @@ struct TunnelContractValidationConfig {
   bool verify_mixed_batch{true};
 };
 
+struct BsdSystemUdpWorkloadConfig {
+  bool enabled{false};
+};
+
 struct RuntimeConfig {
   TunnelUdpWorkloadConfig tunnel_udp;
   TunnelContractValidationConfig tunnel_contract;
+  BsdSystemUdpWorkloadConfig bsd_system_udp;
 };
 
 struct ConfigLoadReport {

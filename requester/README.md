@@ -69,7 +69,7 @@ rm -rf requester/build requester/out
 
 The application starts on a run page and does not create network traffic until `Run` is selected.
 
-The configuration page exposes the direct `wgnx:tun` UDP workload and an opt-in contract-validation scenario.
+The configuration page exposes one shared UDP workload with a mutually exclusive `Tunnel` or `bsd:s` data path selector and an opt-in contract-validation scenario.
 
 Compiled values in [src/config.hpp](src/config.hpp) are the canonical defaults.
 
@@ -89,6 +89,31 @@ The sysmodule operation itself only queues the rebind work.
 When `wgnx:tun` returns `QueueFull`, the workload waits for the matching `Writable` completion and retries the exact blocked datagram up to 16 times within the configured receive deadline.
 
 The scenario result records total `queue_full_events` so a bounded-burst evaluation can distinguish backpressure recovery from an unpressured run.
+
+### BSD:S UDP Data Path
+
+Select `bsd:s` as the UDP workload `Data path` to run the normal Horizon BSD scenario.
+
+It initializes libnx sockets with `BsdServiceType_System` and uses ordinary `socket`, `connect`, `send`, `poll`, and `recvfrom` calls.
+
+It does not open or call `wgnx:tun` itself.
+
+The payload uses the `NXRVBS1` workload marker so the controlled harness can separately account for this path and log explicit `source_ip` and `source_port` fields.
+
+With the MITM module disabled, the scenario establishes a direct BSD baseline.
+
+With the requester-only MITM module active and a connected peer that covers the destination, the same scenario should reach the harness through the WireGuard exit path.
+
+The persisted path selection uses complementary flags:
+
+```ini
+tunnel_udp.enabled=true
+bsd_system_udp.enabled=false
+```
+
+Set `tunnel_udp.enabled=false` and `bsd_system_udp.enabled=true` for the `bsd:s` path.
+
+The destination, port, payload size, count, pacing, receive deadline, seed, and echo setting are shared with the direct tunnel workload.
 
 ### Contract Validation
 

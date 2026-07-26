@@ -38,15 +38,15 @@ def log(message: str) -> None:
 class UdpWorkloadStats:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._received = Counter[tuple[int, int]]()
-        self._echoed = Counter[tuple[int, int]]()
-        self._bytes_received = Counter[tuple[int, int]]()
-        self._bytes_echoed = Counter[tuple[int, int]]()
-        self._sources: dict[tuple[int, int], set[str]] = defaultdict(set)
-        self._sequences: dict[tuple[int, int], set[int]] = defaultdict(set)
-        self._last_sequence: dict[tuple[int, int], int] = {}
-        self._duplicates = Counter[tuple[int, int]]()
-        self._reordered = Counter[tuple[int, int]]()
+        self._received = Counter[tuple[str, int, int]]()
+        self._echoed = Counter[tuple[str, int, int]]()
+        self._bytes_received = Counter[tuple[str, int, int]]()
+        self._bytes_echoed = Counter[tuple[str, int, int]]()
+        self._sources: dict[tuple[str, int, int], set[str]] = defaultdict(set)
+        self._sequences: dict[tuple[str, int, int], set[int]] = defaultdict(set)
+        self._last_sequence: dict[tuple[str, int, int], int] = {}
+        self._duplicates = Counter[tuple[str, int, int]]()
+        self._reordered = Counter[tuple[str, int, int]]()
         self._unexpected = 0
         self._malformed = 0
 
@@ -59,8 +59,8 @@ class UdpWorkloadStats:
                 else:
                     self._unexpected += 1
                 return None
-            workload_id, flow_index, sequence, seed = identity
-            key = (workload_id, flow_index)
+            workload_kind, workload_id, flow_index, sequence, seed = identity
+            key = (workload_kind, workload_id, flow_index)
             self._received[key] += 1
             self._bytes_received[key] += len(data)
             self._sources[key].add(source)
@@ -74,16 +74,16 @@ class UdpWorkloadStats:
             if echoed:
                 self._echoed[key] += 1
                 self._bytes_echoed[key] += len(data)
-        return f"workload={workload_id} flow={flow_index} sequence={sequence} seed=0x{seed:08x}"
+        return f"kind={workload_kind} workload={workload_id} flow={flow_index} sequence={sequence} seed=0x{seed:08x}"
 
     def log_summary(self) -> None:
         with self._lock:
             keys = sorted(set(self._received) | set(self._echoed))
-            for workload_id, flow_index in keys:
-                key = (workload_id, flow_index)
+            for workload_kind, workload_id, flow_index in keys:
+                key = (workload_kind, workload_id, flow_index)
                 log(
                     "[udp-summary] "
-                    f"workload={workload_id} flow={flow_index} "
+                    f"kind={workload_kind} workload={workload_id} flow={flow_index} "
                     f"received={self._received[key]} received_bytes={self._bytes_received[key]} "
                     f"echoed={self._echoed[key]} echoed_bytes={self._bytes_echoed[key]} "
                     f"duplicates={self._duplicates[key]} reordered={self._reordered[key]} "
@@ -95,12 +95,17 @@ class UdpWorkloadStats:
                 log(f"[udp-summary] malformed_workload_datagrams={self._malformed}")
 
 
-def parse_workload_identity(data: bytes) -> tuple[tuple[int, int, int, int] | None, bool]:
-    if data[:7] != b"NXRVWG1":
+def parse_workload_identity(data: bytes) -> tuple[tuple[str, int, int, int, int] | None, bool]:
+    workload_kind = {
+        b"NXRVWG1": "wgnx-tun",
+        b"NXRVBS1": "bsd-system",
+    }.get(data[:7])
+    if workload_kind is None:
         return None, False
     if len(data) < 24 or data[7] != 0:
         return None, True
     return (
+        workload_kind,
         int.from_bytes(data[8:12], "big"),
         int.from_bytes(data[12:16], "big"),
         int.from_bytes(data[16:20], "big"),
@@ -141,14 +146,21 @@ class PlainTcpHandler(socketserver.BaseRequestHandler):
 class UdpHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         data, sock = self.request
-        peer = f"{self.client_address[0]}:{self.client_address[1]}"
+        source_ip, source_port = self.client_address
+        peer = f"{source_ip}:{source_port}"
         local_port = self.server.server_address[1]
         reply = data if UDP_ECHO_INPUT else UDP_FIXED_REPLY
         workload = UDP_STATS.record(data, peer, UDP_ECHO_INPUT)
         if workload is None:
-            log(f"[udp:{local_port}] peer={peer} recv={data[:64]!r} reply={reply[:64]!r}")
+            log(
+                f"[udp:{local_port}] source_ip={source_ip} source_port={source_port} "
+                f"recv={data[:64]!r} reply={reply[:64]!r}"
+            )
         else:
-            log(f"[udp:{local_port}] peer={peer} {workload} bytes={len(data)} echo={UDP_ECHO_INPUT}")
+            log(
+                f"[udp:{local_port}] source_ip={source_ip} source_port={source_port} "
+                f"{workload} bytes={len(data)} echo={UDP_ECHO_INPUT}"
+            )
         if UDP_ECHO_INPUT:
             sock.sendto(reply, self.client_address)
 

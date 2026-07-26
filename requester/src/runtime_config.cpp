@@ -81,6 +81,16 @@ bool IsValidIpv4(std::string_view text) {
   return offset == text.size() + 1;
 }
 
+bool HasSingleUdpDataPath(const RuntimeConfig &config) {
+  return config.tunnel_udp.enabled != config.bsd_system_udp.enabled;
+}
+
+void RestoreDefaultUdpDataPath(const RuntimeConfig &defaults,
+                               RuntimeConfig *config) {
+  config->tunnel_udp.enabled = defaults.tunnel_udp.enabled;
+  config->bsd_system_udp.enabled = defaults.bsd_system_udp.enabled;
+}
+
 bool EnsureDirectory(const char *path) {
   return mkdir(path, 0777) == 0 || errno == EEXIST;
 }
@@ -118,6 +128,8 @@ void ResetToDefault(const RuntimeConfig &defaults, RuntimeConfig *config,
   } else if (key == "tunnel_contract.verify_mixed_batch") {
     config->tunnel_contract.verify_mixed_batch =
         defaults.tunnel_contract.verify_mixed_batch;
+  } else if (key == "bsd_system_udp.enabled") {
+    config->bsd_system_udp.enabled = defaults.bsd_system_udp.enabled;
   }
 }
 
@@ -214,6 +226,9 @@ bool ApplySetting(const RuntimeConfig &defaults, RuntimeConfig *config,
     return ParseBool(value, &config->tunnel_contract.verify_mixed_batch) ||
            invalid();
   }
+  if (key == "bsd_system_udp.enabled") {
+    return ParseBool(value, &config->bsd_system_udp.enabled) || invalid();
+  }
   *error = "unrecognized configuration key " + std::string(key);
   return false;
 }
@@ -242,6 +257,10 @@ RuntimeConfig CompiledRuntimeDefaults() {
               .verify_cloned_session_lifetime =
                   config::WgnxTunnelContractVerifyClonedSessionLifetime,
               .verify_mixed_batch = config::WgnxTunnelContractVerifyMixedBatch,
+          },
+      .bsd_system_udp =
+          {
+              .enabled = config::EnableScenarioBsdSystemUdpWorkload,
           },
   };
 }
@@ -291,6 +310,11 @@ ConfigLoadReport LoadRuntimeConfig(const RuntimeConfig &defaults,
     }
   }
   std::fclose(file);
+  if (!HasSingleUdpDataPath(report.config)) {
+    RestoreDefaultUdpDataPath(defaults, &report.config);
+    report.diagnostics.push_back(
+        "UDP data path is ambiguous; using compiled defaults");
+  }
   return report;
 }
 
@@ -302,6 +326,9 @@ bool ValidateRuntimeConfig(const RuntimeConfig &config, std::string *error) {
     return false;
   };
   const auto &tunnel = config.tunnel_udp;
+  if (!HasSingleUdpDataPath(config)) {
+    return fail("exactly one UDP data path must be selected");
+  }
   if (!IsValidIpv4(tunnel.destination_ipv4)) {
     return fail("tunnel_udp.destination_ipv4 must be an IPv4 address");
   }
@@ -375,7 +402,8 @@ bool SaveRuntimeConfig(const RuntimeConfig &config, std::string *error,
       "tunnel_udp.echo_replies=%s\n"
       "tunnel_contract.enabled=%s\n"
       "tunnel_contract.verify_cloned_session_lifetime=%s\n"
-      "tunnel_contract.verify_mixed_batch=%s\n",
+      "tunnel_contract.verify_mixed_batch=%s\n"
+      "bsd_system_udp.enabled=%s\n",
       tunnel.enabled ? "true" : "false", tunnel.destination_ipv4.c_str(),
       tunnel.destination_port, tunnel.workload_id, tunnel.payload_bytes,
       tunnel.datagram_count, tunnel.pacing_ms, tunnel.concurrent_flows,
@@ -383,7 +411,8 @@ bool SaveRuntimeConfig(const RuntimeConfig &config, std::string *error,
       tunnel.echo_replies ? "true" : "false",
       config.tunnel_contract.enabled ? "true" : "false",
       config.tunnel_contract.verify_cloned_session_lifetime ? "true" : "false",
-      config.tunnel_contract.verify_mixed_batch ? "true" : "false");
+      config.tunnel_contract.verify_mixed_batch ? "true" : "false",
+      config.bsd_system_udp.enabled ? "true" : "false");
   const bool flush_failed = std::fflush(file) != 0;
   const bool close_failed = std::fclose(file) != 0;
   const bool write_failed = flush_failed || close_failed;

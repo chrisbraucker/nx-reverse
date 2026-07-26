@@ -16,8 +16,11 @@ set(APP_TITLEID "010000000000EAD2")
 set(APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.png")
 set(APP_PROJECT_URL "https://github.com/chrisbraucker/nx-reverse")
 set(BOREALIS_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/libs/borealis/resources")
+set(REQUESTER_ROMFS_DIR "${CMAKE_BINARY_DIR}/romfs")
 set(WGNX_COMMON "${CMAKE_CURRENT_SOURCE_DIR}/libs/wireguard-nx/common" CACHE PATH
     "Path to the WireGuard NX shared IPC headers")
+file(GLOB BOREALIS_SYSTEM_RESOURCES CONFIGURE_DEPENDS
+    "${BOREALIS_RESOURCES}/img/sys/*")
 
 if(NOT EXISTS "${WGNX_COMMON}/include/wgnx/tunnel_protocol.hpp")
     message(FATAL_ERROR
@@ -72,7 +75,6 @@ target_link_options(requester PRIVATE
 target_link_libraries(requester PRIVATE borealis curl z nx m Threads::Threads
                       ${APP_PLATFORM_LIB})
 
-set(REQUESTER_ROMFS_DIR "${CMAKE_BINARY_DIR}/romfs")
 if(USE_DEKO3D)
     gen_dksh("${REQUESTER_ROMFS_DIR}/shaders")
 endif()
@@ -94,16 +96,15 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}" -E make_directory
             "${REQUESTER_ROMFS_DIR}/i18n/en-US"
     COMMAND "${CMAKE_COMMAND}" -E make_directory
-            "${REQUESTER_ROMFS_DIR}/img/sys"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory
             "${REQUESTER_ROMFS_DIR}/material"
     # Borealis Switch runtime requirements for the current requester UI.
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${BOREALIS_RESOURCES}/i18n/en-US/hints.json"
             "${REQUESTER_ROMFS_DIR}/i18n/en-US/hints.json"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${BOREALIS_RESOURCES}/img/sys/cursor.png"
-            "${REQUESTER_ROMFS_DIR}/img/sys/cursor.png"
+    # Borealis uses this complete directory for cursor and system-status UI.
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${BOREALIS_RESOURCES}/img/sys"
+            "${REQUESTER_ROMFS_DIR}/img/sys"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${BOREALIS_RESOURCES}/material/MaterialIcons-Regular.ttf"
             "${REQUESTER_ROMFS_DIR}/material/MaterialIcons-Regular.ttf"
@@ -116,7 +117,7 @@ add_custom_command(
     DEPENDS requester
             "${APP_ICON}"
             "${BOREALIS_RESOURCES}/i18n/en-US/hints.json"
-            "${BOREALIS_RESOURCES}/img/sys/cursor.png"
+            ${BOREALIS_SYSTEM_RESOURCES}
             "${BOREALIS_RESOURCES}/material/MaterialIcons-Regular.ttf"
     VERBATIM)
 add_custom_target(requester_nro ALL DEPENDS "${CMAKE_BINARY_DIR}/requester.nro")
