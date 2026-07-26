@@ -79,6 +79,12 @@ constexpr std::uint32_t WgnxTunnelReceiveDeadlineMs = 5000;
 constexpr std::uint32_t WgnxTunnelPayloadSeed = 0x4E585256U;
 constexpr bool WgnxTunnelEchoReplies = true;
 
+/* Development-only coverage for wgnx:tun session ownership and batch semantics.
+ */
+constexpr bool EnableScenarioWgnxTunnelContractValidation = false;
+constexpr bool WgnxTunnelContractVerifyClonedSessionLifetime = true;
+constexpr bool WgnxTunnelContractVerifyMixedBatch = true;
+
 constexpr SocketInitConfig SocketConfigApplication = {
     .tcp_tx_buf_size = 1024 * 64,
     .tcp_rx_buf_size = 1024 * 64,

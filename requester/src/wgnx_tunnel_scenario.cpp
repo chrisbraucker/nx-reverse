@@ -20,7 +20,7 @@ namespace requester {
 namespace {
 
 constexpr std::size_t PayloadHeaderBytes = 24;
-constexpr std::uint32_t MaximumQueueFullRetries = 64;
+constexpr std::uint32_t MaximumQueueFullRetriesPerDatagram = 16;
 
 const char *StatusName(wgnx::tunnel::ProtocolStatus status) {
   using wgnx::tunnel::ProtocolStatus;
@@ -371,7 +371,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
   std::uint32_t echoed = 0;
   std::uint32_t ignored_completions = 0;
   std::uint32_t event_wakes = 0;
-  std::uint32_t queue_full_retries = 0;
+  std::uint32_t queue_full_events = 0;
   for (std::uint32_t sequence = 0; sequence < config.datagram_count;
        ++sequence) {
     const std::uint32_t flow_index = sequence % config.concurrent_flows;
@@ -383,6 +383,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
         .client_tag =
             (static_cast<std::uint64_t>(config.workload_id) << 32U) | sequence,
     };
+    std::uint32_t queue_full_retries_for_datagram = 0;
     for (;;) {
       DatagramDisposition disposition{};
       rc = client::SendUdpDatagram(tunnel_client, descriptor, payload.data(),
@@ -396,21 +397,32 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
         break;
       }
       if (disposition.status != ProtocolStatus::QueueFull ||
-          queue_full_retries == MaximumQueueFullRetries) {
-        result.detail = "SendUdpDatagram status=" +
-                        std::string(StatusName(disposition.status));
+          queue_full_retries_for_datagram ==
+              MaximumQueueFullRetriesPerDatagram) {
+        result.detail =
+            "SendUdpDatagram status=" +
+            std::string(StatusName(disposition.status)) +
+            " sequence=" + std::to_string(sequence) +
+            " queue_full_events=" + std::to_string(queue_full_events) +
+            " retries_for_datagram=" +
+            std::to_string(queue_full_retries_for_datagram);
         break;
       }
 
-      ++queue_full_retries;
+      ++queue_full_events;
+      ++queue_full_retries_for_datagram;
       const CompletionWaitResult wait =
           WaitForWritable(tunnel_client, &completion_event, flows[flow_index],
                           config.receive_deadline_ms);
       ignored_completions += wait.ignored;
       event_wakes += wait.wake_count;
       if (!wait.writable) {
-        result.detail = wait.detail + " waiting_for_writable sequence=" +
-                        std::to_string(sequence);
+        result.detail =
+            wait.detail +
+            " waiting_for_writable sequence=" + std::to_string(sequence) +
+            " queue_full_events=" + std::to_string(queue_full_events) +
+            " retries_for_datagram=" +
+            std::to_string(queue_full_retries_for_datagram);
         break;
       }
     }
@@ -458,10 +470,304 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
         " flows=" + std::to_string(config.concurrent_flows) +
         " accepted=" + std::to_string(accepted) +
         " echoed=" + std::to_string(echoed) +
-        " queue_full_retries=" + std::to_string(queue_full_retries) +
+        " queue_full_events=" + std::to_string(queue_full_events) +
         " ignored_completions=" + std::to_string(ignored_completions) +
         " event_wakes=" + std::to_string(event_wakes);
   }
+  return result;
+}
+
+ScenarioResult
+RunWgnxTunnelContractValidation(AppContext &ctx,
+                                const TunnelUdpWorkloadConfig &workload,
+                                const TunnelContractValidationConfig &config) {
+  using namespace wgnx::tunnel;
+
+  ScenarioResult result{.name = "wgnx_tunnel_contract_validation"};
+  if (!config.enabled) {
+    result.skipped = true;
+    result.detail = "disabled by runtime configuration";
+    return result;
+  }
+  if (!config.verify_cloned_session_lifetime && !config.verify_mixed_batch) {
+    result.detail = "no contract validations are enabled";
+    return result;
+  }
+  logger::Status(
+      ctx,
+      "Running wgnx:tun contract validation clone_lifetime=%u mixed_batch=%u",
+      static_cast<unsigned>(config.verify_cloned_session_lifetime),
+      static_cast<unsigned>(config.verify_mixed_batch));
+  if (!client::IsServiceRunning()) {
+    result.detail = "wgnx:tun is not running";
+    return result;
+  }
+
+  std::array<std::uint8_t, 4> destination{};
+  if (!ParseIpv4(workload.destination_ipv4.c_str(), &destination)) {
+    result.detail = "invalid configured workload destination";
+    return result;
+  }
+
+  client::ScopedRootService root;
+  Result rc = root.Open();
+  if (R_FAILED(rc)) {
+    result.rc = rc;
+    result.detail = "wgnx:tun root open failure";
+    return result;
+  }
+  Capabilities capabilities{};
+  rc = client::GetTunCapabilities(root, &capabilities);
+  if (R_FAILED(rc) || capabilities.api_version != TunApiVersion) {
+    result.rc = rc;
+    result.detail = R_FAILED(rc) ? "GetTunApiVersion CMIF failure"
+                                 : "wgnx:tun API version mismatch";
+    return result;
+  }
+  if (workload.payload_bytes > capabilities.maximum_udp_payload_bytes) {
+    result.detail = "configured payload exceeds wgnx:tun capability";
+    return result;
+  }
+
+  client::ScopedClient primary;
+  rc = client::OpenTunnelClient(root, &primary);
+  if (R_FAILED(rc)) {
+    result.rc = rc;
+    result.detail = "OpenTunnelClient CMIF failure";
+    return result;
+  }
+
+  const OpenConnectedUdpFlowRequest request{
+      .remote = {.address = {destination[0], destination[1], destination[2],
+                             destination[3]},
+                 .port = workload.destination_port,
+                 .reserved = 0},
+      .diagnostic_tag =
+          (static_cast<std::uint64_t>(workload.workload_id) << 32U) |
+          0x434F4E54U,
+  };
+  const auto open_flow = [&](client::ScopedClient &tunnel_client,
+                             FlowHandle *out_flow) -> bool {
+    OpenConnectedUdpFlowResult opened{};
+    rc = client::OpenConnectedUdpFlow(tunnel_client, request, &opened);
+    if (R_FAILED(rc) || opened.status != ProtocolStatus::Success) {
+      result.rc = rc;
+      result.detail = R_FAILED(rc) ? "OpenConnectedUdpFlow CMIF failure"
+                                   : "OpenConnectedUdpFlow status=" +
+                                         std::string(StatusName(opened.status));
+      return false;
+    }
+    *out_flow = opened.flow;
+    return true;
+  };
+  const auto close_flow = [](client::ScopedClient &tunnel_client,
+                             FlowHandle *flow) {
+    if (flow->value == 0 || !tunnel_client.IsOpen()) {
+      return;
+    }
+    ProtocolStatus status{};
+    static_cast<void>(client::CloseFlow(tunnel_client, *flow, &status));
+    *flow = {};
+  };
+  const auto load_event = [&](client::ScopedClient &tunnel_client,
+                              Event *out_event) -> bool {
+    Handle handle = INVALID_HANDLE;
+    rc = client::GetCompletionEvent(tunnel_client, &handle);
+    if (R_FAILED(rc)) {
+      result.rc = rc;
+      result.detail = "GetCompletionEvent CMIF failure";
+      return false;
+    }
+    eventLoadRemote(out_event, handle, false);
+    return true;
+  };
+
+  std::array<std::uint8_t, MaximumUdpPayloadBytes + 1> payload_storage{};
+  const std::span<std::uint8_t> expected_payload(payload_storage.data(),
+                                                 workload.payload_bytes);
+  BuildPayload(expected_payload, 0x434C4F4EU, 0, workload);
+  std::string completed;
+
+  if (config.verify_cloned_session_lifetime) {
+    client::ScopedClient clone;
+    rc = client::CloneTunnelClient(primary, &clone);
+    if (R_FAILED(rc)) {
+      result.rc = rc;
+      result.detail = "serviceClone wgnx:tun client failure";
+      return result;
+    }
+    logger::Log(ctx, "contract_validation clone created");
+    Capabilities clone_capabilities{};
+    rc = client::GetCapabilities(clone, &clone_capabilities);
+    if (R_FAILED(rc) || clone_capabilities.api_version != TunApiVersion) {
+      result.rc = rc;
+      result.detail = R_FAILED(rc) ? "clone GetCapabilities CMIF failure"
+                                   : "clone API version mismatch";
+      return result;
+    }
+
+    FlowHandle cloned_flow{};
+    if (!open_flow(primary, &cloned_flow)) {
+      return result;
+    }
+    Event completion_event{};
+    if (!load_event(clone, &completion_event)) {
+      close_flow(clone, &cloned_flow);
+      return result;
+    }
+
+    primary.Close();
+    std::array<client::ScopedClient, MaximumClientContexts - 1> retained{};
+    for (client::ScopedClient &extra : retained) {
+      rc = client::OpenTunnelClient(root, &extra);
+      if (R_FAILED(rc)) {
+        eventClose(&completion_event);
+        close_flow(clone, &cloned_flow);
+        result.rc = rc;
+        result.detail = "client-context capacity setup failure";
+        return result;
+      }
+    }
+    client::ScopedClient capacity_probe;
+    const Result capacity_rc = client::OpenTunnelClient(root, &capacity_probe);
+    logger::Log(ctx, "contract_validation clone capacity_probe_rc=%s",
+                FormatResult(capacity_rc).c_str());
+    if (R_SUCCEEDED(capacity_rc)) {
+      capacity_probe.Close();
+      eventClose(&completion_event);
+      close_flow(clone, &cloned_flow);
+      result.detail = "clone did not retain its logical client context";
+      return result;
+    }
+
+    const DatagramDescriptor descriptor{
+        .flow = cloned_flow,
+        .payload_offset = 0,
+        .payload_size = static_cast<std::uint32_t>(expected_payload.size()),
+        .client_tag = 0x434C4F4EU,
+    };
+    DatagramDisposition disposition{};
+    rc = client::SendUdpDatagram(clone, descriptor, expected_payload.data(),
+                                 expected_payload.size(), &disposition);
+    if (R_FAILED(rc) || disposition.status != ProtocolStatus::Success) {
+      eventClose(&completion_event);
+      close_flow(clone, &cloned_flow);
+      result.rc = rc;
+      result.detail = R_FAILED(rc)
+                          ? "clone SendUdpDatagram CMIF failure"
+                          : "clone SendUdpDatagram status=" +
+                                std::string(StatusName(disposition.status));
+      return result;
+    }
+    const CompletionWaitResult echo =
+        WaitForEcho(clone, &completion_event, cloned_flow, expected_payload,
+                    workload.receive_deadline_ms);
+    eventClose(&completion_event);
+    if (!echo.received_expected) {
+      close_flow(clone, &cloned_flow);
+      result.detail = "clone echo failure: " + echo.detail;
+      return result;
+    }
+    close_flow(clone, &cloned_flow);
+    clone.Close();
+    for (client::ScopedClient &extra : retained) {
+      extra.Close();
+    }
+    rc = client::OpenTunnelClient(root, &primary);
+    if (R_FAILED(rc)) {
+      result.rc = rc;
+      result.detail = "final clone close did not release client context";
+      return result;
+    }
+    logger::Log(ctx, "contract_validation clone final_reference_released");
+    completed = "clone_lifetime=ok";
+  }
+
+  if (config.verify_mixed_batch) {
+    FlowHandle batch_flow{};
+    if (!open_flow(primary, &batch_flow)) {
+      return result;
+    }
+    const std::array<DatagramDescriptor, 4> descriptors = {
+        DatagramDescriptor{
+            .flow = batch_flow,
+            .payload_offset = 0,
+            .payload_size = static_cast<std::uint32_t>(expected_payload.size()),
+            .client_tag = 1},
+        DatagramDescriptor{.flow = batch_flow,
+                           .payload_offset = static_cast<std::uint32_t>(
+                               payload_storage.size()),
+                           .payload_size = 1,
+                           .client_tag = 2},
+        DatagramDescriptor{
+            .flow = batch_flow,
+            .payload_offset = 0,
+            .payload_size = static_cast<std::uint32_t>(payload_storage.size()),
+            .client_tag = 3},
+        DatagramDescriptor{
+            .flow = {},
+            .payload_offset = 0,
+            .payload_size = static_cast<std::uint32_t>(expected_payload.size()),
+            .client_tag = 4},
+    };
+    std::array<DatagramDisposition, descriptors.size()> dispositions{};
+    rc = client::SendUdpDatagramBatch(
+        primary, descriptors.data(), descriptors.size(), payload_storage.data(),
+        payload_storage.size(), dispositions.data(), dispositions.size());
+    const std::array<ProtocolStatus, dispositions.size()> expected = {
+        ProtocolStatus::Success,
+        ProtocolStatus::MalformedInput,
+        ProtocolStatus::DatagramTooLarge,
+        ProtocolStatus::StaleHandle,
+    };
+    bool dispositions_match = R_SUCCEEDED(rc);
+    for (std::size_t index = 0; index < dispositions.size(); ++index) {
+      logger::Log(
+          ctx, "contract_validation batch index=%zu tag=%llu status=%s", index,
+          static_cast<unsigned long long>(dispositions[index].client_tag),
+          StatusName(dispositions[index].status));
+      dispositions_match = dispositions_match &&
+                           dispositions[index].client_tag == index + 1 &&
+                           dispositions[index].status == expected[index];
+    }
+    if (!dispositions_match) {
+      close_flow(primary, &batch_flow);
+      result.rc = rc;
+      result.detail = R_FAILED(rc)
+                          ? "SendUdpDatagramBatch CMIF failure"
+                          : "mixed batch dispositions differed from contract";
+      return result;
+    }
+
+    Event completion_event{};
+    if (!load_event(primary, &completion_event)) {
+      close_flow(primary, &batch_flow);
+      return result;
+    }
+    const CompletionWaitResult echo =
+        WaitForEcho(primary, &completion_event, batch_flow, expected_payload,
+                    workload.receive_deadline_ms);
+    eventClose(&completion_event);
+    close_flow(primary, &batch_flow);
+    if (!echo.received_expected) {
+      result.detail = "mixed batch echo failure: " + echo.detail;
+      return result;
+    }
+    if (!completed.empty()) {
+      completed += " ";
+    }
+    completed += "mixed_batch=ok";
+  }
+
+  result.success = true;
+  result.bytes_sent =
+      expected_payload.size() *
+          static_cast<std::size_t>(config.verify_cloned_session_lifetime) +
+      expected_payload.size() *
+          static_cast<std::size_t>(config.verify_mixed_batch);
+  result.bytes_received = result.bytes_sent;
+  result.detail =
+      "api=" + std::to_string(capabilities.api_version) + " " + completed;
   return result;
 }
 

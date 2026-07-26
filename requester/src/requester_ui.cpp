@@ -13,6 +13,7 @@
 
 #include "logger.hpp"
 #include "runtime_config.hpp"
+#include "wgnx/client.hpp"
 #include "wgnx/protocol.hpp"
 #include "wgnx/tunnel_protocol.hpp"
 #include "wgnx_tunnel_scenario.hpp"
@@ -25,6 +26,7 @@ constexpr float PagePadding = 28.0F;
 constexpr float MainLogPanelHeight = 220.0F;
 constexpr float OffsetTolerance = 1.0F;
 constexpr float SettingsActionGap = 18.0F;
+constexpr float SettingsSectionGap = 24.0F;
 constexpr float RequesterSidebarWidth = 250.0F;
 constexpr float LogFontSize = 16.0F;
 constexpr char ProjectUrl[] = APP_PROJECT_URL;
@@ -56,7 +58,8 @@ std::string FormatRuntimeConfig(const RuntimeConfig &config) {
          std::to_string(tunnel.destination_port) + " | payload " +
          std::to_string(tunnel.payload_bytes) + " B | datagrams " +
          std::to_string(tunnel.datagram_count) + " | flows " +
-         std::to_string(tunnel.concurrent_flows);
+         std::to_string(tunnel.concurrent_flows) + " | contract " +
+         (config.tunnel_contract.enabled ? "enabled" : "disabled");
 }
 
 std::string FormatRecentLines() {
@@ -159,6 +162,28 @@ void RefreshMainPage(const std::shared_ptr<UiModel> &model) {
   }
 }
 
+void RequestUdpBindBump(const std::shared_ptr<UiModel> &model) {
+  AppContext &context = *model->context;
+  if (!wgnx::client::IsServiceRunning()) {
+    logger::Status(context, "UDP bind bump rejected: wgnx:ctl is not running");
+    brls::Application::notify("WireGuard sysmodule is not running");
+    RefreshLogViews(model);
+    return;
+  }
+
+  logger::Status(context, "UDP bind bump requested via ZR");
+  const Result rc = wgnx::client::BumpUdpBinding();
+  if (R_FAILED(rc)) {
+    logger::Status(context, "UDP bind bump failed rc=%s",
+                   FormatResult(rc).c_str());
+    brls::Application::notify("UDP bind bump failed");
+  } else {
+    logger::Status(context, "UDP bind bump queued");
+    brls::Application::notify("UDP bind bump queued");
+  }
+  RefreshLogViews(model);
+}
+
 template <typename T>
 bool AssignUnsigned(long input, T *target, T maximum, const char *name,
                     AppContext &context) {
@@ -186,17 +211,6 @@ public:
               "The current runtime-configurable direct flow scenario.");
     enabled_ = AddBoolean(content, "Run tunnel UDP workload",
                           &model_->config.tunnel_udp.enabled);
-    destination_ipv4_ = AddText(content, "Destination IPv4",
-                                &model_->config.tunnel_udp.destination_ipv4);
-    destination_port_ = AddU16(content, "Destination port",
-                               &model_->config.tunnel_udp.destination_port,
-                               "tunnel_udp.destination_port");
-    workload_id_ = AddU32(
-        content, "Workload ID", &model_->config.tunnel_udp.workload_id,
-        std::numeric_limits<std::uint32_t>::max(), "tunnel_udp.workload_id");
-    payload_bytes_ = AddSize(
-        content, "Payload bytes", &model_->config.tunnel_udp.payload_bytes,
-        wgnx::tunnel::MaximumUdpPayloadBytes, "tunnel_udp.payload_bytes");
     datagram_count_ = AddU32(content, "Datagram count",
                              &model_->config.tunnel_udp.datagram_count, 4096,
                              "tunnel_udp.datagram_count");
@@ -207,15 +221,47 @@ public:
                                &model_->config.tunnel_udp.concurrent_flows,
                                wgnx::tunnel::MaximumFlowsPerClient,
                                "tunnel_udp.concurrent_flows");
-    receive_deadline_ms_ =
-        AddU32(content, "Receive deadline milliseconds",
-               &model_->config.tunnel_udp.receive_deadline_ms, 60000,
-               "tunnel_udp.receive_deadline_ms");
-    payload_seed_ = AddU32(
-        content, "Payload seed", &model_->config.tunnel_udp.payload_seed,
-        std::numeric_limits<std::uint32_t>::max(), "tunnel_udp.payload_seed");
     echo_replies_ = AddBoolean(content, "Echo replies",
                                &model_->config.tunnel_udp.echo_replies);
+
+    AddHeader(content, "Tunnel Contract Validation",
+              "Clone lifetime and mixed-batch API coverage.",
+              SettingsSectionGap);
+    contract_enabled_ = AddBoolean(content, "Run contract validation",
+                                   &model_->config.tunnel_contract.enabled);
+    verify_cloned_session_lifetime_ = AddBoolean(
+        content, "Verify cloned session lifetime",
+        &model_->config.tunnel_contract.verify_cloned_session_lifetime);
+    verify_mixed_batch_ =
+        AddBoolean(content, "Verify mixed batch dispositions",
+                   &model_->config.tunnel_contract.verify_mixed_batch);
+
+    AddHeader(content, "Common Options", "", SettingsSectionGap);
+
+    auto *shared_settings = new brls::Box(brls::Axis::COLUMN);
+    shared_settings->setWidthPercentage(100.0F);
+    content->addView(shared_settings);
+    destination_ipv4_ = AddText(shared_settings, "Shared destination IPv4",
+                                &model_->config.tunnel_udp.destination_ipv4);
+    destination_port_ = AddU16(shared_settings, "Shared destination port",
+                               &model_->config.tunnel_udp.destination_port,
+                               "tunnel_udp.destination_port");
+    workload_id_ = AddU32(shared_settings, "Shared workload ID",
+                          &model_->config.tunnel_udp.workload_id,
+                          std::numeric_limits<std::uint32_t>::max(),
+                          "tunnel_udp.workload_id");
+    payload_bytes_ = AddSize(shared_settings, "Shared payload bytes",
+                             &model_->config.tunnel_udp.payload_bytes,
+                             wgnx::tunnel::MaximumUdpPayloadBytes,
+                             "tunnel_udp.payload_bytes");
+    receive_deadline_ms_ =
+        AddU32(shared_settings, "Shared receive deadline milliseconds",
+               &model_->config.tunnel_udp.receive_deadline_ms, 60000,
+               "tunnel_udp.receive_deadline_ms");
+    payload_seed_ = AddU32(shared_settings, "Shared payload seed",
+                           &model_->config.tunnel_udp.payload_seed,
+                           std::numeric_limits<std::uint32_t>::max(),
+                           "tunnel_udp.payload_seed");
 
     auto *save = new brls::Button();
     save->setStyle(&brls::BUTTONSTYLE_PRIMARY);
@@ -260,10 +306,14 @@ public:
   }
 
 private:
-  void AddHeader(brls::Box *content, const char *title, const char *subtitle) {
+  void AddHeader(brls::Box *content, const char *title, const char *subtitle,
+                 float margin_top = 0.0F) {
     auto *header = new brls::Header();
     header->setTitle(title);
-    header->setSubtitle(subtitle);
+    if (subtitle[0] != '\0') {
+      header->setSubtitle(subtitle);
+    }
+    header->setMarginTop(margin_top);
     content->addView(header);
   }
 
@@ -341,6 +391,11 @@ private:
         static_cast<long>(tunnel.receive_deadline_ms));
     payload_seed_->setValue(static_cast<long>(tunnel.payload_seed));
     echo_replies_->setOn(tunnel.echo_replies, false);
+    const auto &contract = model_->config.tunnel_contract;
+    contract_enabled_->setOn(contract.enabled, false);
+    verify_cloned_session_lifetime_->setOn(
+        contract.verify_cloned_session_lifetime, false);
+    verify_mixed_batch_->setOn(contract.verify_mixed_batch, false);
   }
 
   std::shared_ptr<UiModel> model_;
@@ -355,6 +410,9 @@ private:
   brls::InputNumericCell *receive_deadline_ms_{};
   brls::InputNumericCell *payload_seed_{};
   brls::BooleanCell *echo_replies_{};
+  brls::BooleanCell *contract_enabled_{};
+  brls::BooleanCell *verify_cloned_session_lifetime_{};
+  brls::BooleanCell *verify_mixed_batch_{};
 };
 
 class MainPage final : public brls::Box {
@@ -430,33 +488,50 @@ private:
     model->run_active = true;
     model->run_status = "Running " + FormatRuntimeConfig(model->config);
     RefreshMainPage(model);
-    const TunnelUdpWorkloadConfig workload = model->config.tunnel_udp;
+    const RuntimeConfig runtime_config = model->config;
     AppContext *const context = model->context;
     logger::Status(*context, "requester workload requested: %s",
                    FormatRuntimeConfig(model->config).c_str());
 
-    brls::async([model, context, workload] {
-      ScenarioResult result{.name = "wgnx_tunnel_udp_workload"};
-      if (!workload.enabled) {
-        result.skipped = true;
-        result.detail = "disabled by runtime configuration";
-      } else {
-        result = RunWgnxTunnelUdpWorkload(*context, workload);
+    brls::async([model, context, runtime_config] {
+      std::vector<ScenarioResult> results;
+      if (runtime_config.tunnel_udp.enabled) {
+        results.push_back(
+            RunWgnxTunnelUdpWorkload(*context, runtime_config.tunnel_udp));
       }
-      const char *state =
-          result.skipped ? "SKIP" : (result.success ? "OK" : "FAIL");
-      logger::Status(*context, "[%s] %s | sent=%zu recv=%zu | %s", state,
-                     result.name.c_str(), result.bytes_sent,
-                     result.bytes_received, result.detail.c_str());
-      brls::sync([model, result = std::move(result)] {
+      if (runtime_config.tunnel_contract.enabled) {
+        results.push_back(
+            RunWgnxTunnelContractValidation(*context, runtime_config.tunnel_udp,
+                                            runtime_config.tunnel_contract));
+      }
+      if (results.empty()) {
+        results.push_back({.name = "requester",
+                           .skipped = true,
+                           .detail = "no runtime scenario is enabled"});
+      }
+      bool all_success = true;
+      std::string summary;
+      for (const ScenarioResult &result : results) {
+        const char *state =
+            result.skipped ? "SKIP" : (result.success ? "OK" : "FAIL");
+        logger::Status(*context, "[%s] %s | sent=%zu recv=%zu | %s", state,
+                       result.name.c_str(), result.bytes_sent,
+                       result.bytes_received, result.detail.c_str());
+        all_success = all_success && (result.success || result.skipped);
+        if (!summary.empty()) {
+          summary += " | ";
+        }
+        summary += result.name + ": " +
+                   (result.skipped ? "skipped"
+                                   : (result.success ? "completed" : "failed"));
+      }
+      brls::sync([model, all_success, summary = std::move(summary)] {
         if (!model->active) {
           return;
         }
         model->run_active = false;
-        const char *state = result.skipped
-                                ? "Skipped"
-                                : (result.success ? "Completed" : "Failed");
-        model->run_status = std::string(state) + ": " + result.detail;
+        model->run_status =
+            std::string(all_success ? "Completed: " : "Failed: ") + summary;
         RefreshMainPage(model);
         RefreshLogViews(model);
       });
@@ -571,6 +646,14 @@ public:
   brls::View *createContentView() override {
     auto *tabs = new RequesterTabs(model_);
     return new brls::AppletFrame(tabs);
+  }
+
+  void onContentAvailable() override {
+    registerAction("Bump UDP bind", brls::BUTTON_RT,
+                   [model = model_](brls::View *) {
+                     RequestUdpBindBump(model);
+                     return true;
+                   });
   }
 
 private:

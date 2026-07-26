@@ -21,8 +21,15 @@ struct TunnelUdpWorkloadConfig {
   bool echo_replies{true};
 };
 
+struct TunnelContractValidationConfig {
+  bool enabled{false};
+  bool verify_cloned_session_lifetime{true};
+  bool verify_mixed_batch{true};
+};
+
 struct RuntimeConfig {
   TunnelUdpWorkloadConfig tunnel_udp;
+  TunnelContractValidationConfig tunnel_contract;
 };
 
 struct ConfigLoadReport {

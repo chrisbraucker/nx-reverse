@@ -1,8 +1,8 @@
 #include "runtime_config.hpp"
 
 #include <array>
-#include <charconv>
 #include <cerrno>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -110,6 +110,14 @@ void ResetToDefault(const RuntimeConfig &defaults, RuntimeConfig *config,
     config->tunnel_udp.payload_seed = defaults.tunnel_udp.payload_seed;
   } else if (key == "tunnel_udp.echo_replies") {
     config->tunnel_udp.echo_replies = defaults.tunnel_udp.echo_replies;
+  } else if (key == "tunnel_contract.enabled") {
+    config->tunnel_contract.enabled = defaults.tunnel_contract.enabled;
+  } else if (key == "tunnel_contract.verify_cloned_session_lifetime") {
+    config->tunnel_contract.verify_cloned_session_lifetime =
+        defaults.tunnel_contract.verify_cloned_session_lifetime;
+  } else if (key == "tunnel_contract.verify_mixed_batch") {
+    config->tunnel_contract.verify_mixed_batch =
+        defaults.tunnel_contract.verify_mixed_batch;
   }
 }
 
@@ -118,8 +126,8 @@ bool ApplySetting(const RuntimeConfig &defaults, RuntimeConfig *config,
                   std::string *error) {
   auto invalid = [&] {
     ResetToDefault(defaults, config, key);
-    *error = "invalid value for " + std::string(key) +
-             "; using compiled default";
+    *error =
+        "invalid value for " + std::string(key) + "; using compiled default";
     return false;
   };
 
@@ -194,6 +202,18 @@ bool ApplySetting(const RuntimeConfig &defaults, RuntimeConfig *config,
   if (key == "tunnel_udp.echo_replies") {
     return ParseBool(value, &config->tunnel_udp.echo_replies) || invalid();
   }
+  if (key == "tunnel_contract.enabled") {
+    return ParseBool(value, &config->tunnel_contract.enabled) || invalid();
+  }
+  if (key == "tunnel_contract.verify_cloned_session_lifetime") {
+    return ParseBool(value,
+                     &config->tunnel_contract.verify_cloned_session_lifetime) ||
+           invalid();
+  }
+  if (key == "tunnel_contract.verify_mixed_batch") {
+    return ParseBool(value, &config->tunnel_contract.verify_mixed_batch) ||
+           invalid();
+  }
   *error = "unrecognized configuration key " + std::string(key);
   return false;
 }
@@ -215,6 +235,13 @@ RuntimeConfig CompiledRuntimeDefaults() {
               .receive_deadline_ms = config::WgnxTunnelReceiveDeadlineMs,
               .payload_seed = config::WgnxTunnelPayloadSeed,
               .echo_replies = config::WgnxTunnelEchoReplies,
+          },
+      .tunnel_contract =
+          {
+              .enabled = config::EnableScenarioWgnxTunnelContractValidation,
+              .verify_cloned_session_lifetime =
+                  config::WgnxTunnelContractVerifyClonedSessionLifetime,
+              .verify_mixed_batch = config::WgnxTunnelContractVerifyMixedBatch,
           },
   };
 }
@@ -247,7 +274,8 @@ ConfigLoadReport LoadRuntimeConfig(const RuntimeConfig &defaults,
                                    " has no '=' separator");
       continue;
     }
-    const std::string key = Trim(std::string_view(trimmed).substr(0, separator));
+    const std::string key =
+        Trim(std::string_view(trimmed).substr(0, separator));
     const std::string value =
         Trim(std::string_view(trimmed).substr(separator + 1));
     if (key.empty() || value.empty()) {
@@ -284,17 +312,22 @@ bool ValidateRuntimeConfig(const RuntimeConfig &config, std::string *error) {
       tunnel.payload_bytes > wgnx::tunnel::MaximumUdpPayloadBytes) {
     return fail("tunnel_udp.payload_bytes is outside the supported range");
   }
-  if (tunnel.datagram_count == 0 || tunnel.datagram_count > MaximumDatagramCount) {
+  if (tunnel.datagram_count == 0 ||
+      tunnel.datagram_count > MaximumDatagramCount) {
     return fail("tunnel_udp.datagram_count is outside the supported range");
   }
-  if (tunnel.pacing_ms > MaximumDurationMs ||
-      tunnel.receive_deadline_ms == 0 ||
+  if (tunnel.pacing_ms > MaximumDurationMs || tunnel.receive_deadline_ms == 0 ||
       tunnel.receive_deadline_ms > MaximumDurationMs) {
     return fail("tunnel_udp timeout is outside the supported range");
   }
   if (tunnel.concurrent_flows == 0 ||
       tunnel.concurrent_flows > wgnx::tunnel::MaximumFlowsPerClient) {
     return fail("tunnel_udp.concurrent_flows is outside the supported range");
+  }
+  if (config.tunnel_contract.enabled &&
+      !config.tunnel_contract.verify_cloned_session_lifetime &&
+      !config.tunnel_contract.verify_mixed_batch) {
+    return fail("tunnel_contract must enable at least one validation");
   }
   return true;
 }
@@ -326,25 +359,31 @@ bool SaveRuntimeConfig(const RuntimeConfig &config, std::string *error,
     return false;
   }
   const auto &tunnel = config.tunnel_udp;
-  std::fprintf(file,
-               "# NX Reversing Requester runtime configuration\n"
-               "tunnel_udp.enabled=%s\n"
-               "tunnel_udp.destination_ipv4=%s\n"
-               "tunnel_udp.destination_port=%u\n"
-               "tunnel_udp.workload_id=%u\n"
-               "tunnel_udp.payload_bytes=%zu\n"
-               "tunnel_udp.datagram_count=%u\n"
-               "tunnel_udp.pacing_ms=%u\n"
-               "tunnel_udp.concurrent_flows=%u\n"
-               "tunnel_udp.receive_deadline_ms=%u\n"
-               "tunnel_udp.payload_seed=%u\n"
-               "tunnel_udp.echo_replies=%s\n",
-               tunnel.enabled ? "true" : "false",
-               tunnel.destination_ipv4.c_str(), tunnel.destination_port,
-               tunnel.workload_id, tunnel.payload_bytes, tunnel.datagram_count,
-               tunnel.pacing_ms, tunnel.concurrent_flows,
-               tunnel.receive_deadline_ms, tunnel.payload_seed,
-               tunnel.echo_replies ? "true" : "false");
+  std::fprintf(
+      file,
+      "# NX Reversing Requester runtime configuration\n"
+      "tunnel_udp.enabled=%s\n"
+      "tunnel_udp.destination_ipv4=%s\n"
+      "tunnel_udp.destination_port=%u\n"
+      "tunnel_udp.workload_id=%u\n"
+      "tunnel_udp.payload_bytes=%zu\n"
+      "tunnel_udp.datagram_count=%u\n"
+      "tunnel_udp.pacing_ms=%u\n"
+      "tunnel_udp.concurrent_flows=%u\n"
+      "tunnel_udp.receive_deadline_ms=%u\n"
+      "tunnel_udp.payload_seed=%u\n"
+      "tunnel_udp.echo_replies=%s\n"
+      "tunnel_contract.enabled=%s\n"
+      "tunnel_contract.verify_cloned_session_lifetime=%s\n"
+      "tunnel_contract.verify_mixed_batch=%s\n",
+      tunnel.enabled ? "true" : "false", tunnel.destination_ipv4.c_str(),
+      tunnel.destination_port, tunnel.workload_id, tunnel.payload_bytes,
+      tunnel.datagram_count, tunnel.pacing_ms, tunnel.concurrent_flows,
+      tunnel.receive_deadline_ms, tunnel.payload_seed,
+      tunnel.echo_replies ? "true" : "false",
+      config.tunnel_contract.enabled ? "true" : "false",
+      config.tunnel_contract.verify_cloned_session_lifetime ? "true" : "false",
+      config.tunnel_contract.verify_mixed_batch ? "true" : "false");
   const bool flush_failed = std::fflush(file) != 0;
   const bool close_failed = std::fclose(file) != 0;
   const bool write_failed = flush_failed || close_failed;

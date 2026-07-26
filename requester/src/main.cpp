@@ -16,24 +16,29 @@ void LogDiagnostics(requester::AppContext &context,
                          APP_TITLE, VERSION, BUILD_ID);
   requester::logger::Log(context, "hos_version=%s",
                          requester::FormatHosVersion().c_str());
-  requester::logger::Log(context, "run_id=%s log_path=%s", context.run_id.c_str(),
-                         context.log_path.c_str());
-  requester::logger::Log(context, "wgnx_api ctl=%u tun=%u",
-                         wgnx::IpcApiVersion, wgnx::tunnel::TunApiVersion);
+  requester::logger::Log(context, "run_id=%s log_path=%s",
+                         context.run_id.c_str(), context.log_path.c_str());
+  requester::logger::Log(context, "wgnx_api ctl=%u tun=%u", wgnx::IpcApiVersion,
+                         wgnx::tunnel::TunApiVersion);
   requester::logger::Log(
       context,
-      "runtime_config source=%s path=%s tunnel_udp_enabled=%u destination=%s:%u "
+      "runtime_config source=%s path=%s tunnel_udp_enabled=%u "
+      "destination=%s:%u "
       "payload=%zu datagrams=%u pacing_ms=%u flows=%u deadline_ms=%u seed=%u "
-      "echo=%u",
+      "echo=%u tunnel_contract_enabled=%u clone_lifetime=%u mixed_batch=%u",
       report.loaded_from_file ? "file" : "compiled_defaults",
       requester::RuntimeConfigPath,
       static_cast<unsigned>(config.tunnel_udp.enabled),
       config.tunnel_udp.destination_ipv4.c_str(),
       config.tunnel_udp.destination_port, config.tunnel_udp.payload_bytes,
       config.tunnel_udp.datagram_count, config.tunnel_udp.pacing_ms,
-      config.tunnel_udp.concurrent_flows,
-      config.tunnel_udp.receive_deadline_ms, config.tunnel_udp.payload_seed,
-      static_cast<unsigned>(config.tunnel_udp.echo_replies));
+      config.tunnel_udp.concurrent_flows, config.tunnel_udp.receive_deadline_ms,
+      config.tunnel_udp.payload_seed,
+      static_cast<unsigned>(config.tunnel_udp.echo_replies),
+      static_cast<unsigned>(config.tunnel_contract.enabled),
+      static_cast<unsigned>(
+          config.tunnel_contract.verify_cloned_session_lifetime),
+      static_cast<unsigned>(config.tunnel_contract.verify_mixed_batch));
   for (const std::string &diagnostic : report.diagnostics) {
     requester::logger::Status(context, "configuration warning: %s",
                               diagnostic.c_str());
@@ -59,13 +64,14 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  const requester::RuntimeConfig defaults = requester::CompiledRuntimeDefaults();
+  const requester::RuntimeConfig defaults =
+      requester::CompiledRuntimeDefaults();
   requester::ConfigLoadReport loaded_config =
       requester::LoadRuntimeConfig(defaults);
   LogDiagnostics(context, loaded_config.config, loaded_config);
 
-  const int rc = requester::RunRequesterUi(context, defaults,
-                                            std::move(loaded_config));
+  const int rc =
+      requester::RunRequesterUi(context, defaults, std::move(loaded_config));
   requester::logger::Log(context, "requester exit rc=%d", rc);
   requester::logger::CloseLog(context);
   requester::logger::Bootstrap("main: exit rc=%d", rc);
