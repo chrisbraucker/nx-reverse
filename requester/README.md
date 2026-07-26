@@ -81,4 +81,8 @@ The configuration page writes the same file only after an explicit `Save configu
 
 The workload runs on Borealis' worker queue so the UI remains responsive while waiting for a completion event.
 
+When `wgnx:tun` returns `QueueFull`, the workload waits for the matching `Writable` completion and retries the exact datagram up to 64 times within the configured receive deadline.
+
+The scenario result records `queue_full_retries` so a bounded-burst evaluation can distinguish backpressure recovery from an unpressured run.
+
 The on-screen activity log retains the most recent 160 requester events while the full per-run log continues to be written under `sdmc:/nxrv/requester`.

@@ -20,6 +20,7 @@ namespace requester {
 namespace {
 
 constexpr std::size_t PayloadHeaderBytes = 24;
+constexpr std::uint32_t MaximumQueueFullRetries = 64;
 
 const char *StatusName(wgnx::tunnel::ProtocolStatus status) {
   using wgnx::tunnel::ProtocolStatus;
@@ -92,8 +93,8 @@ void BuildPayload(std::span<std::uint8_t> payload, std::uint32_t sequence,
   StoreBigEndian32(payload.data() + 12, flow_index);
   StoreBigEndian32(payload.data() + 16, sequence);
   StoreBigEndian32(payload.data() + 20, config.payload_seed);
-  std::uint32_t state = config.payload_seed ^ sequence ^
-                        (flow_index * 0x9E3779B9U);
+  std::uint32_t state =
+      config.payload_seed ^ sequence ^ (flow_index * 0x9E3779B9U);
   for (std::size_t index = PayloadHeaderBytes; index < payload.size();
        ++index) {
     payload[index] = static_cast<std::uint8_t>(NextPayloadByte(&state));
@@ -108,6 +109,7 @@ bool IsMatchingPayload(std::span<const std::uint8_t> actual,
 
 struct CompletionWaitResult {
   bool received_expected{false};
+  bool writable{false};
   bool terminal{false};
   std::uint32_t ignored{0};
   std::uint32_t wake_count{0};
@@ -187,10 +189,73 @@ CompletionWaitResult WaitForEcho(wgnx::tunnel::client::ScopedClient &client,
   return result;
 }
 
+CompletionWaitResult WaitForWritable(wgnx::tunnel::client::ScopedClient &client,
+                                     Event *event,
+                                     wgnx::tunnel::FlowHandle flow,
+                                     std::uint32_t timeout_ms) {
+  CompletionWaitResult result{};
+  const std::uint64_t deadline = DeadlineAfterMilliseconds(timeout_ms);
+  std::array<wgnx::tunnel::CompletionRecord, wgnx::tunnel::MaximumBatchEntries>
+      completions{};
+  std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadBytes> payload{};
+
+  while (armGetSystemTick() < deadline) {
+    const std::uint64_t remaining_ticks = deadline - armGetSystemTick();
+    const std::uint64_t remaining_ns =
+        (remaining_ticks * 1000000000ULL) / armGetSystemTickFreq();
+    const Result wait_rc = eventWait(event, remaining_ns);
+    if (R_FAILED(wait_rc)) {
+      result.detail = "completion event wait rc=" + FormatResult(wait_rc);
+      return result;
+    }
+    ++result.wake_count;
+
+    for (;;) {
+      std::uint32_t count = 0;
+      wgnx::tunnel::ProtocolStatus status =
+          wgnx::tunnel::ProtocolStatus::QueueEmpty;
+      const Result rc = wgnx::tunnel::client::ReceiveCompletions(
+          client, completions.data(), completions.size(), payload.data(),
+          payload.size(), &count, &status);
+      if (R_FAILED(rc)) {
+        result.detail = "ReceiveCompletions CMIF rc=" + FormatResult(rc);
+        return result;
+      }
+      if (status == wgnx::tunnel::ProtocolStatus::QueueEmpty) {
+        break;
+      }
+      if (status != wgnx::tunnel::ProtocolStatus::Success) {
+        result.detail =
+            "ReceiveCompletions status=" + std::string(StatusName(status));
+        return result;
+      }
+      for (std::uint32_t index = 0; index < count; ++index) {
+        const auto &completion = completions[index];
+        if (completion.type == wgnx::tunnel::CompletionType::FlowStateChanged &&
+            completion.flow.value == flow.value) {
+          result.terminal = true;
+          result.detail =
+              "flow terminal=" + std::to_string(static_cast<std::uint32_t>(
+                                     completion.terminal_reason));
+          return result;
+        }
+        if (completion.type == wgnx::tunnel::CompletionType::Writable &&
+            completion.flow.value == flow.value) {
+          result.writable = true;
+          return result;
+        }
+        ++result.ignored;
+      }
+    }
+  }
+  result.detail = "writable completion deadline expired";
+  return result;
+}
+
 } // namespace
 
-ScenarioResult RunWgnxTunnelUdpWorkload(
-    AppContext &ctx, const TunnelUdpWorkloadConfig &config) {
+ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
+                                        const TunnelUdpWorkloadConfig &config) {
   using namespace wgnx::tunnel;
 
   ScenarioResult result{.name = "wgnx_tunnel_udp_workload"};
@@ -306,6 +371,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(
   std::uint32_t echoed = 0;
   std::uint32_t ignored_completions = 0;
   std::uint32_t event_wakes = 0;
+  std::uint32_t queue_full_retries = 0;
   for (std::uint32_t sequence = 0; sequence < config.datagram_count;
        ++sequence) {
     const std::uint32_t flow_index = sequence % config.concurrent_flows;
@@ -315,18 +381,40 @@ ScenarioResult RunWgnxTunnelUdpWorkload(
         .payload_offset = 0,
         .payload_size = static_cast<std::uint32_t>(payload.size()),
         .client_tag =
-            (static_cast<std::uint64_t>(config.workload_id) << 32U) |
-            sequence,
+            (static_cast<std::uint64_t>(config.workload_id) << 32U) | sequence,
     };
-    DatagramDisposition disposition{};
-    rc = client::SendUdpDatagram(tunnel_client, descriptor, payload.data(),
-                                 payload.size(), &disposition);
-    if (R_FAILED(rc) || disposition.status != ProtocolStatus::Success) {
-      result.rc = rc;
-      result.detail = R_FAILED(rc)
-                          ? "SendUdpDatagram CMIF failure"
-                          : "SendUdpDatagram status=" +
-                                std::string(StatusName(disposition.status));
+    for (;;) {
+      DatagramDisposition disposition{};
+      rc = client::SendUdpDatagram(tunnel_client, descriptor, payload.data(),
+                                   payload.size(), &disposition);
+      if (R_FAILED(rc)) {
+        result.rc = rc;
+        result.detail = "SendUdpDatagram CMIF failure";
+        break;
+      }
+      if (disposition.status == ProtocolStatus::Success) {
+        break;
+      }
+      if (disposition.status != ProtocolStatus::QueueFull ||
+          queue_full_retries == MaximumQueueFullRetries) {
+        result.detail = "SendUdpDatagram status=" +
+                        std::string(StatusName(disposition.status));
+        break;
+      }
+
+      ++queue_full_retries;
+      const CompletionWaitResult wait =
+          WaitForWritable(tunnel_client, &completion_event, flows[flow_index],
+                          config.receive_deadline_ms);
+      ignored_completions += wait.ignored;
+      event_wakes += wait.wake_count;
+      if (!wait.writable) {
+        result.detail = wait.detail + " waiting_for_writable sequence=" +
+                        std::to_string(sequence);
+        break;
+      }
+    }
+    if (R_FAILED(rc) || !result.detail.empty()) {
       break;
     }
     ++accepted;
@@ -370,6 +458,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(
         " flows=" + std::to_string(config.concurrent_flows) +
         " accepted=" + std::to_string(accepted) +
         " echoed=" + std::to_string(echoed) +
+        " queue_full_retries=" + std::to_string(queue_full_retries) +
         " ignored_completions=" + std::to_string(ignored_completions) +
         " event_wakes=" + std::to_string(event_wakes);
   }
