@@ -355,13 +355,46 @@ bool SaveRuntimeConfig(const RuntimeConfig &config, std::string *error,
     }
     return false;
   }
-  if (std::rename(temporary_path.c_str(), path) != 0) {
+  const std::string backup_path = std::string(path) + ".bak";
+  if (std::remove(backup_path.c_str()) != 0 && errno != ENOENT) {
     std::remove(temporary_path.c_str());
     if (error != nullptr) {
-      *error = "unable to replace configuration: " +
+      *error = "unable to clear previous configuration backup: " +
                std::string(std::strerror(errno));
     }
     return false;
+  }
+
+  bool moved_previous_configuration = false;
+  if (std::rename(path, backup_path.c_str()) == 0) {
+    moved_previous_configuration = true;
+  } else if (errno != ENOENT) {
+    std::remove(temporary_path.c_str());
+    if (error != nullptr) {
+      *error = "unable to prepare configuration replacement: " +
+               std::string(std::strerror(errno));
+    }
+    return false;
+  }
+
+  if (std::rename(temporary_path.c_str(), path) != 0) {
+    const int replace_error = errno;
+    const bool restored_previous_configuration =
+        !moved_previous_configuration ||
+        std::rename(backup_path.c_str(), path) == 0;
+    std::remove(temporary_path.c_str());
+    if (error != nullptr) {
+      *error = "unable to replace configuration: " +
+               std::string(std::strerror(replace_error));
+      if (!restored_previous_configuration) {
+        *error += "; unable to restore previous configuration";
+      }
+    }
+    return false;
+  }
+
+  if (moved_previous_configuration) {
+    std::remove(backup_path.c_str());
   }
   return true;
 }
