@@ -167,7 +167,7 @@ bool ApplySetting(const RuntimeConfig &defaults, RuntimeConfig *config,
   if (key == "tunnel_udp.payload_bytes") {
     std::size_t parsed{};
     if (!ParseUnsigned(value, &parsed) || parsed < MinimumPayloadBytes ||
-        parsed > wgnx::tunnel::MaximumUdpPayloadBytes) {
+        parsed > wgnx::tunnel::MaximumUdpPayloadStorageBytes) {
       return invalid();
     }
     config->tunnel_udp.payload_bytes = parsed;
@@ -336,7 +336,7 @@ bool ValidateRuntimeConfig(const RuntimeConfig &config, std::string *error) {
     return fail("tunnel_udp.destination_port must be non-zero");
   }
   if (tunnel.payload_bytes < MinimumPayloadBytes ||
-      tunnel.payload_bytes > wgnx::tunnel::MaximumUdpPayloadBytes) {
+      tunnel.payload_bytes > wgnx::tunnel::MaximumUdpPayloadStorageBytes) {
     return fail("tunnel_udp.payload_bytes is outside the supported range");
   }
   if (tunnel.datagram_count == 0 ||

@@ -269,7 +269,7 @@ public:
                           "tunnel_udp.workload_id");
     payload_bytes_ = AddSize(shared_settings, "Shared payload bytes",
                              &model_->config.tunnel_udp.payload_bytes,
-                             wgnx::tunnel::MaximumUdpPayloadBytes,
+                             wgnx::tunnel::MaximumUdpPayloadStorageBytes,
                              "tunnel_udp.payload_bytes");
     receive_deadline_ms_ =
         AddU32(shared_settings, "Shared receive deadline milliseconds",

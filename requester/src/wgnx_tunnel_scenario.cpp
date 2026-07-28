@@ -55,6 +55,8 @@ const char *StatusName(wgnx::tunnel::ProtocolStatus status) {
     return "output_buffer_too_small";
   case ProtocolStatus::ReverseTupleExhausted:
     return "reverse_tuple_exhausted";
+  case ProtocolStatus::TunnelBlockedByPolicy:
+    return "tunnel_blocked_by_policy";
   }
   return "unknown";
 }
@@ -142,7 +144,8 @@ CompletionWaitResult WaitForEcho(wgnx::tunnel::client::ScopedClient &client,
   const std::uint64_t deadline = DeadlineAfterMilliseconds(timeout_ms);
   std::array<wgnx::tunnel::CompletionRecord, wgnx::tunnel::MaximumBatchEntries>
       completions{};
-  std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadBytes> payload{};
+  std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadStorageBytes>
+      payload{};
 
   while (armGetSystemTick() < deadline) {
     const std::uint64_t remaining_ticks = deadline - armGetSystemTick();
@@ -164,7 +167,7 @@ CompletionWaitResult WaitForEcho(wgnx::tunnel::client::ScopedClient &client,
           client, completions.data(), completions.size(), payload.data(),
           payload.size(), &count, &status);
       if (R_FAILED(rc)) {
-        // API v2 permits this exact wake-without-record sequence while the
+        // API v3 permits this exact wake-without-record sequence while the
         // sysmodule performs an orderly shutdown and closes this session.
         result.terminal = true;
         result.service_lost = true;
@@ -223,7 +226,8 @@ CompletionWaitResult WaitForWritable(wgnx::tunnel::client::ScopedClient &client,
   const std::uint64_t deadline = DeadlineAfterMilliseconds(timeout_ms);
   std::array<wgnx::tunnel::CompletionRecord, wgnx::tunnel::MaximumBatchEntries>
       completions{};
-  std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadBytes> payload{};
+  std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadStorageBytes>
+      payload{};
 
   while (armGetSystemTick() < deadline) {
     const std::uint64_t remaining_ticks = deadline - armGetSystemTick();
@@ -245,7 +249,7 @@ CompletionWaitResult WaitForWritable(wgnx::tunnel::client::ScopedClient &client,
           client, completions.data(), completions.size(), payload.data(),
           payload.size(), &count, &status);
       if (R_FAILED(rc)) {
-        // API v2 permits this exact wake-without-record sequence while the
+        // API v3 permits this exact wake-without-record sequence while the
         // sysmodule performs an orderly shutdown and closes this session.
         result.terminal = true;
         result.service_lost = true;
@@ -405,7 +409,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
     return result;
   }
 
-  std::array<std::uint8_t, MaximumUdpPayloadBytes> payload_storage{};
+  std::array<std::uint8_t, MaximumUdpPayloadStorageBytes> payload_storage{};
   const std::span<std::uint8_t> payload(payload_storage.data(),
                                         config.payload_bytes);
   std::uint32_t accepted = 0;
@@ -644,7 +648,8 @@ RunWgnxTunnelContractValidation(AppContext &ctx,
     return true;
   };
 
-  std::array<std::uint8_t, MaximumUdpPayloadBytes + 1> payload_storage{};
+  std::array<std::uint8_t, MaximumUdpPayloadStorageBytes + 1>
+      payload_storage{};
   const std::span<std::uint8_t> expected_payload(payload_storage.data(),
                                                  workload.payload_bytes);
   BuildPayload(expected_payload, 0x434C4F4EU, 0, workload);

@@ -157,11 +157,12 @@ ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
   logger::Log(ctx, "bsd_system_udp opened flows=%u destination=%s",
               config.concurrent_flows, FormatEndpoint(remote).c_str());
 
-  std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadBytes>
+  std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadStorageBytes>
       payload_storage{};
   const std::span<std::uint8_t> payload(payload_storage.data(),
                                         config.payload_bytes);
-  std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadBytes> received{};
+  std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadStorageBytes>
+      received{};
   std::uint32_t echoed = 0;
 
   for (std::uint32_t sequence = 0; sequence < config.datagram_count;
