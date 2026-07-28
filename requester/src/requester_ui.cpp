@@ -1,6 +1,7 @@
 #include "requester_ui.hpp"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -25,6 +26,7 @@ namespace {
 
 constexpr float PagePadding = 28.0F;
 constexpr float MainLogPanelHeight = 220.0F;
+constexpr std::size_t MainLogPanelLines = 12;
 constexpr float OffsetTolerance = 1.0F;
 constexpr float SettingsActionGap = 18.0F;
 constexpr float SettingsSectionGap = 24.0F;
@@ -68,8 +70,9 @@ std::string FormatRuntimeConfig(const RuntimeConfig &config) {
          (config.tunnel_contract.enabled ? "enabled" : "disabled");
 }
 
-std::string FormatRecentLines() {
-  const std::vector<std::string> lines = logger::RecentLines();
+std::string FormatRecentLines(std::size_t maximum_line_count = 0) {
+  const std::vector<std::string> lines =
+      logger::RecentLines(maximum_line_count);
   std::string rendered;
   for (const std::string &line : lines) {
     if (!rendered.empty()) {
@@ -82,14 +85,15 @@ std::string FormatRecentLines() {
 
 class LogPanel final : public brls::ScrollingFrame {
 public:
-  LogPanel() {
+  explicit LogPanel(std::size_t maximum_line_count = 0)
+      : maximum_line_count_(maximum_line_count) {
     label_ = new brls::Label();
     label_->setWidthPercentage(100.0F);
     label_->setShrink(.8F);
     label_->setFontSize(LogFontSize);
     label_->setSingleLine(false);
     label_->setAutoAnimate(false);
-    label_->setText(FormatRecentLines());
+    label_->setText(FormatRecentLines(maximum_line_count_));
     setContentView(label_);
     addGestureRecognizer(new brls::ScrollGestureRecognizer(
         [this](brls::PanGestureStatus state, brls::Sound *) {
@@ -126,7 +130,7 @@ public:
       auto_scroll_ = false;
     }
 
-    label_->setText(FormatRecentLines());
+    label_->setText(FormatRecentLines(maximum_line_count_));
     if (auto_scroll_) {
       setContentOffsetY(std::numeric_limits<float>::max(), false);
       last_automatic_offset_ = getContentOffsetY();
@@ -135,6 +139,7 @@ public:
 
 private:
   brls::Label *label_{};
+  std::size_t maximum_line_count_{};
   float last_automatic_offset_{};
   bool auto_scroll_{true};
 };
@@ -479,7 +484,7 @@ public:
     log_header->setSubtitle("Latest requester events for the selected run.");
     addView(log_header);
 
-    model_->main.log_panel = new LogPanel();
+    model_->main.log_panel = new LogPanel(MainLogPanelLines);
     model_->main.log_panel->setWidthPercentage(100.0F);
     model_->main.log_panel->setHeight(MainLogPanelHeight);
     addView(model_->main.log_panel);

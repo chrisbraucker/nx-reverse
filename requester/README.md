@@ -90,6 +90,18 @@ When `wgnx:tun` returns `QueueFull`, the workload waits for the matching `Writab
 
 The scenario result records total `queue_full_events` so a bounded-burst evaluation can distinguish backpressure recovery from an unpressured run.
 
+### WireGuard Sysmodule Shutdown
+
+The requester consumes `wgnx:ctl` API v5 and `wgnx:tun` API v2 from the configured `WGNX_COMMON` headers.
+
+Before opening `wgnx:tun`, requester uses Atmosphere's read-only SM `HasService` extension so an absent sysmodule reports a scenario error without blocking the worker or mutating SM registration state.
+
+`wgnx:tun` API v2 signals every client completion event during orderly sysmodule shutdown without enqueuing a synthetic completion record.
+
+When a running workload wakes and its following `ReceiveCompletions` call fails, requester records terminal `wgnx:tun service closed` state, stops the workload, and releases its local event, flow, and CMIF session state without retrying the closed service.
+
+An unrelated later tunnel CMIF failure is also terminal for that workload because the client session can no longer be safely reused.
+
 ### BSD:S UDP Data Path
 
 Select `bsd:s` as the UDP workload `Data path` to run the normal Horizon BSD scenario.

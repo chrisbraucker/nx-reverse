@@ -108,13 +108,31 @@ bool IsMatchingPayload(std::span<const std::uint8_t> actual,
 }
 
 struct CompletionWaitResult {
+  Result rc{0};
   bool received_expected{false};
   bool writable{false};
   bool terminal{false};
+  bool service_lost{false};
   std::uint32_t ignored{0};
   std::uint32_t wake_count{0};
   std::string detail;
 };
+
+struct TunnelServiceAvailability {
+  Result rc{0};
+  bool present{false};
+};
+
+TunnelServiceAvailability QueryTunnelServiceAvailability() {
+  // Atmosphere's SM extension is a read-only presence query.
+  // Do not use smRegisterService as a liveness probe because it mutates SM
+  // state and can race a real service registration.
+  const SmServiceName service_name = smEncodeName(wgnx::tunnel::ServiceName);
+  std::uint8_t present = 0;
+  const Result rc = tipcDispatchInOut(smGetServiceSessionTipc(), 65100,
+                                      service_name, present);
+  return {.rc = rc, .present = R_SUCCEEDED(rc) && present != 0};
+}
 
 CompletionWaitResult WaitForEcho(wgnx::tunnel::client::ScopedClient &client,
                                  Event *event, wgnx::tunnel::FlowHandle flow,
@@ -132,6 +150,7 @@ CompletionWaitResult WaitForEcho(wgnx::tunnel::client::ScopedClient &client,
         (remaining_ticks * 1000000000ULL) / armGetSystemTickFreq();
     const Result wait_rc = eventWait(event, remaining_ns);
     if (R_FAILED(wait_rc)) {
+      result.rc = wait_rc;
       result.detail = "completion event wait rc=" + FormatResult(wait_rc);
       return result;
     }
@@ -145,7 +164,14 @@ CompletionWaitResult WaitForEcho(wgnx::tunnel::client::ScopedClient &client,
           client, completions.data(), completions.size(), payload.data(),
           payload.size(), &count, &status);
       if (R_FAILED(rc)) {
-        result.detail = "ReceiveCompletions CMIF rc=" + FormatResult(rc);
+        // API v2 permits this exact wake-without-record sequence while the
+        // sysmodule performs an orderly shutdown and closes this session.
+        result.terminal = true;
+        result.service_lost = true;
+        result.rc = rc;
+        result.detail = "wgnx:tun service closed after completion wake "
+                        "ReceiveCompletions CMIF rc=" +
+                        FormatResult(rc);
         return result;
       }
       if (status == wgnx::tunnel::ProtocolStatus::QueueEmpty) {
@@ -205,6 +231,7 @@ CompletionWaitResult WaitForWritable(wgnx::tunnel::client::ScopedClient &client,
         (remaining_ticks * 1000000000ULL) / armGetSystemTickFreq();
     const Result wait_rc = eventWait(event, remaining_ns);
     if (R_FAILED(wait_rc)) {
+      result.rc = wait_rc;
       result.detail = "completion event wait rc=" + FormatResult(wait_rc);
       return result;
     }
@@ -218,7 +245,14 @@ CompletionWaitResult WaitForWritable(wgnx::tunnel::client::ScopedClient &client,
           client, completions.data(), completions.size(), payload.data(),
           payload.size(), &count, &status);
       if (R_FAILED(rc)) {
-        result.detail = "ReceiveCompletions CMIF rc=" + FormatResult(rc);
+        // API v2 permits this exact wake-without-record sequence while the
+        // sysmodule performs an orderly shutdown and closes this session.
+        result.terminal = true;
+        result.service_lost = true;
+        result.rc = rc;
+        result.detail = "wgnx:tun service closed after completion wake "
+                        "ReceiveCompletions CMIF rc=" +
+                        FormatResult(rc);
         return result;
       }
       if (status == wgnx::tunnel::ProtocolStatus::QueueEmpty) {
@@ -261,7 +295,14 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
   ScenarioResult result{.name = "wgnx_tunnel_udp_workload"};
   logger::Status(ctx, "Running wgnx:tun UDP workload to %s:%u",
                  config.destination_ipv4.c_str(), config.destination_port);
-  if (!client::IsServiceRunning()) {
+  const TunnelServiceAvailability availability =
+      QueryTunnelServiceAvailability();
+  if (R_FAILED(availability.rc)) {
+    result.rc = availability.rc;
+    result.detail = "wgnx:tun availability query failed";
+    return result;
+  }
+  if (!availability.present) {
     result.detail = "wgnx:tun is not running";
     return result;
   }
@@ -372,6 +413,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
   std::uint32_t ignored_completions = 0;
   std::uint32_t event_wakes = 0;
   std::uint32_t queue_full_events = 0;
+  bool tunnel_service_lost = false;
   for (std::uint32_t sequence = 0; sequence < config.datagram_count;
        ++sequence) {
     const std::uint32_t flow_index = sequence % config.concurrent_flows;
@@ -390,7 +432,10 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
                                    payload.size(), &disposition);
       if (R_FAILED(rc)) {
         result.rc = rc;
-        result.detail = "SendUdpDatagram CMIF failure";
+        result.detail = "wgnx:tun service closed during SendUdpDatagram "
+                        "CMIF rc=" +
+                        FormatResult(rc);
+        tunnel_service_lost = true;
         break;
       }
       if (disposition.status == ProtocolStatus::Success) {
@@ -417,6 +462,8 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
       ignored_completions += wait.ignored;
       event_wakes += wait.wake_count;
       if (!wait.writable) {
+        result.rc = wait.rc;
+        tunnel_service_lost = wait.service_lost;
         result.detail =
             wait.detail +
             " waiting_for_writable sequence=" + std::to_string(sequence) +
@@ -439,6 +486,8 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
       ignored_completions += wait.ignored;
       event_wakes += wait.wake_count;
       if (!wait.received_expected) {
+        result.rc = wait.rc;
+        tunnel_service_lost = wait.service_lost;
         result.detail = wait.detail + " sequence=" + std::to_string(sequence);
         break;
       }
@@ -450,13 +499,19 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext &ctx,
     }
   }
 
-  for (std::uint32_t index = 0; index < config.concurrent_flows; ++index) {
-    const FlowHandle flow = flows[index];
-    ProtocolStatus close_status{};
-    const Result close_rc =
-        client::CloseFlow(tunnel_client, flow, &close_status);
-    logger::Log(ctx, "scenario=wgnx_tunnel_udp_workload close rc=%s status=%s",
-                FormatResult(close_rc).c_str(), StatusName(close_status));
+  if (tunnel_service_lost) {
+    logger::Log(ctx, "scenario=wgnx_tunnel_udp_workload skip CloseFlow because "
+                     "wgnx:tun closed");
+  } else {
+    for (std::uint32_t index = 0; index < config.concurrent_flows; ++index) {
+      const FlowHandle flow = flows[index];
+      ProtocolStatus close_status{};
+      const Result close_rc =
+          client::CloseFlow(tunnel_client, flow, &close_status);
+      logger::Log(ctx,
+                  "scenario=wgnx_tunnel_udp_workload close rc=%s status=%s",
+                  FormatResult(close_rc).c_str(), StatusName(close_status));
+    }
   }
   eventClose(&completion_event);
 
@@ -498,7 +553,14 @@ RunWgnxTunnelContractValidation(AppContext &ctx,
       "Running wgnx:tun contract validation clone_lifetime=%u mixed_batch=%u",
       static_cast<unsigned>(config.verify_cloned_session_lifetime),
       static_cast<unsigned>(config.verify_mixed_batch));
-  if (!client::IsServiceRunning()) {
+  const TunnelServiceAvailability availability =
+      QueryTunnelServiceAvailability();
+  if (R_FAILED(availability.rc)) {
+    result.rc = availability.rc;
+    result.detail = "wgnx:tun availability query failed";
+    return result;
+  }
+  if (!availability.present) {
     result.detail = "wgnx:tun is not running";
     return result;
   }
@@ -664,7 +726,10 @@ RunWgnxTunnelContractValidation(AppContext &ctx,
                     workload.receive_deadline_ms);
     eventClose(&completion_event);
     if (!echo.received_expected) {
-      close_flow(clone, &cloned_flow);
+      if (!echo.service_lost) {
+        close_flow(clone, &cloned_flow);
+      }
+      result.rc = echo.rc;
       result.detail = "clone echo failure: " + echo.detail;
       return result;
     }
@@ -748,8 +813,11 @@ RunWgnxTunnelContractValidation(AppContext &ctx,
         WaitForEcho(primary, &completion_event, batch_flow, expected_payload,
                     workload.receive_deadline_ms);
     eventClose(&completion_event);
-    close_flow(primary, &batch_flow);
+    if (!echo.service_lost) {
+      close_flow(primary, &batch_flow);
+    }
     if (!echo.received_expected) {
+      result.rc = echo.rc;
       result.detail = "mixed batch echo failure: " + echo.detail;
       return result;
     }

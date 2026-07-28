@@ -62,18 +62,29 @@ std::uint32_t NextPayloadByte(std::uint32_t *state) {
 }
 
 void BuildPayload(std::span<std::uint8_t> payload, std::uint32_t sequence,
+                  std::uint32_t flow_index,
                   const TunnelUdpWorkloadConfig &config) {
   std::memset(payload.data(), 0, payload.size());
   std::memcpy(payload.data(), "NXRVBS1", 7);
   StoreBigEndian32(payload.data() + 8, config.workload_id);
-  StoreBigEndian32(payload.data() + 12, 0);
+  StoreBigEndian32(payload.data() + 12, flow_index);
   StoreBigEndian32(payload.data() + 16, sequence);
   StoreBigEndian32(payload.data() + 20, config.payload_seed);
 
-  std::uint32_t state = config.payload_seed ^ sequence;
+  std::uint32_t state =
+      config.payload_seed ^ sequence ^ (flow_index * 0x9E3779B9U);
   for (std::size_t index = PayloadHeaderBytes; index < payload.size();
        ++index) {
     payload[index] = static_cast<std::uint8_t>(NextPayloadByte(&state));
+  }
+}
+
+void CloseDescriptors(std::span<int> descriptors) {
+  for (int &descriptor : descriptors) {
+    if (descriptor >= 0) {
+      static_cast<void>(close(descriptor));
+      descriptor = -1;
+    }
   }
 }
 
@@ -107,6 +118,11 @@ ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
     result.detail = "invalid configured BSD workload destination";
     return result;
   }
+  if (config.concurrent_flows == 0 ||
+      config.concurrent_flows > wgnx::tunnel::MaximumFlowsPerClient) {
+    result.detail = "configured BSD workload flow count is unsupported";
+    return result;
+  }
 
   BsdSocketScope socket_scope;
   const Result initialize_rc = socket_scope.Initialize();
@@ -116,21 +132,30 @@ ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
     return result;
   }
 
-  const int descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  if (descriptor < 0) {
-    result.err = errno;
-    result.detail = "socket failed: " + FormatErrno(errno);
-    return result;
+  std::array<int, wgnx::tunnel::MaximumFlowsPerClient> descriptors{};
+  descriptors.fill(-1);
+  for (std::uint32_t flow_index = 0; flow_index < config.concurrent_flows;
+       ++flow_index) {
+    const int descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (descriptor < 0) {
+      result.err = errno;
+      result.detail = "socket failed flow=" + std::to_string(flow_index) +
+                      ": " + FormatErrno(errno);
+      CloseDescriptors(descriptors);
+      return result;
+    }
+    descriptors[flow_index] = descriptor;
+    if (connect(descriptor, reinterpret_cast<const sockaddr *>(&remote),
+                sizeof(remote)) != 0) {
+      result.err = errno;
+      result.detail = "connect failed flow=" + std::to_string(flow_index) +
+                      ": " + FormatErrno(errno);
+      CloseDescriptors(descriptors);
+      return result;
+    }
   }
-
-  const auto close_socket = [&] { close(descriptor); };
-  if (connect(descriptor, reinterpret_cast<const sockaddr *>(&remote),
-              sizeof(remote)) != 0) {
-    result.err = errno;
-    result.detail = "connect failed: " + FormatErrno(errno);
-    close_socket();
-    return result;
-  }
+  logger::Log(ctx, "bsd_system_udp opened flows=%u destination=%s",
+              config.concurrent_flows, FormatEndpoint(remote).c_str());
 
   std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadBytes>
       payload_storage{};
@@ -141,7 +166,9 @@ ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
 
   for (std::uint32_t sequence = 0; sequence < config.datagram_count;
        ++sequence) {
-    BuildPayload(payload, sequence, config);
+    const std::uint32_t flow_index = sequence % config.concurrent_flows;
+    const int descriptor = descriptors[flow_index];
+    BuildPayload(payload, sequence, flow_index, config);
     const ssize_t sent = send(descriptor, payload.data(), payload.size(), 0);
     if (sent < 0) {
       result.err = errno;
@@ -209,8 +236,8 @@ ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
         break;
       }
       ++echoed;
-      logger::Log(ctx, "bsd_system_udp echo sequence=%u source=%s", sequence,
-                  FormatEndpoint(source).c_str());
+      logger::Log(ctx, "bsd_system_udp echo flow=%u sequence=%u source=%s",
+                  flow_index, sequence, FormatEndpoint(source).c_str());
     }
 
     if (config.pacing_ms != 0) {
@@ -218,13 +245,14 @@ ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
     }
   }
 
-  close_socket();
+  CloseDescriptors(descriptors);
   if (result.detail.empty() &&
       (!config.echo_replies || echoed == config.datagram_count)) {
     result.success = true;
     result.detail =
         "bsd_service=system destination=" + config.destination_ipv4 + ":" +
         std::to_string(config.destination_port) +
+        " flows=" + std::to_string(config.concurrent_flows) +
         " sent=" + std::to_string(config.datagram_count) +
         " echoed=" + std::to_string(echoed);
   }

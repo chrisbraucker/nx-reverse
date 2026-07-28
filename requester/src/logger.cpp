@@ -1,5 +1,6 @@
 #include "logger.hpp"
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <deque>
@@ -109,9 +110,14 @@ void SetUiSink(std::function<void(const std::string&)> sink) {
     g_ui_sink = std::move(sink);
 }
 
-std::vector<std::string> RecentLines() {
+std::vector<std::string> RecentLines(std::size_t maximum_line_count) {
     std::lock_guard<std::mutex> lock(g_log_mutex);
-    return {g_recent_lines.begin(), g_recent_lines.end()};
+    const std::size_t line_count =
+        maximum_line_count == 0
+            ? g_recent_lines.size()
+            : std::min(maximum_line_count, g_recent_lines.size());
+    return {g_recent_lines.end() - static_cast<std::ptrdiff_t>(line_count),
+            g_recent_lines.end()};
 }
 
 } // namespace requester::logger
