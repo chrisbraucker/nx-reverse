@@ -59,6 +59,10 @@ Use the pinned `requester/libs/wireguard-nx/common` headers by omitting `-DWGNX_
 
 The built NRO is written to `requester/out/requester.nro`.
 
+Packet-granularity requester logs are disabled by default so workload measurements do not include per-datagram payload formatting or file writes.
+
+Enable them only for diagnostics with `-DREQUESTER_PACKET_DIAGNOSTICS=ON` during CMake configuration.
+
 To start from a clean build tree, remove the generated directories.
 
 ```sh

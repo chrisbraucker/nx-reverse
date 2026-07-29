@@ -302,7 +302,7 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
     wgnx::PacketSubmissionResult submission{};
     rc = wgnx::client::SubmitInnerIpv4Packet(service, outgoing.data(), outgoing_size, &submission);
     result.rc = rc;
-    logger::Log(
+    REQUESTER_LOG_PACKET(
         ctx,
         "scenario=wgnx_packet_udp_echo submit rc=%s status=%s(%u) id=%llu bytes=%u peer=%d activation=%u token=%s",
         FormatResult(rc).c_str(),
@@ -362,7 +362,7 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
             SleepMilliseconds(config::WgnxPacketPollIntervalMs);
             continue;
         }
-        logger::Log(
+        REQUESTER_LOG_PACKET(
             ctx,
             "scenario=wgnx_packet_udp_echo receive status=%s(%u) id=%llu bytes=%u peer=%d activation=%u",
             PacketStatusName(received.status),
@@ -401,7 +401,7 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
 
         ++rejected_packets;
         last_rejection = validation_detail;
-        logger::Log(
+        REQUESTER_LOG_PACKET(
             ctx,
             "scenario=wgnx_packet_udp_echo ignored_receive reason=%s preview=%s",
             validation_detail.c_str(),

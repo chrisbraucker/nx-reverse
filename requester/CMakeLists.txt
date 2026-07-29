@@ -17,6 +17,8 @@ set(APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.png")
 set(APP_PROJECT_URL "https://github.com/chrisbraucker/nx-reverse")
 set(BOREALIS_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/libs/borealis/resources")
 set(REQUESTER_ROMFS_DIR "${CMAKE_BINARY_DIR}/romfs")
+option(REQUESTER_PACKET_DIAGNOSTICS
+       "Emit requester packet-granularity diagnostics" OFF)
 set(WGNX_COMMON "${CMAKE_CURRENT_SOURCE_DIR}/libs/wireguard-nx/common" CACHE PATH
     "Path to the WireGuard NX shared IPC headers")
 file(GLOB BOREALIS_SYSTEM_RESOURCES CONFIGURE_DEPENDS
@@ -55,7 +57,8 @@ target_compile_definitions(requester PRIVATE
     APP_AUTHOR="${APP_AUTHOR}"
     APP_PROJECT_URL="${APP_PROJECT_URL}"
     VERSION="${APP_VERSION}"
-    BUILD_ID="${REQUESTER_BUILD_ID}")
+    BUILD_ID="${REQUESTER_BUILD_ID}"
+    REQUESTER_PACKET_DIAGNOSTICS=$<BOOL:${REQUESTER_PACKET_DIAGNOSTICS}>)
 target_compile_options(requester PRIVATE
     -g
     -Wall

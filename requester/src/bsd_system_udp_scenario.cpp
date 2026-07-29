@@ -23,6 +23,7 @@ namespace requester {
 namespace {
 
 constexpr std::size_t PayloadHeaderBytes = 24;
+constexpr std::uint32_t MaximumQueueFullRetriesPerDatagram = 16;
 
 class BsdSocketScope {
 public:
@@ -102,6 +103,66 @@ void CloseDescriptors(std::span<int> descriptors) {
          std::to_string(ntohs(endpoint.sin_port));
 }
 
+struct BsdSendResult {
+  bool sent{};
+  std::uint32_t queue_full_retries{};
+  int error{};
+  std::string detail;
+};
+
+BsdSendResult SendWithWritableRetry(const int descriptor,
+                                    const std::span<const std::uint8_t> payload,
+                                    const std::uint32_t deadline_ms) {
+  BsdSendResult result{};
+  for (;;) {
+    const ssize_t sent = send(descriptor, payload.data(), payload.size(), 0);
+    if (sent >= 0) {
+      if (static_cast<std::size_t>(sent) == payload.size()) {
+        result.sent = true;
+      } else {
+        result.detail = "short UDP send";
+      }
+      return result;
+    }
+
+    result.error = errno;
+    if ((errno != EAGAIN && errno != EWOULDBLOCK) ||
+        result.queue_full_retries == MaximumQueueFullRetriesPerDatagram) {
+      result.detail = "send failed: " + FormatErrno(errno);
+      return result;
+    }
+
+    ++result.queue_full_retries;
+    pollfd writable_descriptor{
+        .fd = descriptor,
+        .events = POLLOUT,
+        .revents = 0,
+    };
+    const int poll_result =
+        poll(&writable_descriptor, 1, static_cast<int>(deadline_ms));
+    if (poll_result < 0) {
+      result.error = errno;
+      result.detail = "writable poll failed: " + FormatErrno(errno);
+      return result;
+    }
+    if (poll_result == 0) {
+      result.error = ETIMEDOUT;
+      result.detail = "writable poll timed out";
+      return result;
+    }
+    if ((writable_descriptor.revents & POLLHUP) != 0) {
+      result.error = ECONNABORTED;
+      result.detail = "writable poll reported closed flow";
+      return result;
+    }
+    if ((writable_descriptor.revents & POLLOUT) == 0) {
+      result.detail = "writable poll missing POLLOUT revents=" +
+                      std::to_string(writable_descriptor.revents);
+      return result;
+    }
+  }
+}
+
 } // namespace
 
 ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
@@ -164,24 +225,24 @@ ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
   std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadStorageBytes>
       received{};
   std::uint32_t echoed = 0;
+  std::uint32_t queue_full_retries = 0;
 
   for (std::uint32_t sequence = 0; sequence < config.datagram_count;
        ++sequence) {
     const std::uint32_t flow_index = sequence % config.concurrent_flows;
     const int descriptor = descriptors[flow_index];
     BuildPayload(payload, sequence, flow_index, config);
-    const ssize_t sent = send(descriptor, payload.data(), payload.size(), 0);
-    if (sent < 0) {
-      result.err = errno;
-      result.detail = "send failed sequence=" + std::to_string(sequence) +
-                      ": " + FormatErrno(errno);
+    const BsdSendResult send_result =
+        SendWithWritableRetry(descriptor, payload, config.receive_deadline_ms);
+    queue_full_retries += send_result.queue_full_retries;
+    if (!send_result.sent) {
+      result.err = send_result.error;
+      result.detail =
+          send_result.detail + " sequence=" + std::to_string(sequence) +
+          " queue_full_retries=" + std::to_string(queue_full_retries);
       break;
     }
-    if (static_cast<std::size_t>(sent) != payload.size()) {
-      result.detail = "short UDP send sequence=" + std::to_string(sequence);
-      break;
-    }
-    result.bytes_sent += static_cast<std::size_t>(sent);
+    result.bytes_sent += payload.size();
 
     if (config.echo_replies) {
       pollfd poll_descriptor{
@@ -237,8 +298,11 @@ ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
         break;
       }
       ++echoed;
-      logger::Log(ctx, "bsd_system_udp echo flow=%u sequence=%u source=%s",
-                  flow_index, sequence, FormatEndpoint(source).c_str());
+      if (sequence == 0 || sequence + 1 == config.datagram_count) {
+        REQUESTER_LOG_PACKET(
+            ctx, "bsd_system_udp echo flow=%u sequence=%u source=%s",
+            flow_index, sequence, FormatEndpoint(source).c_str());
+      }
     }
 
     if (config.pacing_ms != 0) {
@@ -255,7 +319,8 @@ ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
         std::to_string(config.destination_port) +
         " flows=" + std::to_string(config.concurrent_flows) +
         " sent=" + std::to_string(config.datagram_count) +
-        " echoed=" + std::to_string(echoed);
+        " echoed=" + std::to_string(echoed) +
+        " queue_full_retries=" + std::to_string(queue_full_retries);
   }
   return result;
 }

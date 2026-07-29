@@ -1162,8 +1162,8 @@ ScenarioResult RunUdpEcho(AppContext &ctx) {
 
   const std::string source_detail =
       FormatSocketAddress(source_addr, source_addr_len);
-  logger::Log(ctx, "udp_echo recvfrom bytes_received=%zd %s", recv_rc,
-              source_detail.c_str());
+  REQUESTER_LOG_PACKET(ctx, "udp_echo recvfrom bytes_received=%zd %s", recv_rc,
+                       source_detail.c_str());
 
   result.bytes_received = static_cast<std::size_t>(recv_rc);
   result.success =
