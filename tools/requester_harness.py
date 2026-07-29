@@ -23,6 +23,7 @@ HTTP_BODY = b"nxrv harness http ok\n"
 HTTPS_BODY = b"nxrv harness https ok\n"
 UDP_FIXED_REPLY = b"NXRV UDP ACK"
 UDP_ECHO_INPUT = True
+UDP_VERBOSE = True
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -121,9 +122,8 @@ class ThreadedTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
 
 
-class ThreadedUdpServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
+class AggregateUdpServer(socketserver.UDPServer):
     allow_reuse_address = True
-    daemon_threads = True
 
 
 class QuietHttpServer(http.server.ThreadingHTTPServer):
@@ -151,12 +151,12 @@ class UdpHandler(socketserver.BaseRequestHandler):
         local_port = self.server.server_address[1]
         reply = data if UDP_ECHO_INPUT else UDP_FIXED_REPLY
         workload = UDP_STATS.record(data, peer, UDP_ECHO_INPUT)
-        if workload is None:
+        if UDP_VERBOSE and workload is None:
             log(
                 f"[udp:{local_port}] source_ip={source_ip} source_port={source_port} "
                 f"recv={data[:64]!r} reply={reply[:64]!r}"
             )
-        else:
+        elif UDP_VERBOSE:
             log(
                 f"[udp:{local_port}] source_ip={source_ip} source_port={source_port} "
                 f"{workload} bytes={len(data)} echo={UDP_ECHO_INPUT}"
@@ -227,17 +227,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--listen-host", default=LISTEN_HOST)
     parser.add_argument("--udp-ports", default=",".join(str(port) for port in UDP_PORTS))
     parser.add_argument("--udp-no-echo", action="store_true", help="record UDP traffic without replying")
+    parser.add_argument("--udp-quiet", action="store_true", help="aggregate UDP workload accounting and suppress per-datagram output")
     return parser.parse_args()
 
 
 def main() -> int:
-    global LISTEN_HOST, UDP_PORTS, UDP_ECHO_INPUT
+    global LISTEN_HOST, UDP_PORTS, UDP_ECHO_INPUT, UDP_VERBOSE
     args = parse_args()
     LISTEN_HOST = args.listen_host
     UDP_PORTS = tuple(int(value) for value in args.udp_ports.split(",") if value)
     if not UDP_PORTS or any(port < 1 or port > 65535 for port in UDP_PORTS):
         raise SystemExit("--udp-ports must contain one or more ports in 1..65535")
     UDP_ECHO_INPUT = not args.udp_no_echo
+    UDP_VERBOSE = not args.udp_quiet
     tcp_server = ThreadedTcpServer((LISTEN_HOST, TCP_ACK_PORT), PlainTcpHandler)
     http_server = QuietHttpServer((LISTEN_HOST, HTTP_PORT), CannedHttpHandler)
     #https_server = build_https_server()
@@ -248,7 +250,7 @@ def main() -> int:
         #("https", https_server),
     ]
     servers.extend(
-        (f"udp:{port}", ThreadedUdpServer((LISTEN_HOST, port), UdpHandler))
+        (f"udp:{port}", AggregateUdpServer((LISTEN_HOST, port), UdpHandler))
         for port in UDP_PORTS
     )
 
@@ -269,7 +271,7 @@ def main() -> int:
     log(f"  http  : {LISTEN_HOST}:{HTTP_PORT}")
     #log(f"  https : {LISTEN_HOST}:{HTTPS_PORT} cert={TLS_CERT_FILE}")
     for port in UDP_PORTS:
-        log(f"  udp   : {LISTEN_HOST}:{port} echo={UDP_ECHO_INPUT}")
+        log(f"  udp   : {LISTEN_HOST}:{port} echo={UDP_ECHO_INPUT} verbose={UDP_VERBOSE}")
 
     try:
         stop_event.wait()
