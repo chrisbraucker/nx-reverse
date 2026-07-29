@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <fcntl.h>
 #include <poll.h>
 #include <span>
 #include <string>
@@ -89,6 +90,44 @@ void CloseDescriptors(std::span<int> descriptors) {
   }
 }
 
+[[nodiscard]] bool ConfigureNonBlocking(const int descriptor,
+                                        ScenarioResult *result,
+                                        const std::uint32_t flow_index) {
+  const int current_flags = fcntl(descriptor, F_GETFL, 0);
+  if (current_flags < 0) {
+    result->err = errno;
+    result->detail =
+        "fcntl(F_GETFL) failed flow=" + std::to_string(flow_index) + ": " +
+        FormatErrno(errno);
+    return false;
+  }
+  if (fcntl(descriptor, F_SETFL, current_flags | O_NONBLOCK) != 0) {
+    result->err = errno;
+    result->detail =
+        "fcntl(F_SETFL, O_NONBLOCK) failed flow=" + std::to_string(flow_index) +
+        ": " + FormatErrno(errno);
+    return false;
+  }
+  return true;
+}
+
+[[nodiscard]] bool VerifyPostRouteRejection(const int descriptor,
+                                            ScenarioResult *result) {
+  constexpr int Enable = 1;
+  if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &Enable,
+                 sizeof(Enable)) == 0) {
+    result->detail = "setsockopt unexpectedly succeeded on a tunneled socket";
+    return false;
+  }
+  if (errno != EOPNOTSUPP) {
+    result->err = errno;
+    result->detail =
+        "setsockopt returned an unexpected error: " + FormatErrno(errno);
+    return false;
+  }
+  return true;
+}
+
 [[nodiscard]] bool IsExpectedReply(std::span<const std::uint8_t> actual,
                                    std::span<const std::uint8_t> expected) {
   return actual.size() == expected.size() &&
@@ -101,6 +140,30 @@ void CloseDescriptors(std::span<int> descriptors) {
       inet_ntop(AF_INET, &endpoint.sin_addr, address, sizeof(address));
   return std::string(text != nullptr ? text : "<invalid>") + ":" +
          std::to_string(ntohs(endpoint.sin_port));
+}
+
+[[nodiscard]] bool VerifyVisibleLocalEndpoint(AppContext &ctx,
+                                              const int descriptor,
+                                              ScenarioResult *result,
+                                              const std::uint32_t flow_index) {
+  sockaddr_in local{};
+  socklen_t local_length = sizeof(local);
+  if (getsockname(descriptor, reinterpret_cast<sockaddr *>(&local),
+                  &local_length) != 0) {
+    result->err = errno;
+    result->detail = "getsockname failed flow=" + std::to_string(flow_index) +
+                     ": " + FormatErrno(errno);
+    return false;
+  }
+  if (local_length < sizeof(sockaddr_in) || local.sin_family != AF_INET ||
+      local.sin_addr.s_addr == htonl(INADDR_ANY) || local.sin_port == 0) {
+    result->detail = "getsockname returned an invalid local endpoint flow=" +
+                     std::to_string(flow_index);
+    return false;
+  }
+  logger::Log(ctx, "bsd_system_udp local flow=%u endpoint=%s", flow_index,
+              FormatEndpoint(local).c_str());
+  return true;
 }
 
 struct BsdSendResult {
@@ -165,8 +228,9 @@ BsdSendResult SendWithWritableRetry(const int descriptor,
 
 } // namespace
 
-ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
-                                       const TunnelUdpWorkloadConfig &config) {
+ScenarioResult
+RunBsdSystemUdpWorkload(AppContext &ctx, const TunnelUdpWorkloadConfig &config,
+                        const BsdSystemUdpWorkloadConfig &bsd_config) {
   ScenarioResult result{.name = "bsd_system_udp_workload"};
   logger::Status(ctx, "Running normal bsd:s UDP workload to %s:%u",
                  config.destination_ipv4.c_str(), config.destination_port);
@@ -214,6 +278,22 @@ ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
       CloseDescriptors(descriptors);
       return result;
     }
+    if (!VerifyVisibleLocalEndpoint(ctx, descriptor, &result, flow_index)) {
+      CloseDescriptors(descriptors);
+      return result;
+    }
+    if (!ConfigureNonBlocking(descriptor, &result, flow_index)) {
+      CloseDescriptors(descriptors);
+      return result;
+    }
+  }
+  if (bsd_config.verify_post_route_rejection &&
+      !VerifyPostRouteRejection(descriptors[0], &result)) {
+    CloseDescriptors(descriptors);
+    return result;
+  }
+  if (bsd_config.verify_post_route_rejection) {
+    logger::Log(ctx, "bsd_system_udp verified post-route setsockopt rejection");
   }
   logger::Log(ctx, "bsd_system_udp opened flows=%u destination=%s",
               config.concurrent_flows, FormatEndpoint(remote).c_str());

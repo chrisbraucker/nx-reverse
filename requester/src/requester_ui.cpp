@@ -234,6 +234,13 @@ public:
     echo_replies_ = AddBoolean(content, "Echo replies",
                                &model_->config.tunnel_udp.echo_replies);
 
+    AddHeader(content, "BSD:S Contract Validation",
+              "Extra checks for the requester-only transparent UDP path.",
+              SettingsSectionGap);
+    verify_bsd_post_route_rejection_ = AddBoolean(
+        content, "Verify tunneled socket option rejection",
+        &model_->config.bsd_system_udp.verify_post_route_rejection);
+
     AddHeader(content, "Tunnel Contract Validation",
               "Clone lifetime and mixed-batch API coverage.",
               SettingsSectionGap);
@@ -434,6 +441,8 @@ private:
         static_cast<long>(tunnel.receive_deadline_ms));
     payload_seed_->setValue(static_cast<long>(tunnel.payload_seed));
     echo_replies_->setOn(tunnel.echo_replies, false);
+    verify_bsd_post_route_rejection_->setOn(
+        model_->config.bsd_system_udp.verify_post_route_rejection, false);
     const auto &contract = model_->config.tunnel_contract;
     contract_enabled_->setOn(contract.enabled, false);
     verify_cloned_session_lifetime_->setOn(
@@ -454,6 +463,7 @@ private:
   brls::InputNumericCell *receive_deadline_ms_{};
   brls::InputNumericCell *payload_seed_{};
   brls::BooleanCell *echo_replies_{};
+  brls::BooleanCell *verify_bsd_post_route_rejection_{};
   brls::BooleanCell *contract_enabled_{};
   brls::BooleanCell *verify_cloned_session_lifetime_{};
   brls::BooleanCell *verify_mixed_batch_{};
@@ -545,7 +555,8 @@ private:
       }
       if (runtime_config.bsd_system_udp.enabled) {
         results.push_back(
-            RunBsdSystemUdpWorkload(*context, runtime_config.tunnel_udp));
+            RunBsdSystemUdpWorkload(*context, runtime_config.tunnel_udp,
+                                    runtime_config.bsd_system_udp));
       }
       if (runtime_config.tunnel_contract.enabled) {
         results.push_back(

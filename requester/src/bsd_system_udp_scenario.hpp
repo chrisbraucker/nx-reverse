@@ -9,6 +9,7 @@ namespace requester {
 // The requester-only MITM may reroute this traffic when a covering peer is
 // active.
 ScenarioResult RunBsdSystemUdpWorkload(AppContext &ctx,
-                                       const TunnelUdpWorkloadConfig &config);
+                                       const TunnelUdpWorkloadConfig &config,
+                                       const BsdSystemUdpWorkloadConfig &bsd_config);
 
 } // namespace requester

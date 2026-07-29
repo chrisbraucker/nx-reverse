@@ -29,6 +29,7 @@ struct TunnelContractValidationConfig {
 
 struct BsdSystemUdpWorkloadConfig {
   bool enabled{false};
+  bool verify_post_route_rejection{false};
 };
 
 struct RuntimeConfig {

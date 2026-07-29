@@ -110,7 +110,14 @@ An unrelated later tunnel CMIF failure is also terminal for that workload becaus
 
 Select `bsd:s` as the UDP workload `Data path` to run the normal Horizon BSD scenario.
 
-It initializes libnx sockets with `BsdServiceType_System` and uses ordinary `socket`, `connect`, `send`, `poll`, and `recvfrom` calls.
+It initializes libnx sockets with `BsdServiceType_System` and uses ordinary `socket`, `connect`, `getsockname`, `fcntl`, `send`, `poll`, and `recvfrom` calls.
+
+After every successful connection, the workload verifies and logs a concrete local IPv4 address and ephemeral port.
+This confirms that a tunneled BSD:S socket exposes the device-facing local endpoint rather than the WireGuard interface tuple.
+
+The workload sets `O_NONBLOCK` after each successful connection and waits with `poll` before receiving an echo or retrying an `EAGAIN` send.
+
+Enable `bsd_system_udp.verify_post_route_rejection=true` only for the tunneled MITM path to verify that a post-route `SetSockOpt` fails with `EOPNOTSUPP` instead of mutating the retained upstream descriptor.
 
 It does not open or call `wgnx:tun` itself.
 

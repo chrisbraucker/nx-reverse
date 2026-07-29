@@ -58,6 +58,7 @@ constexpr bool EnableScenarioWgnxUdpEcho = false;
 constexpr bool EnableScenarioWgnxTunnelUdpWorkload = true;
 /* Normal bsd:s UDP workload used to validate the requester-only MITM path. */
 constexpr bool EnableScenarioBsdSystemUdpWorkload = false;
+constexpr bool BsdSystemUdpVerifyPostRouteRejection = false;
 
 /* Direct inner-packet test through the experimental wgnx:ctl API. */
 constexpr char WgnxTunnelSourceIpv4[] = "10.0.0.2";

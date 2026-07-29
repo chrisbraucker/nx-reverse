@@ -130,6 +130,9 @@ void ResetToDefault(const RuntimeConfig &defaults, RuntimeConfig *config,
         defaults.tunnel_contract.verify_mixed_batch;
   } else if (key == "bsd_system_udp.enabled") {
     config->bsd_system_udp.enabled = defaults.bsd_system_udp.enabled;
+  } else if (key == "bsd_system_udp.verify_post_route_rejection") {
+    config->bsd_system_udp.verify_post_route_rejection =
+        defaults.bsd_system_udp.verify_post_route_rejection;
   }
 }
 
@@ -229,6 +232,11 @@ bool ApplySetting(const RuntimeConfig &defaults, RuntimeConfig *config,
   if (key == "bsd_system_udp.enabled") {
     return ParseBool(value, &config->bsd_system_udp.enabled) || invalid();
   }
+  if (key == "bsd_system_udp.verify_post_route_rejection") {
+    return ParseBool(value,
+                     &config->bsd_system_udp.verify_post_route_rejection) ||
+           invalid();
+  }
   *error = "unrecognized configuration key " + std::string(key);
   return false;
 }
@@ -261,6 +269,8 @@ RuntimeConfig CompiledRuntimeDefaults() {
       .bsd_system_udp =
           {
               .enabled = config::EnableScenarioBsdSystemUdpWorkload,
+              .verify_post_route_rejection =
+                  config::BsdSystemUdpVerifyPostRouteRejection,
           },
   };
 }
@@ -328,6 +338,10 @@ bool ValidateRuntimeConfig(const RuntimeConfig &config, std::string *error) {
   const auto &tunnel = config.tunnel_udp;
   if (!HasSingleUdpDataPath(config)) {
     return fail("exactly one UDP data path must be selected");
+  }
+  if (config.bsd_system_udp.verify_post_route_rejection &&
+      !config.bsd_system_udp.enabled) {
+    return fail("bsd_system_udp rejection validation requires the bsd:s path");
   }
   if (!IsValidIpv4(tunnel.destination_ipv4)) {
     return fail("tunnel_udp.destination_ipv4 must be an IPv4 address");
@@ -403,7 +417,8 @@ bool SaveRuntimeConfig(const RuntimeConfig &config, std::string *error,
       "tunnel_contract.enabled=%s\n"
       "tunnel_contract.verify_cloned_session_lifetime=%s\n"
       "tunnel_contract.verify_mixed_batch=%s\n"
-      "bsd_system_udp.enabled=%s\n",
+      "bsd_system_udp.enabled=%s\n"
+      "bsd_system_udp.verify_post_route_rejection=%s\n",
       tunnel.enabled ? "true" : "false", tunnel.destination_ipv4.c_str(),
       tunnel.destination_port, tunnel.workload_id, tunnel.payload_bytes,
       tunnel.datagram_count, tunnel.pacing_ms, tunnel.concurrent_flows,
@@ -412,7 +427,8 @@ bool SaveRuntimeConfig(const RuntimeConfig &config, std::string *error,
       config.tunnel_contract.enabled ? "true" : "false",
       config.tunnel_contract.verify_cloned_session_lifetime ? "true" : "false",
       config.tunnel_contract.verify_mixed_batch ? "true" : "false",
-      config.bsd_system_udp.enabled ? "true" : "false");
+      config.bsd_system_udp.enabled ? "true" : "false",
+      config.bsd_system_udp.verify_post_route_rejection ? "true" : "false");
   const bool flush_failed = std::fflush(file) != 0;
   const bool close_failed = std::fclose(file) != 0;
   const bool write_failed = flush_failed || close_failed;
