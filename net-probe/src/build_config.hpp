@@ -28,8 +28,7 @@ enum class NifmSystemMitmTarget : unsigned int {
     All = 3,
 };
 
-inline constexpr NifmSystemMitmTarget NifmSystemTraceTarget =
-    NifmSystemMitmTarget::Nim;
+inline constexpr NifmSystemMitmTarget NifmSystemTraceTarget = NifmSystemMitmTarget::Nim;
 
 /*
  * Historically fragile system clients stay denylisted by default. Flip an
@@ -88,8 +87,7 @@ enum class RequesterForwarderBsdMitmMode : unsigned int {
  * StartMonitoring. Use FirstOnly for RegisterClient diagnostics and SecondOnly
  * for the known-stable StartMonitoring side-session check.
  */
-inline constexpr RequesterForwarderBsdMitmMode RequesterForwarderBsdMitm =
-    RequesterForwarderBsdMitmMode::Both;
+inline constexpr RequesterForwarderBsdMitmMode RequesterForwarderBsdMitm = RequesterForwarderBsdMitmMode::Both;
 
 enum class BsdSendToMutationMode : unsigned int {
     Disabled = 0,
@@ -107,8 +105,7 @@ enum class BsdSendToMutationMode : unsigned int {
  * RewriteIpv4 changes both the destination address and port. Set the rewrite
  * address to the controlled host before selecting that mode.
  */
-inline constexpr BsdSendToMutationMode RequesterBsdSendToMutation =
-    BsdSendToMutationMode::RewriteIpv4;
+inline constexpr BsdSendToMutationMode RequesterBsdSendToMutation = BsdSendToMutationMode::RewriteIpv4;
 inline constexpr u8 RequesterUdpEchoIpv4[4] = {10, 0, 0, 1};
 inline constexpr u16 RequesterUdpEchoPort = 29000;
 inline constexpr u8 RequesterUdpEchoRewriteIpv4[4] = {10, 0, 0, 2};

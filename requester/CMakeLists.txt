@@ -1,5 +1,36 @@
 cmake_minimum_required(VERSION 3.21)
 
+set(REQUESTER_PYTHON "python3" CACHE STRING "Python interpreter for requester verification")
+set(REQUESTER_CLANG_FORMAT "clang-format" CACHE STRING "clang-format executable for requester verification")
+set(REQUESTER_CPPCHECK "cppcheck" CACHE STRING "cppcheck executable for requester verification")
+set(REQUESTER_CLANG_TIDY "clang-tidy-21" CACHE STRING "clang-tidy executable for requester verification")
+set(REQUESTER_VERIFY_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../tools/verify_sources.py")
+set(REQUESTER_VERIFY_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/verify_sources.json")
+set(WGNX_COMMON "${CMAKE_CURRENT_SOURCE_DIR}/libs/wireguard-nx/common" CACHE PATH
+    "Path to the WireGuard NX shared IPC headers")
+
+add_custom_target(format-check
+    COMMAND "${REQUESTER_PYTHON}" "${REQUESTER_VERIFY_SOURCES}" format
+            --root "${CMAKE_CURRENT_SOURCE_DIR}"
+            --config "${REQUESTER_VERIFY_CONFIG}"
+            --formatter "${REQUESTER_CLANG_FORMAT}"
+    VERBATIM)
+
+add_custom_target(static-check
+    COMMAND "${REQUESTER_PYTHON}" "${REQUESTER_VERIFY_SOURCES}" static
+            --root "${CMAKE_CURRENT_SOURCE_DIR}"
+            --config "${REQUESTER_VERIFY_CONFIG}"
+            --analyzer "${REQUESTER_CPPCHECK}"
+    VERBATIM)
+
+add_custom_target(tidy-check
+    COMMAND "${CMAKE_COMMAND}" -E env "WGNX_COMMON=${WGNX_COMMON}"
+            "${REQUESTER_PYTHON}" "${REQUESTER_VERIFY_SOURCES}" tidy
+            --root "${CMAKE_CURRENT_SOURCE_DIR}"
+            --config "${REQUESTER_VERIFY_CONFIG}"
+            --tidy "${REQUESTER_CLANG_TIDY}"
+    VERBATIM)
+
 option(REQUESTER_BUILD_HOST_TESTS "Build requester host-only tests" OFF)
 
 if(REQUESTER_BUILD_HOST_TESTS)
@@ -35,8 +66,6 @@ set(BOREALIS_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/libs/borealis/resources")
 set(REQUESTER_ROMFS_DIR "${CMAKE_BINARY_DIR}/romfs")
 option(REQUESTER_PACKET_DIAGNOSTICS
        "Emit requester packet-granularity diagnostics" OFF)
-set(WGNX_COMMON "${CMAKE_CURRENT_SOURCE_DIR}/libs/wireguard-nx/common" CACHE PATH
-    "Path to the WireGuard NX shared IPC headers")
 file(GLOB BOREALIS_SYSTEM_RESOURCES CONFIGURE_DEPENDS
     "${BOREALIS_RESOURCES}/img/sys/*")
 
@@ -65,6 +94,7 @@ set_target_properties(requester PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED
 
 target_include_directories(requester PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../common/include"
     "${WGNX_COMMON}/include"
     ${APP_PLATFORM_INCLUDE})
 target_compile_definitions(requester PRIVATE
@@ -72,8 +102,8 @@ target_compile_definitions(requester PRIVATE
     APP_TITLE="${APP_TITLE}"
     APP_AUTHOR="${APP_AUTHOR}"
     APP_PROJECT_URL="${APP_PROJECT_URL}"
-    VERSION="${APP_VERSION}"
-    BUILD_ID="${REQUESTER_BUILD_ID}"
+    NXRV_VERSION="${APP_VERSION}"
+    NXRV_BUILD_ID="${REQUESTER_BUILD_ID}"
     REQUESTER_PACKET_DIAGNOSTICS=$<BOOL:${REQUESTER_PACKET_DIAGNOSTICS}>)
 target_compile_options(requester PRIVATE
     -g

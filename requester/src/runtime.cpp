@@ -14,7 +14,7 @@ namespace requester {
 
 namespace {
 
-std::string FormatTimestamp(const struct tm& tm_value, const char *format) {
+std::string FormatTimestamp(const struct tm& tm_value, const char* format) {
     char buffer[64];
     if (std::strftime(buffer, sizeof(buffer), format, &tm_value) == 0) {
         return "unknown";
@@ -22,7 +22,7 @@ std::string FormatTimestamp(const struct tm& tm_value, const char *format) {
     return buffer;
 }
 
-bool EnsureDirectory(const char *path) {
+bool EnsureDirectory(const char* path) {
     if (mkdir(path, 0777) == 0) {
         return true;
     }
@@ -33,7 +33,7 @@ bool EnsureDirectory(const char *path) {
 
 std::string MakeRunId(void) {
     const std::time_t now = std::time(nullptr);
-    struct tm tm_value {};
+    struct tm tm_value{};
     gmtime_r(&now, &tm_value);
     return FormatTimestamp(tm_value, "%Y-%m-%dT%H-%M-%SZ");
 }
@@ -52,13 +52,13 @@ bool EnsureLogDirectories(void) {
 
 std::string TimestampUtc(void) {
     const std::time_t now = std::time(nullptr);
-    struct tm tm_value {};
+    struct tm tm_value{};
     gmtime_r(&now, &tm_value);
     return FormatTimestamp(tm_value, "%Y-%m-%dT%H:%M:%SZ");
 }
 
 std::string MonotonicTimestampNs(void) {
-    struct timespec ts {};
+    struct timespec ts{};
     clock_gettime(CLOCK_MONOTONIC, &ts);
 
     char buffer[64];
@@ -66,21 +66,14 @@ std::string MonotonicTimestampNs(void) {
         buffer,
         sizeof(buffer),
         "%llu",
-        static_cast<unsigned long long>(ts.tv_sec) * 1000000000ULL +
-            static_cast<unsigned long long>(ts.tv_nsec));
+        static_cast<unsigned long long>(ts.tv_sec) * 1000000000ULL + static_cast<unsigned long long>(ts.tv_nsec)
+    );
     return buffer;
 }
 
 std::string FormatIpv4(std::uint32_t addr) {
     char buffer[32];
-    std::snprintf(
-        buffer,
-        sizeof(buffer),
-        "%u.%u.%u.%u",
-        addr & 0xFFU,
-        (addr >> 8) & 0xFFU,
-        (addr >> 16) & 0xFFU,
-        (addr >> 24) & 0xFFU);
+    std::snprintf(buffer, sizeof(buffer), "%u.%u.%u.%u", addr & 0xFFU, (addr >> 8) & 0xFFU, (addr >> 16) & 0xFFU, (addr >> 24) & 0xFFU);
     return buffer;
 }
 
@@ -106,67 +99,68 @@ std::string FormatHosVersion(void) {
         (hos >> 16) & 0xFFU,
         (hos >> 8) & 0xFFU,
         hos & 0xFFU,
-        hosversionIsAtmosphere() ? "|AMS" : "");
+        hosversionIsAtmosphere() ? "|AMS" : ""
+    );
     return buffer;
 }
 
 std::string FormatInternetConnectionType(NifmInternetConnectionType type) {
     switch (type) {
-        case NifmInternetConnectionType_WiFi:
-            return "wifi";
-        case NifmInternetConnectionType_Ethernet:
-            return "ethernet";
-        default:
-            return "unknown";
+    case NifmInternetConnectionType_WiFi:
+        return "wifi";
+    case NifmInternetConnectionType_Ethernet:
+        return "ethernet";
+    default:
+        return "unknown";
     }
 }
 
 std::string FormatInternetConnectionStatus(NifmInternetConnectionStatus status) {
     switch (status) {
-        case NifmInternetConnectionStatus_ConnectingUnknown1:
-            return "connecting-0";
-        case NifmInternetConnectionStatus_ConnectingUnknown2:
-            return "connecting-1";
-        case NifmInternetConnectionStatus_ConnectingUnknown3:
-            return "connecting-2";
-        case NifmInternetConnectionStatus_ConnectingUnknown4:
-            return "connecting-3";
-        case NifmInternetConnectionStatus_Connected:
-            return "connected";
-        default:
-            return "unknown";
+    case NifmInternetConnectionStatus_ConnectingUnknown1:
+        return "connecting-0";
+    case NifmInternetConnectionStatus_ConnectingUnknown2:
+        return "connecting-1";
+    case NifmInternetConnectionStatus_ConnectingUnknown3:
+        return "connecting-2";
+    case NifmInternetConnectionStatus_ConnectingUnknown4:
+        return "connecting-3";
+    case NifmInternetConnectionStatus_Connected:
+        return "connected";
+    default:
+        return "unknown";
     }
 }
 
-std::string EscapePreview(const void *data, std::size_t size, std::size_t limit) {
-    const auto *bytes = static_cast<const unsigned char *>(data);
+std::string EscapePreview(const void* data, std::size_t size, std::size_t limit) {
+    const auto* bytes = static_cast<const unsigned char*>(data);
     std::ostringstream oss;
 
     const std::size_t count = size < limit ? size : limit;
     for (std::size_t i = 0; i < count; ++i) {
         const unsigned char ch = bytes[i];
         switch (ch) {
-            case '\r':
-                oss << "\\r";
-                break;
-            case '\n':
-                oss << "\\n";
-                break;
-            case '\t':
-                oss << "\\t";
-                break;
-            case '\\':
-                oss << "\\\\";
-                break;
-            default:
-                if (ch >= 0x20 && ch <= 0x7E) {
-                    oss << static_cast<char>(ch);
-                } else {
-                    char buffer[5];
-                    std::snprintf(buffer, sizeof(buffer), "\\x%02X", ch);
-                    oss << buffer;
-                }
-                break;
+        case '\r':
+            oss << "\\r";
+            break;
+        case '\n':
+            oss << "\\n";
+            break;
+        case '\t':
+            oss << "\\t";
+            break;
+        case '\\':
+            oss << "\\\\";
+            break;
+        default:
+            if (ch >= 0x20 && ch <= 0x7E) {
+                oss << static_cast<char>(ch);
+            } else {
+                char buffer[5];
+                std::snprintf(buffer, sizeof(buffer), "\\x%02X", ch);
+                oss << buffer;
+            }
+            break;
         }
     }
 

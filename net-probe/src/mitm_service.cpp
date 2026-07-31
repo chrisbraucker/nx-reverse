@@ -13,7 +13,7 @@
 #define WGNX_I_PASSIVE_MITM_INTERFACE_INFO(C, H)
 AMS_SF_DEFINE_MITM_INTERFACE(wgnx::net_probe::mitm, IPassiveMitmService, WGNX_I_PASSIVE_MITM_INTERFACE_INFO, 0x57474D54);
 
-#define WGNX_I_PROBE_CONTROL_INTERFACE_INFO(C, H) \
+#define WGNX_I_PROBE_CONTROL_INTERFACE_INFO(C, H)                                                                                          \
     AMS_SF_METHOD_INFO(C, H, 0, ::ams::Result, Shutdown, (), (), ams::hos::Version_Min, ams::hos::Version_Max)
 AMS_SF_DEFINE_INTERFACE(wgnx::net_probe::mitm, IProbeControlService, WGNX_I_PROBE_CONTROL_INTERFACE_INFO, 0x57475043);
 
@@ -35,7 +35,7 @@ namespace {
 
 namespace cfg = ::wgnx::net_probe::build_config;
 
-const char *GetProgramDebugName(::ams::ncm::ProgramId program_id) {
+const char* GetProgramDebugName(::ams::ncm::ProgramId program_id) {
     if (program_id == WireguardProgramId) {
         return "wireguard-nx";
     }
@@ -71,20 +71,20 @@ const char *GetProgramDebugName(::ams::ncm::ProgramId program_id) {
     }
 
     switch (program_id.value) {
-        case ::ams::ncm::SystemProgramId::Am.value:
-            return "am";
-        case ::ams::ncm::SystemProgramId::Ssl.value:
-            return "ssl";
-        case ::ams::ncm::SystemProgramId::Nim.value:
-            return "nim";
-        case ::ams::ncm::SystemProgramId::Pctl.value:
-            return "pctl";
-        default:
-            return "unknown";
+    case ::ams::ncm::SystemProgramId::Am.value:
+        return "am";
+    case ::ams::ncm::SystemProgramId::Ssl.value:
+        return "ssl";
+    case ::ams::ncm::SystemProgramId::Nim.value:
+        return "nim";
+    case ::ams::ncm::SystemProgramId::Pctl.value:
+        return "pctl";
+    default:
+        return "unknown";
     }
 }
 
-bool IsDiagnosticOverrideEnabled(const ::ams::sm::MitmProcessInfo &client_info, const char *service_name) {
+bool IsDiagnosticOverrideEnabled(const ::ams::sm::MitmProcessInfo& client_info, const char* service_name) {
     if (std::strcmp(service_name, "bsd:s") == 0) {
         if (client_info.program_id == NpnsProgramId) {
             return cfg::AllowBsdSystemNpns;
@@ -133,9 +133,9 @@ bool IsDiagnosticOverrideEnabled(const ::ams::sm::MitmProcessInfo &client_info, 
     return false;
 }
 
-const char *GetRequesterForwarderBsdMitmModeName();
+const char* GetRequesterForwarderBsdMitmModeName();
 
-const char *GetNifmSystemMitmTargetName();
+const char* GetNifmSystemMitmTargetName();
 
 void LogBuildPolicy() {
     wgnx::net_probe::logger::Log(
@@ -146,13 +146,16 @@ void LogBuildPolicy() {
         static_cast<unsigned>(cfg::EnableMitmBsdSystem),
         static_cast<unsigned>(cfg::EnableMitmBsdAdmin),
         static_cast<unsigned>(cfg::EnableMitmSslUser),
-        static_cast<unsigned>(cfg::EnableMitmSslSystem));
+        static_cast<unsigned>(cfg::EnableMitmSslSystem)
+    );
     wgnx::net_probe::logger::Log(
         "nifm:s trace target=%s (%u)",
         GetNifmSystemMitmTargetName(),
-        static_cast<unsigned>(cfg::NifmSystemTraceTarget));
+        static_cast<unsigned>(cfg::NifmSystemTraceTarget)
+    );
     wgnx::net_probe::logger::Log(
-        "Diagnostic overrides: bsd:s[npns=%u eupld=%u olsc=%u bsdsockets=%u ssl=%u nim=%u sphaira-wrapper=%u requester-forwarder=%u] bsd:a[qlaunch=%u] ssl[npns=%u eupld=%u olsc=%u]",
+        "Diagnostic overrides: bsd:s[npns=%u eupld=%u olsc=%u bsdsockets=%u ssl=%u nim=%u sphaira-wrapper=%u "
+        "requester-forwarder=%u] bsd:a[qlaunch=%u] ssl[npns=%u eupld=%u olsc=%u]",
         static_cast<unsigned>(cfg::AllowBsdSystemNpns),
         static_cast<unsigned>(cfg::AllowBsdSystemEupld),
         static_cast<unsigned>(cfg::AllowBsdSystemOlsc),
@@ -164,14 +167,17 @@ void LogBuildPolicy() {
         static_cast<unsigned>(cfg::AllowBsdAdminQlaunch),
         static_cast<unsigned>(cfg::AllowSslNpns),
         static_cast<unsigned>(cfg::AllowSslEupld),
-        static_cast<unsigned>(cfg::AllowSslOlsc));
+        static_cast<unsigned>(cfg::AllowSslOlsc)
+    );
     wgnx::net_probe::logger::Log(
         "Requester forwarder bsd:s MITM split: mode=%s (%u)",
         GetRequesterForwarderBsdMitmModeName(),
-        static_cast<unsigned>(cfg::RequesterForwarderBsdMitm));
+        static_cast<unsigned>(cfg::RequesterForwarderBsdMitm)
+    );
     wgnx::net_probe::logger::Log(
         "MITM HIPC diagnostics: advertise_zero_pointer_buffer_for_requester_bsd=%u",
-        static_cast<unsigned>(cfg::AdvertiseZeroPointerBufferForRequesterBsd));
+        static_cast<unsigned>(cfg::AdvertiseZeroPointerBufferForRequesterBsd)
+    );
 }
 
 alignas(::ams::os::MemoryPageSize) constinit u8 g_mitm_object_heap[32 * 1024];
@@ -205,7 +211,7 @@ enum class ShouldMitmPolicyReason : u32 {
     NifmSystemNotTargeted = 7,
 };
 
-bool IsBsdSystemServiceName(const ::ams::sm::ServiceName &service_name) {
+bool IsBsdSystemServiceName(const ::ams::sm::ServiceName& service_name) {
     constexpr char Expected[] = "bsd:s";
     for (size_t i = 0; i < ::ams::sm::ServiceName::MaxLength; ++i) {
         const char expected = i < sizeof(Expected) ? Expected[i] : '\0';
@@ -219,11 +225,11 @@ bool IsBsdSystemServiceName(const ::ams::sm::ServiceName &service_name) {
     return sizeof(Expected) - 1 == ::ams::sm::ServiceName::MaxLength;
 }
 
-bool IsBsdSystemServiceNameText(const char *service_name) {
+bool IsBsdSystemServiceNameText(const char* service_name) {
     return service_name != nullptr && std::strcmp(service_name, "bsd:s") == 0;
 }
 
-u32 DecrementAtomicIfPositive(std::atomic<u32> &value) {
+u32 DecrementAtomicIfPositive(std::atomic<u32>& value) {
     u32 current = value.load(std::memory_order_relaxed);
     while (current != 0) {
         if (value.compare_exchange_weak(current, current - 1, std::memory_order_relaxed)) {
@@ -234,14 +240,15 @@ u32 DecrementAtomicIfPositive(std::atomic<u32> &value) {
 }
 
 void RecordShouldMitmPolicyDecision(
-    const char *service_name,
-    const ::ams::sm::MitmProcessInfo &client_info,
+    const char* service_name,
+    const ::ams::sm::MitmProcessInfo& client_info,
     bool result,
     ShouldMitmPolicyReason reason,
     u32 pending_count,
     u32 active_count,
     u32 holder_tag = 0,
-    u32 detail_value3 = 0) {
+    u32 detail_value3 = 0
+) {
     ::ams::sf::hipc::mitm_monitor::RecordQueryTraceDetail(
         ::ams::sf::hipc::mitm_monitor::QueryTraceEventType::ShouldMitmPolicyDecision,
         ::ams::sm::ServiceName::Encode(service_name),
@@ -256,42 +263,41 @@ void RecordShouldMitmPolicyDecision(
         static_cast<u32>(g_bsd_system_total_mitm_denials.load(std::memory_order_relaxed)),
         detail_value3,
         false,
-        ::ams::ResultSuccess());
+        ::ams::ResultSuccess()
+    );
 }
 
-const char *GetRequesterForwarderBsdMitmModeName() {
+const char* GetRequesterForwarderBsdMitmModeName() {
     switch (cfg::RequesterForwarderBsdMitm) {
-        case cfg::RequesterForwarderBsdMitmMode::None:
-            return "none";
-        case cfg::RequesterForwarderBsdMitmMode::FirstOnly:
-            return "first-only";
-        case cfg::RequesterForwarderBsdMitmMode::SecondOnly:
-            return "second-only";
-        case cfg::RequesterForwarderBsdMitmMode::Both:
-            return "both";
-        default:
-            return "unknown";
+    case cfg::RequesterForwarderBsdMitmMode::None:
+        return "none";
+    case cfg::RequesterForwarderBsdMitmMode::FirstOnly:
+        return "first-only";
+    case cfg::RequesterForwarderBsdMitmMode::SecondOnly:
+        return "second-only";
+    case cfg::RequesterForwarderBsdMitmMode::Both:
+        return "both";
+    default:
+        return "unknown";
     }
 }
 
-const char *GetNifmSystemMitmTargetName() {
+const char* GetNifmSystemMitmTargetName() {
     switch (cfg::NifmSystemTraceTarget) {
-        case cfg::NifmSystemMitmTarget::None:
-            return "none";
-        case cfg::NifmSystemMitmTarget::Nim:
-            return "nim";
-        case cfg::NifmSystemMitmTarget::Qlaunch:
-            return "qlaunch";
-        case cfg::NifmSystemMitmTarget::All:
-            return "all";
-        default:
-            return "unknown";
+    case cfg::NifmSystemMitmTarget::None:
+        return "none";
+    case cfg::NifmSystemMitmTarget::Nim:
+        return "nim";
+    case cfg::NifmSystemMitmTarget::Qlaunch:
+        return "qlaunch";
+    case cfg::NifmSystemMitmTarget::All:
+        return "all";
+    default:
+        return "unknown";
     }
 }
 
-bool ShouldMitmRequesterForwarderBsdOrdinal(
-    const ::ams::sm::MitmProcessInfo &client_info,
-    u32 *out_ordinal) {
+bool ShouldMitmRequesterForwarderBsdOrdinal(const ::ams::sm::MitmProcessInfo& client_info, u32* out_ordinal) {
     const u64 pid = client_info.process_id.value;
     u32 ordinal = 0;
 
@@ -309,16 +315,16 @@ bool ShouldMitmRequesterForwarderBsdOrdinal(
     }
 
     switch (cfg::RequesterForwarderBsdMitm) {
-        case cfg::RequesterForwarderBsdMitmMode::None:
-            return false;
-        case cfg::RequesterForwarderBsdMitmMode::FirstOnly:
-            return ordinal == 1;
-        case cfg::RequesterForwarderBsdMitmMode::SecondOnly:
-            return ordinal == 2;
-        case cfg::RequesterForwarderBsdMitmMode::Both:
-            return true;
-        default:
-            return false;
+    case cfg::RequesterForwarderBsdMitmMode::None:
+        return false;
+    case cfg::RequesterForwarderBsdMitmMode::FirstOnly:
+        return ordinal == 1;
+    case cfg::RequesterForwarderBsdMitmMode::SecondOnly:
+        return ordinal == 2;
+    case cfg::RequesterForwarderBsdMitmMode::Both:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -326,34 +332,22 @@ void NoteBsdSystemMitmPending() {
     g_bsd_system_pending_mitm_sessions.fetch_add(1, std::memory_order_relaxed);
 }
 
-void PromoteBsdSystemMitmPendingToActive(const char *phase) {
+void PromoteBsdSystemMitmPendingToActive(const char* phase) {
     const u32 pending_after = DecrementAtomicIfPositive(g_bsd_system_pending_mitm_sessions);
     const u32 active_after = g_bsd_system_active_mitm_sessions.fetch_add(1, std::memory_order_relaxed) + 1;
-    wgnx::net_probe::logger::Log(
-        "bsd:s MITM liveness: phase=%s pending=%u active=%u",
-        phase,
-        pending_after,
-        active_after);
+    wgnx::net_probe::logger::Log("bsd:s MITM liveness: phase=%s pending=%u active=%u", phase, pending_after, active_after);
 }
 
-void DropBsdSystemMitmPending(const char *phase) {
+void DropBsdSystemMitmPending(const char* phase) {
     const u32 pending_after = DecrementAtomicIfPositive(g_bsd_system_pending_mitm_sessions);
     const u32 active = g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed);
-    wgnx::net_probe::logger::Log(
-        "bsd:s MITM liveness: phase=%s pending=%u active=%u",
-        phase,
-        pending_after,
-        active);
+    wgnx::net_probe::logger::Log("bsd:s MITM liveness: phase=%s pending=%u active=%u", phase, pending_after, active);
 }
 
-void DropBsdSystemMitmActive(const char *phase) {
+void DropBsdSystemMitmActive(const char* phase) {
     const u32 active_after = DecrementAtomicIfPositive(g_bsd_system_active_mitm_sessions);
     const u32 pending = g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed);
-    wgnx::net_probe::logger::Log(
-        "bsd:s MITM liveness: phase=%s pending=%u active=%u",
-        phase,
-        pending,
-        active_after);
+    wgnx::net_probe::logger::Log("bsd:s MITM liveness: phase=%s pending=%u active=%u", phase, pending, active_after);
 }
 
 void EnsureMitmObjectAllocatorInitialized() {
@@ -366,246 +360,197 @@ void EnsureMitmObjectAllocatorInitialized() {
         return;
     }
 
-    g_mitm_object_heap_handle = ::ams::lmem::CreateExpHeap(
-        g_mitm_object_heap,
-        sizeof(g_mitm_object_heap),
-        ::ams::lmem::CreateOption_ThreadSafe);
+    g_mitm_object_heap_handle =
+        ::ams::lmem::CreateExpHeap(g_mitm_object_heap, sizeof(g_mitm_object_heap), ::ams::lmem::CreateOption_ThreadSafe);
     AMS_ABORT_UNLESS(g_mitm_object_heap_handle != nullptr);
 
     g_mitm_object_memory_resource.Attach(g_mitm_object_heap_handle);
     g_mitm_object_allocator_ready = true;
-    wgnx::net_probe::logger::Log(
-        "MITM object allocator ready: heap=%p size=0x%zx",
-        g_mitm_object_heap,
-        sizeof(g_mitm_object_heap));
+    wgnx::net_probe::logger::Log("MITM object allocator ready: heap=%p size=0x%zx", g_mitm_object_heap, sizeof(g_mitm_object_heap));
 }
 
 class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
-    private:
-        ::ams::sm::ServiceName m_service_name{};
-        u64 m_session_id{0};
+  private:
+    ::ams::sm::ServiceName m_service_name{};
+    u64 m_session_id{0};
 
-    public:
-        PassiveMitmService(std::shared_ptr<::Service> &&forward_service, const ::ams::sm::MitmProcessInfo &client_info)
-            : ::ams::sf::MitmServiceImplBase(std::move(forward_service), client_info) {
+  public:
+    PassiveMitmService(std::shared_ptr<::Service>&& forward_service, const ::ams::sm::MitmProcessInfo& client_info)
+        : ::ams::sf::MitmServiceImplBase(std::move(forward_service), client_info) {}
+
+    PassiveMitmService(
+        std::shared_ptr<::Service>&& forward_service,
+        const ::ams::sm::MitmProcessInfo& client_info,
+        const ::ams::sm::ServiceName& service_name,
+        u64 session_id
+    )
+        : ::ams::sf::MitmServiceImplBase(std::move(forward_service), client_info), m_service_name(service_name), m_session_id(session_id) {}
+
+    ~PassiveMitmService() {
+        wgnx::net_probe::logger::Log(
+            "PassiveMitmService destructor begin: service=%.*s session_id=%llu pid=0x%016llx program_id=0x%016llx",
+            static_cast<int>(::ams::sm::ServiceName::MaxLength),
+            m_service_name.name,
+            static_cast<unsigned long long>(m_session_id),
+            static_cast<unsigned long long>(this->m_client_info.process_id.value),
+            static_cast<unsigned long long>(this->m_client_info.program_id.value)
+        );
+        if (this->m_forward_service != nullptr) {
+            mitm_trace::LogForwardServiceState(
+                m_service_name,
+                this->m_client_info,
+                m_session_id,
+                "service_destructor",
+                this->m_forward_service->session,
+                this->m_forward_service->own_handle,
+                this->m_forward_service->object_id,
+                this->m_forward_service->pointer_buffer_size
+            );
         }
 
-        PassiveMitmService(
-            std::shared_ptr<::Service> &&forward_service,
-            const ::ams::sm::MitmProcessInfo &client_info,
-            const ::ams::sm::ServiceName &service_name,
-            u64 session_id)
-            : ::ams::sf::MitmServiceImplBase(std::move(forward_service), client_info),
-              m_service_name(service_name),
-              m_session_id(session_id) {
+        mitm_trace::LogDomainSnapshotForSession(m_session_id, "service_destructor");
+
+        if (IsBsdSystemServiceName(m_service_name)) {
+            DropBsdSystemMitmActive("service_destructor");
+        }
+        wgnx::net_probe::logger::Log(
+            "PassiveMitmService destructor end: service=%.*s session_id=%llu",
+            static_cast<int>(::ams::sm::ServiceName::MaxLength),
+            m_service_name.name,
+            static_cast<unsigned long long>(m_session_id)
+        );
+    }
+
+    static bool IsSelfProgram(const ::ams::sm::MitmProcessInfo& client_info) {
+        return client_info.program_id == WireguardProgramId || client_info.program_id == NetProbeProgramId;
+    }
+
+    static bool IsBsdSystemDenylistedProgram(const ::ams::sm::MitmProcessInfo& client_info) {
+        return client_info.program_id == NpnsProgramId || client_info.program_id == EupldProgramId ||
+               client_info.program_id == OlscProgramId || client_info.program_id == BsdSocketsProgramId ||
+               client_info.program_id == SslProgramId || client_info.program_id == NimProgramId ||
+               client_info.program_id == SphairaWrapperProgramId || client_info.program_id == RequesterForwarderProgramId;
+    }
+
+    static bool IsBsdAdminDenylistedProgram(const ::ams::sm::MitmProcessInfo& client_info) {
+        return client_info.program_id == QlaunchProgramId;
+    }
+
+    static void LogShouldMitmDecision(const char* format, ...) {
+        /*
+         * File-backed logging from ShouldMitm* runs on SM's hidden MITM query
+         * path. Keep it disabled while isolating the second-launch hang.
+         */
+        AMS_UNUSED(format);
+    }
+
+    static bool ShouldMitmForService(const char* service_name, const ::ams::sm::MitmProcessInfo& client_info) {
+        const bool should_mitm = !IsSelfProgram(client_info);
+        RecordShouldMitmPolicyDecision(
+            service_name,
+            client_info,
+            should_mitm,
+            should_mitm ? ShouldMitmPolicyReason::DefaultAllow : ShouldMitmPolicyReason::SelfProgram,
+            IsBsdSystemServiceNameText(service_name) ? g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed) : 0,
+            IsBsdSystemServiceNameText(service_name) ? g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed) : 0
+        );
+        LogShouldMitmDecision(
+            "ShouldMitm(%s): pid=0x%016llx program_id=0x%016llx (%s) result=%u",
+            service_name,
+            static_cast<unsigned long long>(client_info.process_id.value),
+            static_cast<unsigned long long>(client_info.program_id.value),
+            GetProgramDebugName(client_info.program_id),
+            should_mitm ? 1u : 0u
+        );
+        return should_mitm;
+    }
+
+    static bool ShouldMitmNifmUser(const ::ams::sm::MitmProcessInfo& client_info) {
+        return ShouldMitmForService("nifm:u", client_info);
+    }
+
+    static bool ShouldMitmNifmSystem(const ::ams::sm::MitmProcessInfo& client_info) {
+        if (IsSelfProgram(client_info)) {
+            RecordShouldMitmPolicyDecision("nifm:s", client_info, false, ShouldMitmPolicyReason::SelfProgram, 0, 0);
+            return false;
         }
 
-        ~PassiveMitmService() {
-            wgnx::net_probe::logger::Log(
-                "PassiveMitmService destructor begin: service=%.*s session_id=%llu pid=0x%016llx program_id=0x%016llx",
-                static_cast<int>(::ams::sm::ServiceName::MaxLength),
-                m_service_name.name,
-                static_cast<unsigned long long>(m_session_id),
-                static_cast<unsigned long long>(this->m_client_info.process_id.value),
-                static_cast<unsigned long long>(this->m_client_info.program_id.value));
-            if (this->m_forward_service != nullptr) {
-                mitm_trace::LogForwardServiceState(
-                    m_service_name,
-                    this->m_client_info,
-                    m_session_id,
-                    "service_destructor",
-                    this->m_forward_service->session,
-                    this->m_forward_service->own_handle,
-                    this->m_forward_service->object_id,
-                    this->m_forward_service->pointer_buffer_size);
-            }
-
-            mitm_trace::LogDomainSnapshotForSession(m_session_id, "service_destructor");
-
-            if (IsBsdSystemServiceName(m_service_name)) {
-                DropBsdSystemMitmActive("service_destructor");
-            }
-            wgnx::net_probe::logger::Log(
-                "PassiveMitmService destructor end: service=%.*s session_id=%llu",
-                static_cast<int>(::ams::sm::ServiceName::MaxLength),
-                m_service_name.name,
-                static_cast<unsigned long long>(m_session_id));
+        bool should_mitm = false;
+        switch (cfg::NifmSystemTraceTarget) {
+        case cfg::NifmSystemMitmTarget::Nim:
+            should_mitm = client_info.program_id == NimProgramId;
+            break;
+        case cfg::NifmSystemMitmTarget::Qlaunch:
+            should_mitm = client_info.program_id == QlaunchProgramId;
+            break;
+        case cfg::NifmSystemMitmTarget::All:
+            should_mitm = true;
+            break;
+        case cfg::NifmSystemMitmTarget::None:
+        default:
+            break;
         }
 
-        static bool IsSelfProgram(const ::ams::sm::MitmProcessInfo &client_info) {
-            return client_info.program_id == WireguardProgramId || client_info.program_id == NetProbeProgramId;
-        }
+        RecordShouldMitmPolicyDecision(
+            "nifm:s",
+            client_info,
+            should_mitm,
+            should_mitm ? ShouldMitmPolicyReason::DefaultAllow : ShouldMitmPolicyReason::NifmSystemNotTargeted,
+            0,
+            0
+        );
+        return should_mitm;
+    }
 
-        static bool IsBsdSystemDenylistedProgram(const ::ams::sm::MitmProcessInfo &client_info) {
-            return client_info.program_id == NpnsProgramId
-                || client_info.program_id == EupldProgramId
-                || client_info.program_id == OlscProgramId
-                || client_info.program_id == BsdSocketsProgramId
-                || client_info.program_id == SslProgramId
-                || client_info.program_id == NimProgramId
-                || client_info.program_id == SphairaWrapperProgramId
-                || client_info.program_id == RequesterForwarderProgramId;
-        }
+    static bool ShouldMitmBsdUser(const ::ams::sm::MitmProcessInfo& client_info) {
+        return ShouldMitmForService("bsd:u", client_info);
+    }
 
-        static bool IsBsdAdminDenylistedProgram(const ::ams::sm::MitmProcessInfo &client_info) {
-            return client_info.program_id == QlaunchProgramId;
-        }
-
-        static void LogShouldMitmDecision(const char *format, ...) {
-            /*
-             * File-backed logging from ShouldMitm* runs on SM's hidden MITM query
-             * path. Keep it disabled while isolating the second-launch hang.
-             */
-            AMS_UNUSED(format);
-        }
-
-        static bool ShouldMitmForService(const char *service_name, const ::ams::sm::MitmProcessInfo &client_info) {
-            const bool should_mitm = !IsSelfProgram(client_info);
+    static bool ShouldMitmBsdSystem(const ::ams::sm::MitmProcessInfo& client_info) {
+        if (IsSelfProgram(client_info)) {
             RecordShouldMitmPolicyDecision(
-                service_name,
+                "bsd:s",
                 client_info,
-                should_mitm,
-                should_mitm ? ShouldMitmPolicyReason::DefaultAllow : ShouldMitmPolicyReason::SelfProgram,
-                IsBsdSystemServiceNameText(service_name) ? g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed) : 0,
-                IsBsdSystemServiceNameText(service_name) ? g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed) : 0);
+                false,
+                ShouldMitmPolicyReason::SelfProgram,
+                g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed),
+                g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed)
+            );
             LogShouldMitmDecision(
-                "ShouldMitm(%s): pid=0x%016llx program_id=0x%016llx (%s) result=%u",
-                service_name,
+                "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+            return false;
+        }
+
+        if (client_info.program_id == RequesterForwarderProgramId && cfg::AllowBsdSystemRequesterForwarder) {
+            u32 ordinal = 0;
+            const bool allow_for_ordinal = ShouldMitmRequesterForwarderBsdOrdinal(client_info, std::addressof(ordinal));
+            const u32 pending_count = g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed);
+            const u32 active_count = g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed);
+            RecordShouldMitmPolicyDecision(
+                "bsd:s",
+                client_info,
+                allow_for_ordinal,
+                allow_for_ordinal ? ShouldMitmPolicyReason::DiagnosticOverride : ShouldMitmPolicyReason::RequesterForwarderOrdinalDeny,
+                pending_count,
+                active_count,
+                ordinal,
+                static_cast<u32>(cfg::RequesterForwarderBsdMitm)
+            );
+            LogShouldMitmDecision(
+                "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) requester_forwarder_ordinal=%u mode=%s result=%u",
                 static_cast<unsigned long long>(client_info.process_id.value),
                 static_cast<unsigned long long>(client_info.program_id.value),
                 GetProgramDebugName(client_info.program_id),
-                should_mitm ? 1u : 0u);
-            return should_mitm;
-        }
-
-        static bool ShouldMitmNifmUser(const ::ams::sm::MitmProcessInfo &client_info) {
-            return ShouldMitmForService("nifm:u", client_info);
-        }
-
-        static bool ShouldMitmNifmSystem(const ::ams::sm::MitmProcessInfo &client_info) {
-            if (IsSelfProgram(client_info)) {
-                RecordShouldMitmPolicyDecision(
-                    "nifm:s",
-                    client_info,
-                    false,
-                    ShouldMitmPolicyReason::SelfProgram,
-                    0,
-                    0);
+                ordinal,
+                GetRequesterForwarderBsdMitmModeName(),
+                allow_for_ordinal ? 1u : 0u
+            );
+            if (!allow_for_ordinal) {
                 return false;
-            }
-
-            bool should_mitm = false;
-            switch (cfg::NifmSystemTraceTarget) {
-                case cfg::NifmSystemMitmTarget::Nim:
-                    should_mitm = client_info.program_id == NimProgramId;
-                    break;
-                case cfg::NifmSystemMitmTarget::Qlaunch:
-                    should_mitm = client_info.program_id == QlaunchProgramId;
-                    break;
-                case cfg::NifmSystemMitmTarget::All:
-                    should_mitm = true;
-                    break;
-                case cfg::NifmSystemMitmTarget::None:
-                default:
-                    break;
-            }
-
-            RecordShouldMitmPolicyDecision(
-                "nifm:s",
-                client_info,
-                should_mitm,
-                should_mitm ? ShouldMitmPolicyReason::DefaultAllow : ShouldMitmPolicyReason::NifmSystemNotTargeted,
-                0,
-                0);
-            return should_mitm;
-        }
-
-        static bool ShouldMitmBsdUser(const ::ams::sm::MitmProcessInfo &client_info) {
-            return ShouldMitmForService("bsd:u", client_info);
-        }
-
-        static bool ShouldMitmBsdSystem(const ::ams::sm::MitmProcessInfo &client_info) {
-            if (IsSelfProgram(client_info)) {
-                RecordShouldMitmPolicyDecision(
-                    "bsd:s",
-                    client_info,
-                    false,
-                    ShouldMitmPolicyReason::SelfProgram,
-                    g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed),
-                    g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed));
-                LogShouldMitmDecision(
-                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-                return false;
-            }
-
-            if (client_info.program_id == RequesterForwarderProgramId && cfg::AllowBsdSystemRequesterForwarder) {
-                u32 ordinal = 0;
-                const bool allow_for_ordinal = ShouldMitmRequesterForwarderBsdOrdinal(client_info, std::addressof(ordinal));
-                const u32 pending_count = g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed);
-                const u32 active_count = g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed);
-                RecordShouldMitmPolicyDecision(
-                    "bsd:s",
-                    client_info,
-                    allow_for_ordinal,
-                    allow_for_ordinal ? ShouldMitmPolicyReason::DiagnosticOverride : ShouldMitmPolicyReason::RequesterForwarderOrdinalDeny,
-                    pending_count,
-                    active_count,
-                    ordinal,
-                    static_cast<u32>(cfg::RequesterForwarderBsdMitm));
-                LogShouldMitmDecision(
-                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) requester_forwarder_ordinal=%u mode=%s result=%u",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id),
-                    ordinal,
-                    GetRequesterForwarderBsdMitmModeName(),
-                    allow_for_ordinal ? 1u : 0u);
-                if (!allow_for_ordinal) {
-                    return false;
-                }
-
-                const bool should_mitm = ShouldMitmForService("bsd:s", client_info);
-                if (should_mitm) {
-                    NoteBsdSystemMitmPending();
-                }
-                return should_mitm;
-            }
-
-            if (IsBsdSystemDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "bsd:s")) {
-                RecordShouldMitmPolicyDecision(
-                    "bsd:s",
-                    client_info,
-                    false,
-                    ShouldMitmPolicyReason::DenylistedProgram,
-                    g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed),
-                    g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed));
-                LogShouldMitmDecision(
-                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-                return false;
-            }
-
-            const u32 pending_count = g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed);
-            const u32 active_count = g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed);
-
-            if (IsDiagnosticOverrideEnabled(client_info, "bsd:s")) {
-                RecordShouldMitmPolicyDecision(
-                    "bsd:s",
-                    client_info,
-                    true,
-                    ShouldMitmPolicyReason::DiagnosticOverride,
-                    pending_count,
-                    active_count);
-                LogShouldMitmDecision(
-                    "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
             }
 
             const bool should_mitm = ShouldMitmForService("bsd:s", client_info);
@@ -615,104 +560,158 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
             return should_mitm;
         }
 
-        static bool ShouldMitmBsdAdmin(const ::ams::sm::MitmProcessInfo &client_info) {
-            if (IsSelfProgram(client_info)) {
-                LogShouldMitmDecision(
-                    "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-                return false;
-            }
-
-            if (IsBsdAdminDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "bsd:a")) {
-                LogShouldMitmDecision(
-                    "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-                return false;
-            }
-
-            if (IsDiagnosticOverrideEnabled(client_info, "bsd:a")) {
-                LogShouldMitmDecision(
-                    "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-            }
-
-            return ShouldMitmForService("bsd:a", client_info);
+        if (IsBsdSystemDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "bsd:s")) {
+            RecordShouldMitmPolicyDecision(
+                "bsd:s",
+                client_info,
+                false,
+                ShouldMitmPolicyReason::DenylistedProgram,
+                g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed),
+                g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed)
+            );
+            LogShouldMitmDecision(
+                "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+            return false;
         }
 
-        static bool ShouldMitmSslUser(const ::ams::sm::MitmProcessInfo &client_info) {
-            if (IsSelfProgram(client_info)) {
-                LogShouldMitmDecision(
-                    "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-                return false;
-            }
+        const u32 pending_count = g_bsd_system_pending_mitm_sessions.load(std::memory_order_relaxed);
+        const u32 active_count = g_bsd_system_active_mitm_sessions.load(std::memory_order_relaxed);
 
-            if (IsBsdSystemDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "ssl")) {
-                LogShouldMitmDecision(
-                    "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-                return false;
-            }
-
-            if (IsDiagnosticOverrideEnabled(client_info, "ssl")) {
-                LogShouldMitmDecision(
-                    "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-            }
-
-            return ShouldMitmForService("ssl", client_info);
+        if (IsDiagnosticOverrideEnabled(client_info, "bsd:s")) {
+            RecordShouldMitmPolicyDecision(
+                "bsd:s",
+                client_info,
+                true,
+                ShouldMitmPolicyReason::DiagnosticOverride,
+                pending_count,
+                active_count
+            );
+            LogShouldMitmDecision(
+                "ShouldMitm(bsd:s): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
         }
 
-        static bool ShouldMitmSslSystem(const ::ams::sm::MitmProcessInfo &client_info) {
-            if (IsSelfProgram(client_info)) {
-                LogShouldMitmDecision(
-                    "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-                return false;
-            }
-
-            if (IsBsdSystemDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "ssl:s")) {
-                LogShouldMitmDecision(
-                    "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-                return false;
-            }
-
-            if (IsDiagnosticOverrideEnabled(client_info, "ssl:s")) {
-                LogShouldMitmDecision(
-                    "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
-                    static_cast<unsigned long long>(client_info.process_id.value),
-                    static_cast<unsigned long long>(client_info.program_id.value),
-                    GetProgramDebugName(client_info.program_id));
-            }
-
-            return ShouldMitmForService("ssl:s", client_info);
+        const bool should_mitm = ShouldMitmForService("bsd:s", client_info);
+        if (should_mitm) {
+            NoteBsdSystemMitmPending();
         }
+        return should_mitm;
+    }
+
+    static bool ShouldMitmBsdAdmin(const ::ams::sm::MitmProcessInfo& client_info) {
+        if (IsSelfProgram(client_info)) {
+            LogShouldMitmDecision(
+                "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+            return false;
+        }
+
+        if (IsBsdAdminDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "bsd:a")) {
+            LogShouldMitmDecision(
+                "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+            return false;
+        }
+
+        if (IsDiagnosticOverrideEnabled(client_info, "bsd:a")) {
+            LogShouldMitmDecision(
+                "ShouldMitm(bsd:a): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+        }
+
+        return ShouldMitmForService("bsd:a", client_info);
+    }
+
+    static bool ShouldMitmSslUser(const ::ams::sm::MitmProcessInfo& client_info) {
+        if (IsSelfProgram(client_info)) {
+            LogShouldMitmDecision(
+                "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+            return false;
+        }
+
+        if (IsBsdSystemDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "ssl")) {
+            LogShouldMitmDecision(
+                "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+            return false;
+        }
+
+        if (IsDiagnosticOverrideEnabled(client_info, "ssl")) {
+            LogShouldMitmDecision(
+                "ShouldMitm(ssl): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+        }
+
+        return ShouldMitmForService("ssl", client_info);
+    }
+
+    static bool ShouldMitmSslSystem(const ::ams::sm::MitmProcessInfo& client_info) {
+        if (IsSelfProgram(client_info)) {
+            LogShouldMitmDecision(
+                "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=self",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+            return false;
+        }
+
+        if (IsBsdSystemDenylistedProgram(client_info) && !IsDiagnosticOverrideEnabled(client_info, "ssl:s")) {
+            LogShouldMitmDecision(
+                "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx (%s) skipped=denylist",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+            return false;
+        }
+
+        if (IsDiagnosticOverrideEnabled(client_info, "ssl:s")) {
+            LogShouldMitmDecision(
+                "ShouldMitm(ssl:s): pid=0x%016llx program_id=0x%016llx (%s) override=diagnostic",
+                static_cast<unsigned long long>(client_info.process_id.value),
+                static_cast<unsigned long long>(client_info.program_id.value),
+                GetProgramDebugName(client_info.program_id)
+            );
+        }
+
+        return ShouldMitmForService("ssl:s", client_info);
+    }
 };
 
 class ProbeControlService {
-    public:
-        ::ams::Result Shutdown() {
-            wgnx::net_probe::logger::Log("ProbeControlService::Shutdown requested");
-            RequestShutdown();
-            R_SUCCEED();
-        }
+  public:
+    ::ams::Result Shutdown() {
+        wgnx::net_probe::logger::Log("ProbeControlService::Shutdown requested");
+        RequestShutdown();
+        R_SUCCEED();
+    }
 };
 static_assert(IsIProbeControlService<ProbeControlService>);
 
@@ -741,148 +740,164 @@ enum PortIndex {
     PortIndex_Count = 7,
 };
 
-using ShouldMitmCallback = bool (*)(const ::ams::sm::MitmProcessInfo &);
+using ShouldMitmCallback = bool (*)(const ::ams::sm::MitmProcessInfo&);
 
 struct MitmTargetConfig {
-    const char *service_name;
+    const char* service_name;
     ShouldMitmCallback should_mitm;
     bool enabled;
 };
 
 constexpr MitmTargetConfig g_mitm_target_configs[PortIndex_Count] = {
-    { "nifm:u", &PassiveMitmService::ShouldMitmNifmUser, cfg::EnableMitmNifmUser },
-    { "nifm:s", &PassiveMitmService::ShouldMitmNifmSystem, cfg::EnableMitmNifmSystem },
-    { "bsd:u",  &PassiveMitmService::ShouldMitmBsdUser, cfg::EnableMitmBsdUser },
-    { "bsd:s",  &PassiveMitmService::ShouldMitmBsdSystem, cfg::EnableMitmBsdSystem },
-    { "bsd:a",  &PassiveMitmService::ShouldMitmBsdAdmin, cfg::EnableMitmBsdAdmin },
-    { "ssl",    &PassiveMitmService::ShouldMitmSslUser, cfg::EnableMitmSslUser },
-    { "ssl:s",  &PassiveMitmService::ShouldMitmSslSystem, cfg::EnableMitmSslSystem },
+    {"nifm:u", &PassiveMitmService::ShouldMitmNifmUser, cfg::EnableMitmNifmUser},
+    {"nifm:s", &PassiveMitmService::ShouldMitmNifmSystem, cfg::EnableMitmNifmSystem},
+    {"bsd:u", &PassiveMitmService::ShouldMitmBsdUser, cfg::EnableMitmBsdUser},
+    {"bsd:s", &PassiveMitmService::ShouldMitmBsdSystem, cfg::EnableMitmBsdSystem},
+    {"bsd:a", &PassiveMitmService::ShouldMitmBsdAdmin, cfg::EnableMitmBsdAdmin},
+    {"ssl", &PassiveMitmService::ShouldMitmSslUser, cfg::EnableMitmSslUser},
+    {"ssl:s", &PassiveMitmService::ShouldMitmSslSystem, cfg::EnableMitmSslSystem},
 };
 
 constexpr size_t NumSessions = 48;
 constexpr size_t ControlMaxSessions = 4;
 
-void LogMitmServerManagerState(const char *phase);
-void LogMitmServerManagerResourceState(const char *phase);
+void LogMitmServerManagerState(const char* phase);
+void LogMitmServerManagerResourceState(const char* phase);
 
 class MitmServerManager final : public ::ams::sf::hipc::ServerManager<PortIndex_Count, MitmServerOptions, NumSessions> {
-    private:
-        static const MitmTargetConfig &GetTargetConfigForPortIndex(int port_index) {
-            AMS_ABORT_UNLESS(port_index >= 0);
-            AMS_ABORT_UNLESS(static_cast<size_t>(port_index) < std::size(g_mitm_target_configs));
-            return g_mitm_target_configs[port_index];
-        }
+  private:
+    static const MitmTargetConfig& GetTargetConfigForPortIndex(int port_index) {
+        AMS_ABORT_UNLESS(port_index >= 0);
+        AMS_ABORT_UNLESS(static_cast<size_t>(port_index) < std::size(g_mitm_target_configs));
+        return g_mitm_target_configs[port_index];
+    }
 
-        static ::ams::sm::ServiceName GetServiceNameForPortIndex(int port_index) {
-            return ::ams::sm::ServiceName::Encode(GetTargetConfigForPortIndex(port_index).service_name);
-        }
+    static ::ams::sm::ServiceName GetServiceNameForPortIndex(int port_index) {
+        return ::ams::sm::ServiceName::Encode(GetTargetConfigForPortIndex(port_index).service_name);
+    }
 
-        static const char *GetServiceNameTextForPortIndex(int port_index) {
-            return GetTargetConfigForPortIndex(port_index).service_name;
-        }
+    static const char* GetServiceNameTextForPortIndex(int port_index) {
+        return GetTargetConfigForPortIndex(port_index).service_name;
+    }
 
-        ::ams::Result AcceptMitmConnection(int port_index, Server *server) {
-            const char *service_name_text = GetServiceNameTextForPortIndex(port_index);
-            wgnx::net_probe::logger::Log("AcceptMitmConnection(%s): waiting for acknowledge", service_name_text);
+    ::ams::Result AcceptMitmConnection(int port_index, Server* server) {
+        const char* service_name_text = GetServiceNameTextForPortIndex(port_index);
+        wgnx::net_probe::logger::Log("AcceptMitmConnection(%s): waiting for acknowledge", service_name_text);
 
-            std::shared_ptr<::Service> forward_service;
-            ::ams::sm::MitmProcessInfo client_info = {};
-            const ::ams::Result acknowledge_rc = server->AcknowledgeMitmSession(std::addressof(forward_service), std::addressof(client_info));
-            const auto service_name = GetServiceNameForPortIndex(port_index);
-            if (R_FAILED(acknowledge_rc)) {
-                if (IsBsdSystemServiceName(service_name)) {
-                    DropBsdSystemMitmPending("acknowledge_failed");
-                }
-                wgnx::net_probe::logger::Log(
-                    "AcceptMitmConnection(%s): AcknowledgeMitmSession failed rc=0x%08X",
-                    service_name_text,
-                    acknowledge_rc.GetValue());
-                R_THROW(acknowledge_rc);
-            }
-            const u64 session_id = mitm_trace::AllocateSessionId();
-            wgnx::net_probe::logger::Log(
-                "AcceptMitmConnection(%s): acknowledged pid=0x%016llx program_id=0x%016llx forward=%p",
-                service_name_text,
-                static_cast<unsigned long long>(client_info.process_id.value),
-                static_cast<unsigned long long>(client_info.program_id.value),
-                forward_service.get());
-            if (forward_service != nullptr) {
-                mitm_trace::LogForwardServiceState(
-                    service_name,
-                    client_info,
-                    session_id,
-                    "acknowledged_forward",
-                    forward_service->session,
-                    forward_service->own_handle,
-                    forward_service->object_id,
-                    forward_service->pointer_buffer_size);
-            }
-
-            EnsureMitmObjectAllocatorInitialized();
-            std::shared_ptr<::Service> local_forward = forward_service;
-            wgnx::net_probe::logger::Log(
-                "AcceptMitmConnection(%s): reusing forward service local_forward=%p",
-                service_name_text,
-                local_forward.get());
-            if (local_forward != nullptr) {
-                mitm_trace::LogForwardServiceState(
-                    service_name,
-                    client_info,
-                    session_id,
-                    "local_forward_before_create",
-                    local_forward->session,
-                    local_forward->own_handle,
-                    local_forward->object_id,
-                    local_forward->pointer_buffer_size);
-            }
-            auto service_object = ::ams::sf::CreateSharedObjectEmplaced<IPassiveMitmService, PassiveMitmService>(
-                static_cast<::ams::MemoryResource *>(std::addressof(g_mitm_object_memory_resource)),
-                std::move(local_forward),
-                client_info,
-                service_name,
-                session_id);
-            wgnx::net_probe::logger::Log("AcceptMitmConnection(%s): calling AcceptMitmImpl session_id=%llu", service_name_text, static_cast<unsigned long long>(session_id));
-
-            if (forward_service != nullptr) {
-                mitm_trace::LogForwardServiceState(
-                    service_name,
-                    client_info,
-                    session_id,
-                    "forward_before_accept",
-                    forward_service->session,
-                    forward_service->own_handle,
-                    forward_service->object_id,
-                    forward_service->pointer_buffer_size);
-            }
-            const ::ams::Result rc = this->AcceptMitmImpl(server, std::move(service_object), client_info, session_id, std::move(forward_service));
-            if (R_FAILED(rc)) {
-                if (IsBsdSystemServiceName(service_name)) {
-                    DropBsdSystemMitmPending("accept_mitm_impl_failed");
-                }
-                wgnx::net_probe::logger::Log("AcceptMitmConnection(%s): AcceptMitmImpl failed rc=0x%08X", service_name_text, rc.GetValue());
-                mitm_trace::LogSessionAcceptFailure(service_name, client_info, rc);
-                R_THROW(rc);
-            }
+        std::shared_ptr<::Service> forward_service;
+        ::ams::sm::MitmProcessInfo client_info = {};
+        const ::ams::Result acknowledge_rc = server->AcknowledgeMitmSession(std::addressof(forward_service), std::addressof(client_info));
+        const auto service_name = GetServiceNameForPortIndex(port_index);
+        if (R_FAILED(acknowledge_rc)) {
             if (IsBsdSystemServiceName(service_name)) {
-                PromoteBsdSystemMitmPendingToActive("accept_mitm_impl_success");
+                DropBsdSystemMitmPending("acknowledge_failed");
             }
-
-            wgnx::net_probe::logger::Log("AcceptMitmConnection(%s): AcceptMitmImpl succeeded session_id=%llu", service_name_text, static_cast<unsigned long long>(session_id));
-            mitm_trace::LogSessionConnected(service_name, session_id, client_info);
-            LogMitmServerManagerState("accept_success");
-            R_SUCCEED();
+            wgnx::net_probe::logger::Log(
+                "AcceptMitmConnection(%s): AcknowledgeMitmSession failed rc=0x%08X",
+                service_name_text,
+                acknowledge_rc.GetValue()
+            );
+            R_THROW(acknowledge_rc);
+        }
+        const u64 session_id = mitm_trace::AllocateSessionId();
+        wgnx::net_probe::logger::Log(
+            "AcceptMitmConnection(%s): acknowledged pid=0x%016llx program_id=0x%016llx forward=%p",
+            service_name_text,
+            static_cast<unsigned long long>(client_info.process_id.value),
+            static_cast<unsigned long long>(client_info.program_id.value),
+            forward_service.get()
+        );
+        if (forward_service != nullptr) {
+            mitm_trace::LogForwardServiceState(
+                service_name,
+                client_info,
+                session_id,
+                "acknowledged_forward",
+                forward_service->session,
+                forward_service->own_handle,
+                forward_service->object_id,
+                forward_service->pointer_buffer_size
+            );
         }
 
-        virtual ::ams::Result OnNeedsToAccept(int port_index, Server *server) override {
-            R_RETURN(this->AcceptMitmConnection(port_index, server));
+        EnsureMitmObjectAllocatorInitialized();
+        std::shared_ptr<::Service> local_forward = forward_service;
+        wgnx::net_probe::logger::Log(
+            "AcceptMitmConnection(%s): reusing forward service local_forward=%p",
+            service_name_text,
+            local_forward.get()
+        );
+        if (local_forward != nullptr) {
+            mitm_trace::LogForwardServiceState(
+                service_name,
+                client_info,
+                session_id,
+                "local_forward_before_create",
+                local_forward->session,
+                local_forward->own_handle,
+                local_forward->object_id,
+                local_forward->pointer_buffer_size
+            );
         }
+        auto service_object = ::ams::sf::CreateSharedObjectEmplaced<IPassiveMitmService, PassiveMitmService>(
+            static_cast<::ams::MemoryResource*>(std::addressof(g_mitm_object_memory_resource)),
+            std::move(local_forward),
+            client_info,
+            service_name,
+            session_id
+        );
+        wgnx::net_probe::logger::Log(
+            "AcceptMitmConnection(%s): calling AcceptMitmImpl session_id=%llu",
+            service_name_text,
+            static_cast<unsigned long long>(session_id)
+        );
+
+        if (forward_service != nullptr) {
+            mitm_trace::LogForwardServiceState(
+                service_name,
+                client_info,
+                session_id,
+                "forward_before_accept",
+                forward_service->session,
+                forward_service->own_handle,
+                forward_service->object_id,
+                forward_service->pointer_buffer_size
+            );
+        }
+        const ::ams::Result rc =
+            this->AcceptMitmImpl(server, std::move(service_object), client_info, session_id, std::move(forward_service));
+        if (R_FAILED(rc)) {
+            if (IsBsdSystemServiceName(service_name)) {
+                DropBsdSystemMitmPending("accept_mitm_impl_failed");
+            }
+            wgnx::net_probe::logger::Log("AcceptMitmConnection(%s): AcceptMitmImpl failed rc=0x%08X", service_name_text, rc.GetValue());
+            mitm_trace::LogSessionAcceptFailure(service_name, client_info, rc);
+            R_THROW(rc);
+        }
+        if (IsBsdSystemServiceName(service_name)) {
+            PromoteBsdSystemMitmPendingToActive("accept_mitm_impl_success");
+        }
+
+        wgnx::net_probe::logger::Log(
+            "AcceptMitmConnection(%s): AcceptMitmImpl succeeded session_id=%llu",
+            service_name_text,
+            static_cast<unsigned long long>(session_id)
+        );
+        mitm_trace::LogSessionConnected(service_name, session_id, client_info);
+        LogMitmServerManagerState("accept_success");
+        R_SUCCEED();
+    }
+
+    virtual ::ams::Result OnNeedsToAccept(int port_index, Server* server) override {
+        R_RETURN(this->AcceptMitmConnection(port_index, server));
+    }
 };
 
 constinit ::ams::util::TypedStorage<MitmServerManager> g_mitm_server_manager_storage = {};
-constinit MitmServerManager *g_mitm_server_manager = nullptr;
+constinit MitmServerManager* g_mitm_server_manager = nullptr;
 using ControlServerManager = ::ams::sf::hipc::ServerManager<1>;
 constinit ::ams::util::TypedStorage<ControlServerManager> g_control_server_manager_storage = {};
-constinit ControlServerManager *g_control_server_manager = nullptr;
+constinit ControlServerManager* g_control_server_manager = nullptr;
 constinit ::ams::sf::UnmanagedServiceObject<IProbeControlService, ProbeControlService> g_control_service_object;
 
 constexpr size_t MitmServerThreadStackSize = 64 * 1024;
@@ -900,7 +915,7 @@ constinit bool g_boot_watch_thread_started = false;
 constinit bool g_watchdog_thread_started = false;
 constinit bool g_servers_started = false;
 
-constexpr const char *g_boot_watch_services[] = {
+constexpr const char* g_boot_watch_services[] = {
     "sfdnsres",
     "dns:priv",
     "nsd:u",
@@ -915,7 +930,7 @@ constexpr size_t QueryTraceDrainBatchSize = 64;
 constinit u64 g_query_trace_cursor = 0;
 constinit u64 g_query_trace_dropped_total = 0;
 
-void EncodeServiceName(char *out, size_t out_size, const ::ams::sm::ServiceName &service_name) {
+void EncodeServiceName(char* out, size_t out_size, const ::ams::sm::ServiceName& service_name) {
     if (out == nullptr || out_size == 0) {
         return;
     }
@@ -933,78 +948,78 @@ void EncodeServiceName(char *out, size_t out_size, const ::ams::sm::ServiceName 
     std::snprintf(out, out_size, "%.*s", static_cast<int>(length), service_name.name);
 }
 
-const char *GetQueryTraceEventName(::ams::sf::hipc::mitm_monitor::QueryTraceEventType event_type) {
+const char* GetQueryTraceEventName(::ams::sf::hipc::mitm_monitor::QueryTraceEventType event_type) {
     using EventType = ::ams::sf::hipc::mitm_monitor::QueryTraceEventType;
     switch (event_type) {
-        case EventType::RegisterHandle:
-            return "register_handle";
-        case EventType::RegisterSessionBegin:
-            return "register_session_begin";
-        case EventType::RegisterSessionEnd:
-            return "register_session_end";
-        case EventType::ServerThreadCreateBegin:
-            return "server_thread_create_begin";
-        case EventType::ServerThreadCreateEnd:
-            return "server_thread_create_end";
-        case EventType::ServerThreadStart:
-            return "server_thread_start";
-        case EventType::ServerLoopBegin:
-            return "server_loop_begin";
-        case EventType::ServerLoopEnd:
-            return "server_loop_end";
-        case EventType::WaitLoopBegin:
-            return "wait_loop_begin";
-        case EventType::WaitLinkDeferredBegin:
-            return "wait_link_deferred_begin";
-        case EventType::WaitLinkDeferredEnd:
-            return "wait_link_deferred_end";
-        case EventType::WaitAnyBegin:
-            return "wait_any_begin";
-        case EventType::WaitAnyEnd:
-            return "wait_any_end";
-        case EventType::WaitSelectedStop:
-            return "wait_selected_stop";
-        case EventType::WaitSelectedNotify:
-            return "wait_selected_notify";
-        case EventType::WaitSelectedSession:
-            return "wait_selected_session";
-        case EventType::WaitSelectedOther:
-            return "wait_selected_other";
-        case EventType::NotifyCleared:
-            return "notify_cleared";
-        case EventType::HolderUnlinked:
-            return "holder_unlinked";
-        case EventType::WaitAndProcessBegin:
-            return "wait_and_process_begin";
-        case EventType::WaitAndProcessEnd:
-            return "wait_and_process_end";
-        case EventType::ProcessBegin:
-            return "process_begin";
-        case EventType::ProcessEnd:
-            return "process_end";
-        case EventType::ProcessSessionBegin:
-            return "process_session_begin";
-        case EventType::ProcessSessionReceiveBegin:
-            return "process_session_receive_begin";
-        case EventType::ProcessSessionReceiveEnd:
-            return "process_session_receive_end";
-        case EventType::ProcessSessionDispatchBegin:
-            return "process_session_dispatch_begin";
-        case EventType::ProcessSessionDispatchEnd:
-            return "process_session_dispatch_end";
-        case EventType::ProcessSessionEnd:
-            return "process_session_end";
-        case EventType::ShouldMitmBegin:
-            return "should_mitm_begin";
-        case EventType::ShouldMitmEnd:
-            return "should_mitm_end";
-        case EventType::ShouldMitmPolicyDecision:
-            return "should_mitm_policy_decision";
+    case EventType::RegisterHandle:
+        return "register_handle";
+    case EventType::RegisterSessionBegin:
+        return "register_session_begin";
+    case EventType::RegisterSessionEnd:
+        return "register_session_end";
+    case EventType::ServerThreadCreateBegin:
+        return "server_thread_create_begin";
+    case EventType::ServerThreadCreateEnd:
+        return "server_thread_create_end";
+    case EventType::ServerThreadStart:
+        return "server_thread_start";
+    case EventType::ServerLoopBegin:
+        return "server_loop_begin";
+    case EventType::ServerLoopEnd:
+        return "server_loop_end";
+    case EventType::WaitLoopBegin:
+        return "wait_loop_begin";
+    case EventType::WaitLinkDeferredBegin:
+        return "wait_link_deferred_begin";
+    case EventType::WaitLinkDeferredEnd:
+        return "wait_link_deferred_end";
+    case EventType::WaitAnyBegin:
+        return "wait_any_begin";
+    case EventType::WaitAnyEnd:
+        return "wait_any_end";
+    case EventType::WaitSelectedStop:
+        return "wait_selected_stop";
+    case EventType::WaitSelectedNotify:
+        return "wait_selected_notify";
+    case EventType::WaitSelectedSession:
+        return "wait_selected_session";
+    case EventType::WaitSelectedOther:
+        return "wait_selected_other";
+    case EventType::NotifyCleared:
+        return "notify_cleared";
+    case EventType::HolderUnlinked:
+        return "holder_unlinked";
+    case EventType::WaitAndProcessBegin:
+        return "wait_and_process_begin";
+    case EventType::WaitAndProcessEnd:
+        return "wait_and_process_end";
+    case EventType::ProcessBegin:
+        return "process_begin";
+    case EventType::ProcessEnd:
+        return "process_end";
+    case EventType::ProcessSessionBegin:
+        return "process_session_begin";
+    case EventType::ProcessSessionReceiveBegin:
+        return "process_session_receive_begin";
+    case EventType::ProcessSessionReceiveEnd:
+        return "process_session_receive_end";
+    case EventType::ProcessSessionDispatchBegin:
+        return "process_session_dispatch_begin";
+    case EventType::ProcessSessionDispatchEnd:
+        return "process_session_dispatch_end";
+    case EventType::ProcessSessionEnd:
+        return "process_session_end";
+    case EventType::ShouldMitmBegin:
+        return "should_mitm_begin";
+    case EventType::ShouldMitmEnd:
+        return "should_mitm_end";
+    case EventType::ShouldMitmPolicyDecision:
+        return "should_mitm_policy_decision";
         AMS_UNREACHABLE_DEFAULT_CASE();
     }
 }
 
-void LogMitmServerManagerState(const char *phase) {
+void LogMitmServerManagerState(const char* phase) {
     if (g_mitm_server_manager == nullptr) {
         wgnx::net_probe::logger::Log("MITM manager state: phase=%s unavailable=1", phase);
         return;
@@ -1013,7 +1028,8 @@ void LogMitmServerManagerState(const char *phase) {
     const auto resources = g_mitm_server_manager->GetDebugResourceState();
     const auto wait_state = g_mitm_server_manager->GetDebugMultiWaitState();
     wgnx::net_probe::logger::Log(
-        "MITM manager state: phase=%s resources[sessions=%zu/%zu servers=%zu/%zu domains=%zu/%zu] active_wait[total=%zu server=%zu session=%zu mitm=%zu other=%zu] deferred_wait[total=%zu server=%zu session=%zu mitm=%zu other=%zu]",
+        "MITM manager state: phase=%s resources[sessions=%zu/%zu servers=%zu/%zu domains=%zu/%zu] active_wait[total=%zu server=%zu "
+        "session=%zu mitm=%zu other=%zu] deferred_wait[total=%zu server=%zu session=%zu mitm=%zu other=%zu]",
         phase,
         resources.allocated_sessions,
         resources.max_sessions,
@@ -1030,10 +1046,11 @@ void LogMitmServerManagerState(const char *phase) {
         wait_state.deferred.server,
         wait_state.deferred.session,
         wait_state.deferred.mitm_server,
-        wait_state.deferred.other);
+        wait_state.deferred.other
+    );
 }
 
-void LogMitmServerManagerResourceState(const char *phase) {
+void LogMitmServerManagerResourceState(const char* phase) {
     if (g_mitm_server_manager == nullptr) {
         wgnx::net_probe::logger::Log("MITM manager resources: phase=%s unavailable=1", phase);
         return;
@@ -1048,24 +1065,25 @@ void LogMitmServerManagerResourceState(const char *phase) {
         resources.allocated_servers,
         resources.max_servers,
         resources.allocated_domains,
-        resources.max_domains);
+        resources.max_domains
+    );
 }
 
-void MitmServerThreadMain(void *) {
+void MitmServerThreadMain(void*) {
     ::ams::os::SignalEvent(std::addressof(g_mitm_thread_ready_event));
     wgnx::net_probe::logger::Log("MITM thread entering server loop");
     g_mitm_server_manager->LoopProcess();
     wgnx::net_probe::logger::Log("MITM thread leaving server loop");
 }
 
-void ControlServerThreadMain(void *) {
+void ControlServerThreadMain(void*) {
     ::ams::os::SignalEvent(std::addressof(g_control_thread_ready_event));
     wgnx::net_probe::logger::Log("Control thread entering server loop");
     g_control_server_manager->LoopProcess();
     wgnx::net_probe::logger::Log("Control thread leaving server loop");
 }
 
-void LogHasMitmState(const char *service_name, const char *phase) {
+void LogHasMitmState(const char* service_name, const char* phase) {
     bool has_mitm = false;
     const ::ams::Result rc = ::ams::sm::mitm::HasMitm(std::addressof(has_mitm), ::ams::sm::ServiceName::Encode(service_name));
     if (R_SUCCEEDED(rc)) {
@@ -1075,14 +1093,14 @@ void LogHasMitmState(const char *service_name, const char *phase) {
     }
 }
 
-void LogAllHasMitmStates(const char *phase) {
-    for (const auto &target : g_mitm_target_configs) {
+void LogAllHasMitmStates(const char* phase) {
+    for (const auto& target : g_mitm_target_configs) {
         LogHasMitmState(target.service_name, phase);
     }
 }
 
-void LogEnabledTargetHasMitmStates(const char *phase) {
-    for (const auto &target : g_mitm_target_configs) {
+void LogEnabledTargetHasMitmStates(const char* phase) {
+    for (const auto& target : g_mitm_target_configs) {
         if (!target.enabled) {
             continue;
         }
@@ -1090,24 +1108,21 @@ void LogEnabledTargetHasMitmStates(const char *phase) {
     }
 }
 
-void LogResolverHasMitmStates(const char *phase) {
-    for (const char *service_name : g_boot_watch_services) {
+void LogResolverHasMitmStates(const char* phase) {
+    for (const char* service_name : g_boot_watch_services) {
         LogHasMitmState(service_name, phase);
     }
 }
 
-void LogMitmQueryTelemetry(const char *phase, bool force_summary) {
+void LogMitmQueryTelemetry(const char* phase, bool force_summary) {
     namespace monitor = ::ams::sf::hipc::mitm_monitor;
 
     size_t drained_total = 0;
     while (true) {
         monitor::QueryTraceRecord records[QueryTraceDrainBatchSize] = {};
         u64 dropped = 0;
-        const size_t drained = monitor::DrainQueryTrace(
-            records,
-            std::size(records),
-            std::addressof(g_query_trace_cursor),
-            std::addressof(dropped));
+        const size_t drained =
+            monitor::DrainQueryTrace(records, std::size(records), std::addressof(g_query_trace_cursor), std::addressof(dropped));
 
         if (dropped != 0) {
             g_query_trace_dropped_total += dropped;
@@ -1116,15 +1131,18 @@ void LogMitmQueryTelemetry(const char *phase, bool force_summary) {
                 phase,
                 static_cast<unsigned long long>(dropped),
                 static_cast<unsigned long long>(g_query_trace_dropped_total),
-                static_cast<unsigned long long>(g_query_trace_cursor));
+                static_cast<unsigned long long>(g_query_trace_cursor)
+            );
         }
 
         for (size_t i = 0; i < drained; ++i) {
-            const auto &record = records[i];
+            const auto& record = records[i];
             char service_name[::ams::sm::ServiceName::MaxLength + 8] = {};
             EncodeServiceName(service_name, sizeof(service_name), record.service_name);
             wgnx::net_probe::logger::Log(
-                "MITM query trace: phase=%s seq=%llu tick=%llu event=%s service=%s has_client=%u pid=0x%016llx program_id=0x%016llx has_result=%u result=%u query_handle=%d holder_tag=%u detail_code=%u detail0=%u detail1=%u detail2=%u detail3=%u has_detail_result=%u detail_result=0x%08X",
+                "MITM query trace: phase=%s seq=%llu tick=%llu event=%s service=%s has_client=%u pid=0x%016llx "
+                "program_id=0x%016llx has_result=%u result=%u query_handle=%d holder_tag=%u detail_code=%u "
+                "detail0=%u detail1=%u detail2=%u detail3=%u has_detail_result=%u detail_result=0x%08X",
                 phase,
                 static_cast<unsigned long long>(record.sequence),
                 static_cast<unsigned long long>(record.tick),
@@ -1143,7 +1161,8 @@ void LogMitmQueryTelemetry(const char *phase, bool force_summary) {
                 record.detail_value2,
                 record.detail_value3,
                 record.has_detail_result ? 1u : 0u,
-                record.has_detail_result ? record.detail_result_value : 0u);
+                record.has_detail_result ? record.detail_result_value : 0u
+            );
         }
 
         drained_total += drained;
@@ -1155,7 +1174,10 @@ void LogMitmQueryTelemetry(const char *phase, bool force_summary) {
     const auto summary = monitor::GetQueryTraceSummary();
     if (force_summary || drained_total != 0) {
         wgnx::net_probe::logger::Log(
-            "MITM query summary: phase=%s written=%llu cursor=%llu dropped_total=%llu register=%llu reg_session=%llu/%llu thread_create=%llu/%llu thread_start=%llu loop=%llu/%llu wait_loop=%llu wait_any=%llu/%llu selected[stop=%llu notify=%llu session=%llu other=%llu] notify_cleared=%llu unlinked=%llu wait_process=%llu/%llu process=%llu/%llu session=%llu/%llu recv=%llu/%llu dispatch=%llu/%llu should=%llu/%llu pending_should=%lld pending_dispatch=%lld",
+            "MITM query summary: phase=%s written=%llu cursor=%llu dropped_total=%llu register=%llu reg_session=%llu/%llu "
+            "thread_create=%llu/%llu thread_start=%llu loop=%llu/%llu wait_loop=%llu wait_any=%llu/%llu selected[stop=%llu notify=%llu "
+            "session=%llu other=%llu] notify_cleared=%llu unlinked=%llu wait_process=%llu/%llu process=%llu/%llu session=%llu/%llu "
+            "recv=%llu/%llu dispatch=%llu/%llu should=%llu/%llu pending_should=%lld pending_dispatch=%lld",
             phase,
             static_cast<unsigned long long>(summary.written),
             static_cast<unsigned long long>(g_query_trace_cursor),
@@ -1190,16 +1212,19 @@ void LogMitmQueryTelemetry(const char *phase, bool force_summary) {
             static_cast<unsigned long long>(summary.should_mitm_begin_count),
             static_cast<unsigned long long>(summary.should_mitm_end_count),
             static_cast<long long>(summary.should_mitm_begin_count) - static_cast<long long>(summary.should_mitm_end_count),
-            static_cast<long long>(summary.process_session_dispatch_begin_count) - static_cast<long long>(summary.process_session_dispatch_end_count));
+            static_cast<long long>(summary.process_session_dispatch_begin_count) -
+                static_cast<long long>(summary.process_session_dispatch_end_count)
+        );
     }
 }
 
-void BootWatchThreadMain(void *) {
+void BootWatchThreadMain(void*) {
     ::ams::os::SignalEvent(std::addressof(g_boot_watch_thread_ready_event));
     wgnx::net_probe::logger::Log(
         "BootWatch thread started: samples=%zu interval_ms=%lld",
         BootWatchSampleCount,
-        static_cast<long long>(BootWatchSampleInterval.GetMilliSeconds()));
+        static_cast<long long>(BootWatchSampleInterval.GetMilliSeconds())
+    );
 
     for (size_t sample_index = 0; sample_index < BootWatchSampleCount; ++sample_index) {
         char phase[64];
@@ -1208,7 +1233,8 @@ void BootWatchThreadMain(void *) {
             sizeof(phase),
             "boot_watch_%zu_t+%us",
             sample_index,
-            static_cast<unsigned>(sample_index * BootWatchSampleInterval.GetSeconds()));
+            static_cast<unsigned>(sample_index * BootWatchSampleInterval.GetSeconds())
+        );
         LogResolverHasMitmStates(phase);
 
         if (sample_index + 1 == BootWatchSampleCount) {
@@ -1224,11 +1250,12 @@ void BootWatchThreadMain(void *) {
     wgnx::net_probe::logger::Log("BootWatch thread completed");
 }
 
-void WatchdogThreadMain(void *) {
+void WatchdogThreadMain(void*) {
     ::ams::os::SignalEvent(std::addressof(g_watchdog_thread_ready_event));
     wgnx::net_probe::logger::Log(
         "Watchdog thread started: interval_ms=%lld",
-        static_cast<long long>(WatchdogSampleInterval.GetMilliSeconds()));
+        static_cast<long long>(WatchdogSampleInterval.GetMilliSeconds())
+    );
 
     size_t sample_index = 0;
     size_t previous_tracked_session_count = 0;
@@ -1247,15 +1274,10 @@ void WatchdogThreadMain(void *) {
 
         const auto query_summary = ::ams::sf::hipc::mitm_monitor::GetQueryTraceSummary();
         const bool has_pending_query_trace = query_summary.written != g_query_trace_cursor;
-        const bool should_log_idle_query_summary =
-            tracked_session_count == 0 &&
-            post_teardown_samples_remaining == 0 &&
-            ++idle_query_summary_samples >= WatchdogIdleQuerySummaryIntervalCount;
+        const bool should_log_idle_query_summary = tracked_session_count == 0 && post_teardown_samples_remaining == 0 &&
+                                                   ++idle_query_summary_samples >= WatchdogIdleQuerySummaryIntervalCount;
         const bool should_log =
-            tracked_session_count != 0 ||
-            post_teardown_samples_remaining != 0 ||
-            has_pending_query_trace ||
-            should_log_idle_query_summary;
+            tracked_session_count != 0 || post_teardown_samples_remaining != 0 || has_pending_query_trace || should_log_idle_query_summary;
         previous_tracked_session_count = tracked_session_count;
         if (!should_log) {
             continue;
@@ -1264,10 +1286,7 @@ void WatchdogThreadMain(void *) {
 
         char phase[64];
         std::snprintf(phase, sizeof(phase), "watchdog_%zu", sample_index++);
-        wgnx::net_probe::logger::Log(
-            "Watchdog snapshot: phase=%s tracked_sessions=%zu",
-            phase,
-            tracked_session_count);
+        wgnx::net_probe::logger::Log("Watchdog snapshot: phase=%s tracked_sessions=%zu", phase, tracked_session_count);
         LogMitmQueryTelemetry(phase, should_log_idle_query_summary);
         LogMitmServerManagerResourceState(phase);
         LogEnabledTargetHasMitmStates(phase);
@@ -1280,23 +1299,20 @@ void WatchdogThreadMain(void *) {
     }
 }
 
-void ClearResidualMitmState(const char *service_name, const char *phase) {
+void ClearResidualMitmState(const char* service_name, const char* phase) {
     const auto encoded_service_name = ::ams::sm::ServiceName::Encode(service_name);
 
     bool has_mitm = false;
     ::ams::Result has_mitm_rc = ::ams::sm::mitm::HasMitm(std::addressof(has_mitm), encoded_service_name);
     if (R_SUCCEEDED(has_mitm_rc)) {
-        wgnx::net_probe::logger::Log(
-            "ClearResidualMitmState(%s) %s: has_mitm=%u",
-            service_name,
-            phase,
-            has_mitm ? 1u : 0u);
+        wgnx::net_probe::logger::Log("ClearResidualMitmState(%s) %s: has_mitm=%u", service_name, phase, has_mitm ? 1u : 0u);
     } else {
         wgnx::net_probe::logger::Log(
             "ClearResidualMitmState(%s) %s: HasMitm failed rc=0x%08X",
             service_name,
             phase,
-            has_mitm_rc.GetValue());
+            has_mitm_rc.GetValue()
+        );
     }
 
     if (R_SUCCEEDED(has_mitm_rc) && has_mitm) {
@@ -1305,7 +1321,8 @@ void ClearResidualMitmState(const char *service_name, const char *phase) {
             "ClearResidualMitmState(%s) %s: UninstallMitm rc=0x%08X",
             service_name,
             phase,
-            uninstall_rc.GetValue());
+            uninstall_rc.GetValue()
+        );
     }
 
     const ::ams::Result clear_future_rc = ::ams::sm::mitm::ClearFutureMitm(encoded_service_name);
@@ -1313,27 +1330,25 @@ void ClearResidualMitmState(const char *service_name, const char *phase) {
         "ClearResidualMitmState(%s) %s: ClearFutureMitm rc=0x%08X",
         service_name,
         phase,
-        clear_future_rc.GetValue());
+        clear_future_rc.GetValue()
+    );
 
     has_mitm = false;
     has_mitm_rc = ::ams::sm::mitm::HasMitm(std::addressof(has_mitm), encoded_service_name);
     if (R_SUCCEEDED(has_mitm_rc)) {
-        wgnx::net_probe::logger::Log(
-            "ClearResidualMitmState(%s) %s: final_has_mitm=%u",
-            service_name,
-            phase,
-            has_mitm ? 1u : 0u);
+        wgnx::net_probe::logger::Log("ClearResidualMitmState(%s) %s: final_has_mitm=%u", service_name, phase, has_mitm ? 1u : 0u);
     } else {
         wgnx::net_probe::logger::Log(
             "ClearResidualMitmState(%s) %s: final HasMitm failed rc=0x%08X",
             service_name,
             phase,
-            has_mitm_rc.GetValue());
+            has_mitm_rc.GetValue()
+        );
     }
 }
 
-void ClearAllResidualMitmStates(const char *phase) {
-    for (const auto &target : g_mitm_target_configs) {
+void ClearAllResidualMitmStates(const char* phase) {
+    for (const auto& target : g_mitm_target_configs) {
         if (!target.enabled) {
             continue;
         }
@@ -1362,13 +1377,14 @@ void EnsureThreadReadyEventsInitialized() {
     g_thread_ready_events_initialized = true;
 }
 
-bool WaitForThreadReady(const char *thread_name, ::ams::os::EventType *event, ::ams::TimeSpan timeout) {
+bool WaitForThreadReady(const char* thread_name, ::ams::os::EventType* event, ::ams::TimeSpan timeout) {
     AMS_ABORT_UNLESS(event != nullptr);
 
     wgnx::net_probe::logger::Log(
         "StartServers: waiting for %s ready timeout_ms=%lld",
         thread_name,
-        static_cast<long long>(timeout.GetMilliSeconds()));
+        static_cast<long long>(timeout.GetMilliSeconds())
+    );
     if (!::ams::os::TimedWaitEvent(event, timeout)) {
         wgnx::net_probe::logger::Log("StartServers: %s ready timeout", thread_name);
         return false;
@@ -1495,7 +1511,8 @@ bool StartServers() {
     const ::ams::Result control_register_rc = g_control_server_manager->RegisterObjectForServer(
         g_control_service_object.GetShared(),
         ::ams::sm::ServiceName::Encode("wgp:ctl"),
-        ControlMaxSessions);
+        ControlMaxSessions
+    );
     if (R_FAILED(control_register_rc)) {
         wgnx::net_probe::logger::Log("RegisterObjectForServer(wgp:ctl) failed rc=0x%08X", control_register_rc.GetValue());
         std::destroy_at(g_control_server_manager);
@@ -1511,7 +1528,8 @@ bool StartServers() {
         nullptr,
         g_control_server_thread_stack,
         sizeof(g_control_server_thread_stack),
-        21);
+        21
+    );
     if (R_FAILED(control_thread_rc)) {
         wgnx::net_probe::logger::Log("CreateThread(wgnx-ctl) failed rc=0x%08X", control_thread_rc.GetValue());
         std::destroy_at(g_control_server_manager);
@@ -1534,11 +1552,9 @@ bool StartServers() {
     u32 registered_server_count = 0;
     u32 failed_server_count = 0;
     for (size_t i = 0; i < std::size(g_mitm_target_configs); ++i) {
-        const auto &target = g_mitm_target_configs[i];
+        const auto& target = g_mitm_target_configs[i];
         if (!target.enabled) {
-            wgnx::net_probe::logger::Log(
-                "Skipping MITM server for %s: disabled by build config",
-                target.service_name);
+            wgnx::net_probe::logger::Log("Skipping MITM server for %s: disabled by build config", target.service_name);
             continue;
         }
         ++requested_server_count;
@@ -1547,7 +1563,8 @@ bool StartServers() {
         const ::ams::Result rc = g_mitm_server_manager->RegisterMitmServer(
             static_cast<int>(i),
             ::ams::sm::ServiceName::Encode(target.service_name),
-            target.should_mitm);
+            target.should_mitm
+        );
         if (R_SUCCEEDED(rc)) {
             ++registered_server_count;
             wgnx::net_probe::logger::Log("Registered MITM server for %s", target.service_name);
@@ -1563,7 +1580,8 @@ bool StartServers() {
         "Registered MITM servers: requested=%u active=%u failed=%u",
         requested_server_count,
         registered_server_count,
-        failed_server_count);
+        failed_server_count
+    );
 
     if (failed_server_count != 0) {
         wgnx::net_probe::logger::Log("StartServers: MITM registration failed; tearing down partial MITM state");
@@ -1587,7 +1605,8 @@ bool StartServers() {
         nullptr,
         g_mitm_server_thread_stack,
         sizeof(g_mitm_server_thread_stack),
-        21);
+        21
+    );
     if (R_FAILED(thread_rc)) {
         wgnx::net_probe::logger::Log("CreateThread(wgnx-mitm) failed rc=0x%08X", thread_rc.GetValue());
         StopAndDestroyMitmServerManager(false);
@@ -1612,7 +1631,8 @@ bool StartServers() {
         nullptr,
         g_boot_watch_thread_stack,
         sizeof(g_boot_watch_thread_stack),
-        20);
+        20
+    );
     if (R_FAILED(boot_watch_thread_rc)) {
         wgnx::net_probe::logger::Log("CreateThread(wgnx-boot-watch) failed rc=0x%08X", boot_watch_thread_rc.GetValue());
     } else {
@@ -1629,7 +1649,8 @@ bool StartServers() {
         nullptr,
         g_watchdog_thread_stack,
         sizeof(g_watchdog_thread_stack),
-        19);
+        19
+    );
     if (R_FAILED(watchdog_thread_rc)) {
         wgnx::net_probe::logger::Log("CreateThread(wgnx-watchdog) failed rc=0x%08X", watchdog_thread_rc.GetValue());
     } else {

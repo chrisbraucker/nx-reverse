@@ -12,9 +12,9 @@ namespace wgnx::net_probe::logger {
 
 namespace {
 
-constexpr const char *LogRootDirectory = "sdmc:/nxrv";
-constexpr const char *LogDirectory = "sdmc:/nxrv/probe";
-constexpr const char *LogFilePath = "sdmc:/nxrv/probe/net-probe.log";
+constexpr const char* LogRootDirectory = "sdmc:/nxrv";
+constexpr const char* LogDirectory = "sdmc:/nxrv/probe";
+constexpr const char* LogFilePath = "sdmc:/nxrv/probe/net-probe.log";
 constexpr size_t QueueEntryCapacity = 896;
 constexpr size_t BinaryQueueEntryCapacity = 96;
 constexpr size_t MaxQueuedPathLength = 96;
@@ -74,7 +74,7 @@ bool g_flush_thread_stop_requested = false;
 alignas(::ams::os::ThreadStackAlignment) u8 g_flush_thread_stack[8 * 1024] = {};
 ams::os::ThreadType g_flush_thread = {};
 
-void EmitDebugString(const char *line, size_t line_size) {
+void EmitDebugString(const char* line, size_t line_size) {
     if (line == nullptr || line_size == 0) {
         return;
     }
@@ -108,32 +108,28 @@ void EnsureFileBackendInitialized() {
     g_file_backend_state = FileBackendState::Ready;
 }
 
-void WriteBytesToFile(const char *path, const void *data, size_t data_size) {
+void WriteBytesToFile(const char* path, const void* data, size_t data_size) {
     EnsureFileBackendInitialized();
     if (g_file_backend_state != FileBackendState::Ready || path == nullptr || data == nullptr || data_size == 0) {
         return;
     }
 
     ams::fs::FileHandle file;
-    const ams::Result open_rc = ams::fs::OpenFile(
-        std::addressof(file),
-        path,
-        ams::fs::OpenMode_Write | ams::fs::OpenMode_AllowAppend);
+    const ams::Result open_rc = ams::fs::OpenFile(std::addressof(file), path, ams::fs::OpenMode_Write | ams::fs::OpenMode_AllowAppend);
     if (R_FAILED(open_rc)) {
         const ams::Result create_rc = ams::fs::CreateFile(path, 0);
         if (R_FAILED(create_rc) && !ams::fs::ResultPathAlreadyExists::Includes(create_rc)) {
             return;
         }
 
-        const ams::Result retry_rc = ams::fs::OpenFile(
-            std::addressof(file),
-            path,
-            ams::fs::OpenMode_Write | ams::fs::OpenMode_AllowAppend);
+        const ams::Result retry_rc = ams::fs::OpenFile(std::addressof(file), path, ams::fs::OpenMode_Write | ams::fs::OpenMode_AllowAppend);
         if (R_FAILED(retry_rc)) {
             return;
         }
     }
-    ON_SCOPE_EXIT { ams::fs::CloseFile(file); };
+    ON_SCOPE_EXIT {
+        ams::fs::CloseFile(file);
+    };
 
     s64 file_size = 0;
     if (R_FAILED(ams::fs::GetFileSize(std::addressof(file_size), file))) {
@@ -145,7 +141,7 @@ void WriteBytesToFile(const char *path, const void *data, size_t data_size) {
     }
 }
 
-void WriteLineToFile(const char *path, const char *line, size_t line_size) {
+void WriteLineToFile(const char* path, const char* line, size_t line_size) {
     WriteBytesToFile(path, line, line_size);
 }
 
@@ -158,7 +154,7 @@ void EnsureFlushEventInitialized() {
     g_flush_event_initialized = true;
 }
 
-BlobQueueKind GetBlobQueueKind(const char *path) {
+BlobQueueKind GetBlobQueueKind(const char* path) {
     if (path == nullptr) {
         return BlobQueueKind::Generic;
     }
@@ -176,29 +172,29 @@ BlobQueueKind GetBlobQueueKind(const char *path) {
     return BlobQueueKind::Generic;
 }
 
-const char *GetBlobQueueLabel(BlobQueueKind kind) {
+const char* GetBlobQueueLabel(BlobQueueKind kind) {
     switch (kind) {
-        case BlobQueueKind::Generic:
-            return "binary";
-        case BlobQueueKind::Nifm:
-            return "binary-nifm";
-        case BlobQueueKind::Bsd:
-            return "binary-bsd";
-        case BlobQueueKind::Ssl:
-            return "binary-ssl";
-        case BlobQueueKind::Count:
-            break;
+    case BlobQueueKind::Generic:
+        return "binary";
+    case BlobQueueKind::Nifm:
+        return "binary-nifm";
+    case BlobQueueKind::Bsd:
+        return "binary-bsd";
+    case BlobQueueKind::Ssl:
+        return "binary-ssl";
+    case BlobQueueKind::Count:
+        break;
     }
 
     return "binary";
 }
 
-bool QueueLineLocked(const char *path, size_t path_size, const char *line, size_t line_size) {
+bool QueueLineLocked(const char* path, size_t path_size, const char* line, size_t line_size) {
     if (path == nullptr || line == nullptr || path_size == 0 || line_size == 0) {
         return false;
     }
 
-    QueuedLine &entry = g_queue[g_queue_head];
+    QueuedLine& entry = g_queue[g_queue_head];
     if (g_queue_count == QueueEntryCapacity) {
         g_queue_tail = (g_queue_tail + 1) % QueueEntryCapacity;
         --g_queue_count;
@@ -220,7 +216,7 @@ bool QueueLineLocked(const char *path, size_t path_size, const char *line, size_
     return true;
 }
 
-bool PopLineLocked(QueuedLine *out) {
+bool PopLineLocked(QueuedLine* out) {
     if (out == nullptr || g_queue_count == 0) {
         return false;
     }
@@ -231,7 +227,7 @@ bool PopLineLocked(QueuedLine *out) {
     return true;
 }
 
-bool QueueBlobLocked(const char *path, size_t path_size, const void *data, size_t data_size) {
+bool QueueBlobLocked(const char* path, size_t path_size, const void* data, size_t data_size) {
     if (path == nullptr || data == nullptr || path_size == 0 || data_size == 0 || data_size > MaxQueuedBlobLength) {
         ++g_dropped_blob_counts[static_cast<size_t>(BlobQueueKind::Generic)];
         return false;
@@ -239,7 +235,7 @@ bool QueueBlobLocked(const char *path, size_t path_size, const void *data, size_
 
     const BlobQueueKind kind = GetBlobQueueKind(path);
     const size_t kind_index = static_cast<size_t>(kind);
-    QueuedBlob &entry = g_blob_queues[kind_index][g_blob_queue_heads[kind_index]];
+    QueuedBlob& entry = g_blob_queues[kind_index][g_blob_queue_heads[kind_index]];
     if (g_blob_queue_counts[kind_index] == BinaryQueueEntryCapacity) {
         g_blob_queue_tails[kind_index] = (g_blob_queue_tails[kind_index] + 1) % BinaryQueueEntryCapacity;
         --g_blob_queue_counts[kind_index];
@@ -258,7 +254,7 @@ bool QueueBlobLocked(const char *path, size_t path_size, const void *data, size_
     return true;
 }
 
-bool PopBlobLocked(BlobQueueKind kind, QueuedBlob *out) {
+bool PopBlobLocked(BlobQueueKind kind, QueuedBlob* out) {
     if (out == nullptr) {
         return false;
     }
@@ -274,7 +270,7 @@ bool PopBlobLocked(BlobQueueKind kind, QueuedBlob *out) {
     return true;
 }
 
-void EmitDropWarning(const char *label, u64 dropped_count) {
+void EmitDropWarning(const char* label, u64 dropped_count) {
     if (dropped_count == 0) {
         return;
     }
@@ -286,18 +282,19 @@ void EmitDropWarning(const char *label, u64 dropped_count) {
         "[%llu] logger dropped %llu queued %s entries\n",
         static_cast<unsigned long long>(svcGetSystemTick()),
         static_cast<unsigned long long>(dropped_count),
-        label);
+        label
+    );
     if (warning_written <= 0) {
         return;
     }
 
-    const size_t warning_size = static_cast<size_t>(
-        (warning_written < static_cast<int>(sizeof(warning))) ? warning_written : (sizeof(warning) - 1));
+    const size_t warning_size =
+        static_cast<size_t>((warning_written < static_cast<int>(sizeof(warning))) ? warning_written : (sizeof(warning) - 1));
     EmitDebugString(warning, warning_size);
     WriteLineToFile(LogFilePath, warning, warning_size);
 }
 
-void EmitPendingDropWarnings(u64 dropped_line_count, const u64 *dropped_blob_counts, size_t dropped_blob_count_size) {
+void EmitPendingDropWarnings(u64 dropped_line_count, const u64* dropped_blob_counts, size_t dropped_blob_count_size) {
     EmitDropWarning("text", dropped_line_count);
     for (size_t i = 0; i < dropped_blob_count_size; ++i) {
         const auto kind = static_cast<BlobQueueKind>(i);
@@ -352,7 +349,7 @@ void FlushPendingEntries() {
     }
 }
 
-void FlushThreadMain(void *) {
+void FlushThreadMain(void*) {
     while (true) {
         const bool signaled = ::ams::os::TimedWaitEvent(std::addressof(g_flush_event), FlushInterval);
         if (signaled) {
@@ -389,7 +386,8 @@ void StartFlushThread() {
         nullptr,
         g_flush_thread_stack,
         sizeof(g_flush_thread_stack),
-        23);
+        23
+    );
     AMS_ABORT_UNLESS(R_SUCCEEDED(rc));
     ::ams::os::SetThreadNamePointer(std::addressof(g_flush_thread), "wgnx-log");
     ::ams::os::StartThread(std::addressof(g_flush_thread));
@@ -421,7 +419,7 @@ void Initialize() {
     g_flush_thread_stop_requested = false;
     g_logger_initialized = true;
     StartFlushThread();
-    const char *banner = "\n=== net-probe boot ===\n";
+    const char* banner = "\n=== net-probe boot ===\n";
     EmitDebugString(banner, std::strlen(banner));
     QueueLineLocked(LogFilePath, std::strlen(LogFilePath), banner, std::strlen(banner));
     ::ams::os::SignalEvent(std::addressof(g_flush_event));
@@ -438,7 +436,7 @@ void Shutdown() {
     StopFlushThread();
 }
 
-void AppendLine(const char *path, const char *line) {
+void AppendLine(const char* path, const char* line) {
     if (path == nullptr || line == nullptr) {
         return;
     }
@@ -459,7 +457,7 @@ void AppendLine(const char *path, const char *line) {
     ::ams::os::SignalEvent(std::addressof(g_flush_event));
 }
 
-void AppendBytes(const char *path, const void *data, size_t size) {
+void AppendBytes(const char* path, const void* data, size_t size) {
     if (path == nullptr || data == nullptr || size == 0) {
         return;
     }
@@ -479,7 +477,7 @@ void AppendBytes(const char *path, const void *data, size_t size) {
     ::ams::os::SignalEvent(std::addressof(g_flush_event));
 }
 
-void Log(const char *fmt, ...) {
+void Log(const char* fmt, ...) {
     char message[512];
     va_list args;
     va_start(args, fmt);

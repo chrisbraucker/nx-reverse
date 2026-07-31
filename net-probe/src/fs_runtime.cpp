@@ -9,18 +9,18 @@ namespace wgnx::net_probe::fs_runtime {
 
 namespace {
 
-constexpr const char *SdMountName = "sdmc";
+constexpr const char* SdMountName = "sdmc";
 
 alignas(ams::os::MemoryPageSize) constinit u8 g_fs_heap[32 * 1024] = {};
 constinit ams::lmem::HeapHandle g_fs_heap_handle = nullptr;
 constinit bool g_fs_core_ready = false;
 constinit bool g_fs_ready = false;
 
-void *AllocateForFs(size_t size) {
+void* AllocateForFs(size_t size) {
     return ams::lmem::AllocateFromExpHeap(g_fs_heap_handle, size);
 }
 
-void DeallocateForFs(void *ptr, size_t size) {
+void DeallocateForFs(void* ptr, size_t size) {
     AMS_UNUSED(size);
     ams::lmem::FreeToExpHeap(g_fs_heap_handle, ptr);
 }
@@ -67,13 +67,7 @@ ams::Result ResolveSdPath(std::span<char> out_path, std::string_view path) {
 
     R_UNLESS(path.front() == '/', ams::fs::ResultInvalidPathFormat());
 
-    const int written = std::snprintf(
-        out_path.data(),
-        out_path.size(),
-        "%s:%.*s",
-        SdMountName,
-        ToPrintfLength(path),
-        path.data());
+    const int written = std::snprintf(out_path.data(), out_path.size(), "%s:%.*s", SdMountName, ToPrintfLength(path), path.data());
     R_UNLESS(written > 0 && static_cast<std::size_t>(written) < out_path.size(), ams::fs::ResultTooLongPath());
     R_SUCCEED();
 }
@@ -83,9 +77,9 @@ ams::Result EnsureDirectoryExists(std::string_view path) {
     R_TRY(ResolveSdPath(resolved_path, path));
 
     R_TRY_CATCH(ams::fs::CreateDirectory(resolved_path.data())) {
-        R_CATCH(ams::fs::ResultPathAlreadyExists) {
-        }
-    } R_END_TRY_CATCH;
+        R_CATCH(ams::fs::ResultPathAlreadyExists) {}
+    }
+    R_END_TRY_CATCH;
 
     R_SUCCEED();
 }
@@ -95,13 +89,15 @@ ams::Result WriteTextFile(std::string_view path, std::string_view src) {
     R_TRY(ResolveSdPath(resolved_path, path));
 
     R_TRY_CATCH(ams::fs::CreateFile(resolved_path.data(), 0)) {
-        R_CATCH(ams::fs::ResultPathAlreadyExists) {
-        }
-    } R_END_TRY_CATCH;
+        R_CATCH(ams::fs::ResultPathAlreadyExists) {}
+    }
+    R_END_TRY_CATCH;
 
     ams::fs::FileHandle file;
     R_TRY(ams::fs::OpenFile(std::addressof(file), resolved_path.data(), ams::fs::OpenMode_ReadWrite));
-    ON_SCOPE_EXIT { ams::fs::CloseFile(file); };
+    ON_SCOPE_EXIT {
+        ams::fs::CloseFile(file);
+    };
 
     R_TRY(ams::fs::SetFileSize(file, static_cast<s64>(src.size())));
     if (!src.empty()) {

@@ -3,17 +3,19 @@
 
 #include "logger.hpp"
 #include "mitm_service.hpp"
+#include "nxrv/build_info.hpp"
 
 namespace ams {
 
 void Main() {
     wgnx::net_probe::logger::Initialize();
     wgnx::net_probe::logger::Log("net-probe main entered");
-    wgnx::net_probe::logger::Log("Build: %s-%s", VERSION, BUILD_ID);
+    wgnx::net_probe::logger::Log("Build: %s", nxrv::build_info::VersionWithBuild);
     wgnx::net_probe::logger::Log(
         "process heap: addr=0x%016llx size=0x%zx",
         static_cast<unsigned long long>(::ams::os::GetMemoryHeapAddress()),
-        ::ams::os::GetMemoryHeapSize());
+        ::ams::os::GetMemoryHeapSize()
+    );
 
     if (!wgnx::net_probe::mitm::StartServers()) {
         wgnx::net_probe::logger::Log("Failed to start passive MITM services; exiting net-probe");

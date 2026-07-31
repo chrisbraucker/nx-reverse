@@ -34,22 +34,19 @@ struct ExpectedReply {
     std::span<const std::uint8_t> payload{};
 };
 
-void StoreBigEndian16(std::uint8_t *out, std::uint16_t value) {
+void StoreBigEndian16(std::uint8_t* out, std::uint16_t value) {
     out[0] = static_cast<std::uint8_t>(value >> 8);
     out[1] = static_cast<std::uint8_t>(value & 0xFFU);
 }
 
-std::uint16_t LoadBigEndian16(const std::uint8_t *in) {
-    return static_cast<std::uint16_t>(
-        (static_cast<std::uint16_t>(in[0]) << 8) |
-        static_cast<std::uint16_t>(in[1]));
+std::uint16_t LoadBigEndian16(const std::uint8_t* in) {
+    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(in[0]) << 8) | static_cast<std::uint16_t>(in[1]));
 }
 
-std::uint32_t AddChecksumBytes(std::uint32_t sum, const std::uint8_t *data, std::size_t size) {
+std::uint32_t AddChecksumBytes(std::uint32_t sum, const std::uint8_t* data, std::size_t size) {
     std::size_t offset = 0;
     while (offset + 1 < size) {
-        sum += (static_cast<std::uint32_t>(data[offset]) << 8) |
-               static_cast<std::uint32_t>(data[offset + 1]);
+        sum += (static_cast<std::uint32_t>(data[offset]) << 8) | static_cast<std::uint32_t>(data[offset + 1]);
         offset += 2;
     }
     if (offset < size) {
@@ -65,15 +62,11 @@ std::uint16_t FinishChecksum(std::uint32_t sum) {
     return static_cast<std::uint16_t>(~sum & 0xFFFFU);
 }
 
-std::uint16_t ComputeChecksum(const std::uint8_t *data, std::size_t size) {
+std::uint16_t ComputeChecksum(const std::uint8_t* data, std::size_t size) {
     return FinishChecksum(AddChecksumBytes(0, data, size));
 }
 
-std::uint16_t ComputeUdpChecksum(
-    const Ipv4Address& source,
-    const Ipv4Address& destination,
-    const std::uint8_t *udp,
-    std::size_t udp_size) {
+std::uint16_t ComputeUdpChecksum(const Ipv4Address& source, const Ipv4Address& destination, const std::uint8_t* udp, std::size_t udp_size) {
     std::uint32_t sum = AddChecksumBytes(0, source.data(), source.size());
     sum = AddChecksumBytes(sum, destination.data(), destination.size());
     const std::array<std::uint8_t, 4> pseudo_tail = {
@@ -87,7 +80,7 @@ std::uint16_t ComputeUdpChecksum(
     return FinishChecksum(sum);
 }
 
-bool ParseIpv4(const char *text, Ipv4Address& out) {
+bool ParseIpv4(const char* text, Ipv4Address& out) {
     return text != nullptr && inet_pton(AF_INET, text, out.data()) == 1;
 }
 
@@ -99,7 +92,7 @@ std::string FormatIpv4(const Ipv4Address& address) {
     return text;
 }
 
-const char *PacketStatusName(std::uint32_t raw_status) {
+const char* PacketStatusName(std::uint32_t raw_status) {
     return wgnx::GetPacketApiStatusName(static_cast<wgnx::PacketApiStatus>(raw_status));
 }
 
@@ -110,11 +103,11 @@ std::size_t BuildUdpPacket(
     std::uint16_t source_port,
     std::uint16_t destination_port,
     std::span<const std::uint8_t> payload,
-    std::uint16_t ipv4_identification) {
+    std::uint16_t ipv4_identification
+) {
     const std::size_t udp_size = UdpHeaderSize + payload.size();
     const std::size_t packet_size = Ipv4HeaderSize + udp_size;
-    if (packet_size > output.size() || packet_size > wgnx::MaxInnerIpv4PacketSize ||
-        packet_size > UINT16_MAX) {
+    if (packet_size > output.size() || packet_size > wgnx::MaxInnerIpv4PacketSize || packet_size > UINT16_MAX) {
         return 0;
     }
 
@@ -130,7 +123,7 @@ std::size_t BuildUdpPacket(
     std::memcpy(output.data() + 16, destination.data(), destination.size());
     StoreBigEndian16(output.data() + 10, ComputeChecksum(output.data(), Ipv4HeaderSize));
 
-    std::uint8_t *udp = output.data() + Ipv4HeaderSize;
+    std::uint8_t* udp = output.data() + Ipv4HeaderSize;
     StoreBigEndian16(udp, source_port);
     StoreBigEndian16(udp + 2, destination_port);
     StoreBigEndian16(udp + 4, static_cast<std::uint16_t>(udp_size));
@@ -143,10 +136,7 @@ std::size_t BuildUdpPacket(
     return packet_size;
 }
 
-bool ValidateUdpReply(
-    std::span<const std::uint8_t> packet,
-    const ExpectedReply& expected,
-    std::string& detail) {
+bool ValidateUdpReply(std::span<const std::uint8_t> packet, const ExpectedReply& expected, std::string& detail) {
     if (packet.size() < Ipv4HeaderSize + UdpHeaderSize) {
         detail = "packet too short";
         return false;
@@ -181,12 +171,11 @@ bool ValidateUdpReply(
     std::memcpy(source.data(), packet.data() + 12, source.size());
     std::memcpy(destination.data(), packet.data() + 16, destination.size());
     if (source != expected.remote_address || destination != expected.local_address) {
-        detail = "address mismatch source=" + FormatIpv4(source) +
-            " destination=" + FormatIpv4(destination);
+        detail = "address mismatch source=" + FormatIpv4(source) + " destination=" + FormatIpv4(destination);
         return false;
     }
 
-    const std::uint8_t *udp = packet.data() + ipv4_header_size;
+    const std::uint8_t* udp = packet.data() + ipv4_header_size;
     const std::size_t udp_size = LoadBigEndian16(udp + 4);
     if (udp_size != total_size - ipv4_header_size || udp_size < UdpHeaderSize) {
         detail = "invalid UDP length";
@@ -195,8 +184,7 @@ bool ValidateUdpReply(
     const std::uint16_t source_port = LoadBigEndian16(udp);
     const std::uint16_t destination_port = LoadBigEndian16(udp + 2);
     if (source_port != expected.remote_port || destination_port != expected.local_port) {
-        detail = "port mismatch source=" + std::to_string(source_port) +
-            " destination=" + std::to_string(destination_port);
+        detail = "port mismatch source=" + std::to_string(source_port) + " destination=" + std::to_string(destination_port);
         return false;
     }
     if (LoadBigEndian16(udp + 6) == 0) {
@@ -209,8 +197,7 @@ bool ValidateUdpReply(
     }
 
     const std::span<const std::uint8_t> payload(udp + UdpHeaderSize, udp_size - UdpHeaderSize);
-    if (payload.size() != expected.payload.size() ||
-        !std::equal(payload.begin(), payload.end(), expected.payload.begin())) {
+    if (payload.size() != expected.payload.size() || !std::equal(payload.begin(), payload.end(), expected.payload.begin())) {
         detail = "payload mismatch preview=" + EscapePreview(payload.data(), payload.size(), 96);
         return false;
     }
@@ -220,8 +207,7 @@ bool ValidateUdpReply(
 }
 
 std::uint64_t DeadlineAfterMilliseconds(std::uint32_t timeout_ms) {
-    const std::uint64_t ticks =
-        (armGetSystemTickFreq() * static_cast<std::uint64_t>(timeout_ms)) / 1000U;
+    const std::uint64_t ticks = (armGetSystemTickFreq() * static_cast<std::uint64_t>(timeout_ms)) / 1000U;
     return armGetSystemTick() + ticks;
 }
 
@@ -235,7 +221,8 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
         config::WgnxTunnelSourceIpv4,
         config::WgnxUdpSourcePort,
         config::WgnxUdpEchoDestinationIpv4,
-        config::WgnxUdpEchoDestinationPort);
+        config::WgnxUdpEchoDestinationPort
+    );
 
     if (!wgnx::client::IsServiceRunning()) {
         result.detail = "wgnx:ctl is not running";
@@ -244,10 +231,7 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
 
     wgnx::client::ScopedService service;
     Result rc = service.open();
-    logger::Log(
-        ctx,
-        "scenario=wgnx_packet_udp_echo service_open rc=%s",
-        FormatResult(rc).c_str());
+    logger::Log(ctx, "scenario=wgnx_packet_udp_echo service_open rc=%s", FormatResult(rc).c_str());
     if (R_FAILED(rc)) {
         result.rc = rc;
         result.detail = "wgnx:ctl open failure";
@@ -262,16 +246,13 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
         return result;
     }
     if (api_version != wgnx::IpcApiVersion) {
-        result.detail = "API version mismatch compiled=" +
-            std::to_string(wgnx::IpcApiVersion) +
-            " actual=" + std::to_string(api_version);
+        result.detail = "API version mismatch compiled=" + std::to_string(wgnx::IpcApiVersion) + " actual=" + std::to_string(api_version);
         return result;
     }
 
     Ipv4Address local_address{};
     Ipv4Address remote_address{};
-    if (!ParseIpv4(config::WgnxTunnelSourceIpv4, local_address) ||
-        !ParseIpv4(config::WgnxUdpEchoDestinationIpv4, remote_address)) {
+    if (!ParseIpv4(config::WgnxTunnelSourceIpv4, local_address) || !ParseIpv4(config::WgnxUdpEchoDestinationIpv4, remote_address)) {
         result.detail = "invalid configured IPv4 address";
         return result;
     }
@@ -290,7 +271,8 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
         config::WgnxUdpSourcePort,
         config::WgnxUdpEchoDestinationPort,
         payload,
-        static_cast<std::uint16_t>(random_value));
+        static_cast<std::uint16_t>(random_value)
+    );
     if (outgoing_size == 0) {
         result.detail = "failed to build inner IPv4/UDP packet";
         return result;
@@ -312,23 +294,21 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
         submission.packet_size,
         submission.peer_index,
         submission.activation_generation,
-        EscapePreview(payload.data() + PrefixSize, TokenSize, TokenSize).c_str());
+        EscapePreview(payload.data() + PrefixSize, TokenSize, TokenSize).c_str()
+    );
     if (R_FAILED(rc)) {
         result.detail = "SubmitInnerIpv4Packet CMIF failure";
         return result;
     }
     if (config::WgnxSubmitMalformedIpv4Checksum) {
-        result.success = submission.status ==
-            static_cast<std::uint32_t>(wgnx::PacketApiStatus::MalformedPacket);
-        result.detail = "malformed IPv4 checksum submission status=" +
-            std::string(PacketStatusName(submission.status));
+        result.success = submission.status == static_cast<std::uint32_t>(wgnx::PacketApiStatus::MalformedPacket);
+        result.detail = "malformed IPv4 checksum submission status=" + std::string(PacketStatusName(submission.status));
         return result;
     }
     if (submission.status != static_cast<std::uint32_t>(wgnx::PacketApiStatus::Queued)) {
-        result.detail = "submission rejected status=" +
-            std::string(PacketStatusName(submission.status)) +
-            " peer=" + std::to_string(submission.peer_index) +
-            " activation=" + std::to_string(submission.activation_generation);
+        result.detail = "submission rejected status=" + std::string(PacketStatusName(submission.status)) +
+                        " peer=" + std::to_string(submission.peer_index) +
+                        " activation=" + std::to_string(submission.activation_generation);
         return result;
     }
     result.bytes_sent = outgoing_size;
@@ -351,8 +331,7 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
         rc = wgnx::client::ReceiveInnerIpv4Packet(service, incoming.data(), incoming.size(), &received);
         result.rc = rc;
         if (R_FAILED(rc)) {
-            result.detail = "ReceiveInnerIpv4Packet CMIF failure after empty_polls=" +
-                std::to_string(empty_polls);
+            result.detail = "ReceiveInnerIpv4Packet CMIF failure after empty_polls=" + std::to_string(empty_polls);
             return result;
         }
 
@@ -370,11 +349,11 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
             static_cast<unsigned long long>(received.packet_id),
             received.packet_size,
             received.peer_index,
-            received.activation_generation);
+            received.activation_generation
+        );
         if (status != wgnx::PacketApiStatus::Success) {
-            result.detail = "receive rejected status=" +
-                std::string(PacketStatusName(received.status)) +
-                " empty_polls=" + std::to_string(empty_polls);
+            result.detail =
+                "receive rejected status=" + std::string(PacketStatusName(received.status)) + " empty_polls=" + std::to_string(empty_polls);
             return result;
         }
         if (received.packet_size > incoming.size()) {
@@ -387,15 +366,11 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
         if (ValidateUdpReply(packet, expected, validation_detail)) {
             result.success = true;
             result.bytes_received = received.packet_size;
-            result.detail =
-                "api=" + std::to_string(api_version) +
-                " submit_id=" + std::to_string(submission.packet_id) +
-                " receive_id=" + std::to_string(received.packet_id) +
-                " peer=" + std::to_string(received.peer_index) +
-                " activation=" + std::to_string(received.activation_generation) +
-                " empty_polls=" + std::to_string(empty_polls) +
-                " ignored_packets=" + std::to_string(rejected_packets) +
-                " payload=" + EscapePreview(payload.data(), payload.size(), payload.size());
+            result.detail = "api=" + std::to_string(api_version) + " submit_id=" + std::to_string(submission.packet_id) +
+                            " receive_id=" + std::to_string(received.packet_id) + " peer=" + std::to_string(received.peer_index) +
+                            " activation=" + std::to_string(received.activation_generation) +
+                            " empty_polls=" + std::to_string(empty_polls) + " ignored_packets=" + std::to_string(rejected_packets) +
+                            " payload=" + EscapePreview(payload.data(), payload.size(), payload.size());
             return result;
         }
 
@@ -405,13 +380,12 @@ ScenarioResult RunWgnxPacketUdpEcho(AppContext& ctx) {
             ctx,
             "scenario=wgnx_packet_udp_echo ignored_receive reason=%s preview=%s",
             validation_detail.c_str(),
-            EscapePreview(packet.data(), packet.size(), 96).c_str());
+            EscapePreview(packet.data(), packet.size(), 96).c_str()
+        );
     }
 
-    result.detail =
-        "timeout_ms=" + std::to_string(config::WgnxPacketTimeoutMs) +
-        " empty_polls=" + std::to_string(empty_polls) +
-        " ignored_packets=" + std::to_string(rejected_packets);
+    result.detail = "timeout_ms=" + std::to_string(config::WgnxPacketTimeoutMs) + " empty_polls=" + std::to_string(empty_polls) +
+                    " ignored_packets=" + std::to_string(rejected_packets);
     if (!last_rejection.empty()) {
         result.detail += " last_rejection=" + last_rejection;
     }

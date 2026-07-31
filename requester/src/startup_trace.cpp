@@ -13,11 +13,11 @@ extern "C" void __attribute__((weak)) userAppInit(void);
 
 namespace {
 
-constexpr const char *StartupLogPath = "sdmc:/nxrv/requester/requester-startup.log";
+constexpr const char* StartupLogPath = "sdmc:/nxrv/requester/requester-startup.log";
 constexpr size_t MaxStartupEvents = 48;
 
 struct StartupEvent {
-    const char *phase;
+    const char* phase;
     Result rc;
     bool has_rc;
 };
@@ -26,16 +26,16 @@ StartupEvent g_startup_events[MaxStartupEvents];
 size_t g_startup_event_count = 0;
 bool g_startup_file_ready = false;
 
-void EmitDebugString(const char *line) {
+void EmitDebugString(const char* line) {
     svcOutputDebugString(line, std::strlen(line));
 }
 
-void AppendStartupFileLine(const char *line) {
+void AppendStartupFileLine(const char* line) {
     if (!g_startup_file_ready) {
         return;
     }
 
-    FILE *file = std::fopen(StartupLogPath, "a");
+    FILE* file = std::fopen(StartupLogPath, "a");
     if (file == nullptr) {
         return;
     }
@@ -45,7 +45,7 @@ void AppendStartupFileLine(const char *line) {
     std::fclose(file);
 }
 
-void FormatAndEmit(const char *fmt, ...) {
+void FormatAndEmit(const char* fmt, ...) {
     char line[256];
     va_list args;
     va_start(args, fmt);
@@ -56,7 +56,7 @@ void FormatAndEmit(const char *fmt, ...) {
     AppendStartupFileLine(line);
 }
 
-void RecordStartupEvent(const char *phase, Result rc, bool has_rc) {
+void RecordStartupEvent(const char* phase, Result rc, bool has_rc) {
     if (g_startup_event_count < MaxStartupEvents) {
         g_startup_events[g_startup_event_count++] = StartupEvent{phase, rc, has_rc};
     }
@@ -76,7 +76,7 @@ void EnableStartupFileLog() {
     AppendStartupFileLine("requester startup: file log ready");
 
     for (size_t i = 0; i < g_startup_event_count; ++i) {
-        const StartupEvent &event = g_startup_events[i];
+        const StartupEvent& event = g_startup_events[i];
         if (event.has_rc) {
             FormatAndEmit("requester startup replay: %s rc=0x%08x", event.phase, event.rc);
         } else {
@@ -85,7 +85,7 @@ void EnableStartupFileLog() {
     }
 }
 
-void AbortWithTrace(const char *phase, Result rc, int error) {
+void AbortWithTrace(const char* phase, Result rc, int error) {
     RecordStartupEvent(phase, rc, true);
     diagAbortWithResult(MAKERESULT(Module_Libnx, error));
 }

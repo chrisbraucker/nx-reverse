@@ -2,11 +2,15 @@
 .SUFFIXES:
 #---------------------------------------------------------------------------------
 
+TOPDIR ?= $(CURDIR)
+HOST_ONLY_GOALS := format-check static-check tidy-check
+HOST_ONLY_BUILD := $(strip $(filter $(HOST_ONLY_GOALS),$(MAKECMDGOALS)))
+
+ifeq ($(HOST_ONLY_BUILD),)
 ifeq ($(strip $(DEVKITPRO)),)
 $(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
 endif
 
-TOPDIR ?= $(CURDIR)
 include $(DEVKITPRO)/libnx/switch_rules
 include $(TOPDIR)/lib/Atmosphere-libs/config/templates/stratosphere.mk
 
@@ -17,18 +21,19 @@ TITLE_ID	:=	010000000000EAD1
 DISTDIR		:=	$(OUTDIR)/atmosphere/contents/$(TITLE_ID)
 SOURCES		:=	src
 INCLUDES	:=	src \
+			../common/include \
 			$(TOPDIR)/lib/Atmosphere-libs/libstratosphere/include \
 			$(TOPDIR)/lib/Atmosphere-libs/libvapours/include
 LIBNAMES	:=	lib/Atmosphere-libs/libstratosphere
 
 APP_VERSION	:= 0.0.1-dev
-BUILD_ID	:= $(shell git describe --always --dirty 2>/dev/null || echo "unknown")
+NXRV_BUILD_ID	:= $(shell git describe --always --dirty 2>/dev/null || echo "unknown")
 EXTRA_DEFINES ?=
 
 DEFINES	+=	-DDISABLE_IPC -D__SWITCH__ \
 	-DTARGET="\"$(TARGET)\"" \
-	-DVERSION="\"$(APP_VERSION)\"" \
-	-DBUILD_ID="\"$(BUILD_ID)\"" \
+	-DNXRV_VERSION="\"$(APP_VERSION)\"" \
+	-DNXRV_BUILD_ID="\"$(NXRV_BUILD_ID)\"" \
 	$(EXTRA_DEFINES)
 
 CFLAGS	+= $(INCLUDE) -Wno-unused-result
@@ -98,7 +103,7 @@ clean-build	:
 clean	: clean-libs clean-build
 
 else
-.PHONY	:	all
+.PHONY	:	all force-build-info
 
 DEPENDS	:=	$(OFILES:.o=.d)
 
@@ -108,6 +113,10 @@ $(OUTPUT).nsp	: $(OUTPUT).nso $(OUTPUT).npdm
 $(OUTPUT).nso : $(OUTPUT).elf
 
 $(OUTPUT).elf	: $(OFILES)
+
+main.o mitm_trace.o: force-build-info
+
+force-build-info:
 
 $(OFILES)	: $(ATMOSPHERE_LIBRARIES_DIR)/libstratosphere/$(ATMOSPHERE_LIBRARY_DIR)/libstratosphere.a
 
@@ -119,3 +128,21 @@ $(OFILES)	: $(ATMOSPHERE_LIBRARIES_DIR)/libstratosphere/$(ATMOSPHERE_LIBRARY_DIR
 -include $(DEPENDS)
 
 endif
+endif
+
+PYTHON ?= python3
+CLANG_FORMAT ?= clang-format
+CPPCHECK ?= cppcheck
+CLANG_TIDY ?= clang-tidy-21
+VERIFY_SOURCES := $(abspath $(TOPDIR)/../tools/verify_sources.py)
+
+.PHONY: format-check static-check tidy-check
+
+format-check:
+	@$(PYTHON) $(VERIFY_SOURCES) format --root $(TOPDIR) --config $(TOPDIR)/verify_sources.json --formatter $(CLANG_FORMAT)
+
+static-check:
+	@$(PYTHON) $(VERIFY_SOURCES) static --root $(TOPDIR) --config $(TOPDIR)/verify_sources.json --analyzer $(CPPCHECK)
+
+tidy-check:
+	@$(PYTHON) $(VERIFY_SOURCES) tidy --root $(TOPDIR) --config $(TOPDIR)/verify_sources.json --tidy $(CLANG_TIDY)

@@ -5,7 +5,7 @@ __pycache__/
 
 net-probe/build/
 net-probe/out/
-requester/build/
+requester/build*/
 requester/out/
 requester/CMakeUserPresets.json
 

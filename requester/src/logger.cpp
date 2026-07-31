@@ -14,29 +14,24 @@ namespace requester::logger {
 
 namespace {
 
-constexpr const char *BootstrapLogPath = "sdmc:/nxrv/requester/requester-bootstrap.log";
+constexpr const char* BootstrapLogPath = "sdmc:/nxrv/requester/requester-bootstrap.log";
 
 std::mutex g_log_mutex;
 std::deque<std::string> g_recent_lines;
 std::function<void(const std::string&)> g_ui_sink;
 
-void WriteBootstrapLine(const char *line) {
-    FILE *file = std::fopen(BootstrapLogPath, "a");
+void WriteBootstrapLine(const char* line) {
+    FILE* file = std::fopen(BootstrapLogPath, "a");
     if (file == nullptr) {
         return;
     }
 
-    std::fprintf(
-        file,
-        "[%s][%s] %s\n",
-        TimestampUtc().c_str(),
-        MonotonicTimestampNs().c_str(),
-        line);
+    std::fprintf(file, "[%s][%s] %s\n", TimestampUtc().c_str(), MonotonicTimestampNs().c_str(), line);
     std::fflush(file);
     std::fclose(file);
 }
 
-void WriteFormatted(AppContext& ctx, const char *fmt, va_list args) {
+void WriteFormatted(AppContext& ctx, const char* fmt, va_list args) {
     char buffer[1024];
     va_list args_copy;
     va_copy(args_copy, args);
@@ -49,12 +44,7 @@ void WriteFormatted(AppContext& ctx, const char *fmt, va_list args) {
         std::lock_guard<std::mutex> lock(g_log_mutex);
         g_recent_lines.push_back(line);
         if (ctx.log_file != nullptr) {
-            std::fprintf(
-                ctx.log_file,
-                "[%s][%s] %s\n",
-                TimestampUtc().c_str(),
-                MonotonicTimestampNs().c_str(),
-                buffer);
+            std::fprintf(ctx.log_file, "[%s][%s] %s\n", TimestampUtc().c_str(), MonotonicTimestampNs().c_str(), buffer);
             std::fflush(ctx.log_file);
         }
         sink = g_ui_sink;
@@ -66,7 +56,7 @@ void WriteFormatted(AppContext& ctx, const char *fmt, va_list args) {
 
 } // namespace
 
-void Bootstrap(const char *fmt, ...) {
+void Bootstrap(const char* fmt, ...) {
     char buffer[1024];
     va_list args;
     va_start(args, fmt);
@@ -91,14 +81,14 @@ void CloseLog(AppContext& ctx) {
     }
 }
 
-void Log(AppContext& ctx, const char *fmt, ...) {
+void Log(AppContext& ctx, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     WriteFormatted(ctx, fmt, args);
     va_end(args);
 }
 
-void Status(AppContext& ctx, const char *fmt, ...) {
+void Status(AppContext& ctx, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     WriteFormatted(ctx, fmt, args);
@@ -112,12 +102,8 @@ void SetUiSink(std::function<void(const std::string&)> sink) {
 
 std::vector<std::string> RecentLines(std::size_t maximum_line_count) {
     std::lock_guard<std::mutex> lock(g_log_mutex);
-    const std::size_t line_count =
-        maximum_line_count == 0
-            ? g_recent_lines.size()
-            : std::min(maximum_line_count, g_recent_lines.size());
-    return {g_recent_lines.end() - static_cast<std::ptrdiff_t>(line_count),
-            g_recent_lines.end()};
+    const std::size_t line_count = maximum_line_count == 0 ? g_recent_lines.size() : std::min(maximum_line_count, g_recent_lines.size());
+    return {g_recent_lines.end() - static_cast<std::ptrdiff_t>(line_count), g_recent_lines.end()};
 }
 
 } // namespace requester::logger

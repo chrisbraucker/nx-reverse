@@ -1,0 +1,49 @@
+{
+  "source_roots": [
+    "src"
+  ],
+  "exclude": [],
+  "include_dirs": [
+    "src",
+    "../common/include"
+  ],
+  "suppressions": [
+    "unknownMacro:*src/ipc_helpers.cpp",
+    "missingReturn:*src/mitm_service.cpp",
+    "missingReturn:*src/mitm_trace.cpp"
+  ],
+  "tidy_source_roots": [
+    "src"
+  ],
+  "tidy_exclude": [],
+  "tidy_include_dirs": [
+    "src",
+    "../common/include",
+    "lib/Atmosphere-libs/libstratosphere/include",
+    "lib/Atmosphere-libs/libvapours/include"
+  ],
+  "tidy_arguments": [
+    "--target=aarch64-none-elf",
+    "--sysroot=${DEVKITPRO}/devkitA64/aarch64-none-elf",
+    "-std=gnu++23",
+    "-D__SWITCH__",
+    "-DATMOSPHERE",
+    "-DATMOSPHERE_ARCH_ARM64",
+    "-DATMOSPHERE_BOARD_NINTENDO_NX",
+    "-DATMOSPHERE_OS_HORIZON",
+    "-DATMOSPHERE_CPU_ARM_CORTEX_A57",
+    "-DATMOSPHERE_ARCH_ARM_V8A",
+    "-DATMOSPHERE_IS_STRATOSPHERE",
+    "-D_GNU_SOURCE",
+    "-DNXRV_VERSION=\"0.0.1-dev\"",
+    "-DNXRV_BUILD_ID=\"tidy\"",
+    "-fno-rtti",
+    "-fno-exceptions",
+    "-isystem",
+    "${DEVKITPRO}/devkitA64/aarch64-none-elf/include/c++/15.2.0",
+    "-isystem",
+    "${DEVKITPRO}/devkitA64/aarch64-none-elf/include/c++/15.2.0/aarch64-none-elf",
+    "-I${DEVKITPRO}/portlibs/switch/include",
+    "-I${DEVKITPRO}/libnx/include"
+  ]
+}

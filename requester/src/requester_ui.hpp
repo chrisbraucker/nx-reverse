@@ -5,7 +5,6 @@
 
 namespace requester {
 
-int RunRequesterUi(AppContext &context, RuntimeConfig defaults,
-                   ConfigLoadReport loaded_config);
+int RunRequesterUi(AppContext& context, RuntimeConfig defaults, ConfigLoadReport loaded_config);
 
 } // namespace requester

@@ -26,7 +26,7 @@ struct EnvironmentSnapshot {
 };
 
 struct AppContext {
-    FILE *log_file = nullptr;
+    FILE* log_file = nullptr;
     std::string run_id;
     std::string log_path;
     EnvironmentSnapshot env{};
@@ -37,7 +37,7 @@ struct AppContext {
     bool nifm_initialized = false;
     Result ssl_initialize_rc = 0;
     bool ssl_initialized = false;
-    CURLSH *curl_share = nullptr;
+    CURLSH* curl_share = nullptr;
     CURLcode curl_global_rc = CURLE_OK;
     bool curl_initialized = false;
 };
@@ -53,7 +53,7 @@ std::string FormatErrno(int value);
 std::string FormatHosVersion(void);
 std::string FormatInternetConnectionType(NifmInternetConnectionType type);
 std::string FormatInternetConnectionStatus(NifmInternetConnectionStatus status);
-std::string EscapePreview(const void *data, std::size_t size, std::size_t limit);
+std::string EscapePreview(const void* data, std::size_t size, std::size_t limit);
 void SleepMilliseconds(std::uint32_t milliseconds);
 
 } // namespace requester
