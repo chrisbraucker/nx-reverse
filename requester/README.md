@@ -23,6 +23,15 @@ cmake --build --preset requester
 
 The `switch` preset uses Ninja and writes build files to `requester/build`.
 
+Run the pure BSD outcome-classification test without the Switch toolchain with:
+
+```sh
+cd requester
+cmake --preset host-tests
+cmake --build --preset host-tests
+ctest --test-dir build-host-tests --output-on-failure
+```
+
 For a persistent local header override, create the ignored `requester/CMakeUserPresets.json` file.
 
 ```json
@@ -117,6 +126,12 @@ This confirms that a tunneled BSD:S socket exposes the device-facing local endpo
 
 The workload sets `O_NONBLOCK` after each successful connection and waits with `poll` before receiving an echo or retrying an `EAGAIN` send.
 
+`Expected BSD:S outcome` selects either the normal workload, a one-datagram no-reply timeout, or terminal closure validation.
+The timeout mode requires `Echo replies=false`, one datagram, and one flow, then succeeds only when `poll(POLLIN)` expires without a reply.
+The terminal mode requires one echoed datagram and one flow, then waits up to the shared receive deadline for the operator to deactivate the peer or stop the sysmodule.
+It succeeds only after `POLLHUP`, a later zero-flag `send` returns `ECONNABORTED`, and `close` succeeds.
+`Require writable recovery after queue pressure` turns a burst with no observed `EAGAIN` followed by `POLLOUT` into an inconclusive failure instead of a throughput success.
+
 Enable `bsd_system_udp.verify_post_route_rejection=true` only for the tunneled MITM path to verify that a post-route `SetSockOpt` fails with `EOPNOTSUPP` instead of mutating the retained upstream descriptor.
 
 It does not open or call `wgnx:tun` itself.
@@ -137,6 +152,17 @@ bsd_system_udp.enabled=false
 Set `tunnel_udp.enabled=false` and `bsd_system_udp.enabled=true` for the `bsd:s` path.
 
 The destination, port, payload size, count, pacing, receive deadline, seed, and echo setting are shared with the direct tunnel workload.
+
+The persisted BSD:S-specific settings are:
+
+```ini
+bsd_system_udp.verify_post_route_rejection=false
+bsd_system_udp.expected_outcome=echo
+bsd_system_udp.require_writable_recovery=false
+```
+
+Run `python3 tools/summarize_task4.py <requester.log> <harness.log> <mitm.log> <wgnx.log>` from the repository root to render the aggregate Task 4 rows.
+The tool does not parse per-packet output and leaves raw logs authoritative.
 
 ### Contract Validation
 

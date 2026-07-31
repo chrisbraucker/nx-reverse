@@ -1,5 +1,21 @@
 cmake_minimum_required(VERSION 3.21)
 
+option(REQUESTER_BUILD_HOST_TESTS "Build requester host-only tests" OFF)
+
+if(REQUESTER_BUILD_HOST_TESTS)
+    project(requester_host_tests LANGUAGES CXX)
+    enable_testing()
+    add_executable(requester_bsd_outcome_tests
+        src/bsd_system_udp_outcome.cpp
+        test/bsd_system_udp_outcome_tests.cpp)
+    target_include_directories(requester_bsd_outcome_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_features(requester_bsd_outcome_tests PRIVATE cxx_std_23)
+    target_compile_options(requester_bsd_outcome_tests PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME requester_bsd_outcome_tests COMMAND requester_bsd_outcome_tests)
+    return()
+endif()
+
 set(BOREALIS_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/libs/borealis/library")
 set(PLATFORM_SWITCH ON CACHE BOOL "Build for Nintendo Switch" FORCE)
 set(USE_DEKO3D ON CACHE BOOL "Use Borealis' Deko3D backend" FORCE)

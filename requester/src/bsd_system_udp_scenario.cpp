@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "bsd_system_udp_outcome.hpp"
 #include "config.hpp"
 #include "logger.hpp"
 #include "runtime.hpp"
@@ -168,6 +169,7 @@ void CloseDescriptors(std::span<int> descriptors) {
 
 struct BsdSendResult {
   bool sent{};
+  bool writable_after_queue_full{};
   std::uint32_t queue_full_retries{};
   int error{};
   std::string detail;
@@ -223,7 +225,99 @@ BsdSendResult SendWithWritableRetry(const int descriptor,
                       std::to_string(writable_descriptor.revents);
       return result;
     }
+    result.writable_after_queue_full = true;
   }
+}
+
+struct BsdPollResult {
+  BsdPollObservation observation{BsdPollObservation::Unexpected};
+  int error{};
+  short revents{};
+};
+
+[[nodiscard]] BsdPollResult WaitForInput(const int descriptor,
+                                         const std::uint32_t deadline_ms) {
+  pollfd poll_descriptor{
+      .fd = descriptor,
+      .events = POLLIN,
+      .revents = 0,
+  };
+  const int poll_result =
+      poll(&poll_descriptor, 1, static_cast<int>(deadline_ms));
+  return {
+      .observation =
+          ClassifyBsdPollObservation(poll_result, poll_descriptor.revents),
+      .error = poll_result < 0 ? errno : 0,
+      .revents = poll_descriptor.revents,
+  };
+}
+
+[[nodiscard]] bool ReceiveExpectedEcho(
+    const int descriptor, const std::span<const std::uint8_t> payload,
+    const std::span<std::uint8_t> received, const sockaddr_in &remote,
+    const std::uint32_t deadline_ms, ScenarioResult *const result,
+    const std::uint32_t sequence) {
+  const BsdPollResult poll_result = WaitForInput(descriptor, deadline_ms);
+  if (!IsExpectedBsdPollObservation(BsdSystemUdpExpectedOutcome::EchoReply,
+                                    poll_result.observation)) {
+    result->err = poll_result.error;
+    result->detail =
+        "poll did not report echo sequence=" + std::to_string(sequence) +
+        " revents=" + std::to_string(poll_result.revents);
+    if (poll_result.observation == BsdPollObservation::Timeout) {
+      result->err = ETIMEDOUT;
+      result->detail = "poll timed out sequence=" + std::to_string(sequence);
+    } else if (poll_result.observation == BsdPollObservation::Error) {
+      result->detail = "poll failed sequence=" + std::to_string(sequence) +
+                       ": " + FormatErrno(poll_result.error);
+    }
+    return false;
+  }
+
+  sockaddr_in source{};
+  socklen_t source_length = sizeof(source);
+  const ssize_t received_count =
+      recvfrom(descriptor, received.data(), received.size(), 0,
+               reinterpret_cast<sockaddr *>(&source), &source_length);
+  if (received_count < 0) {
+    result->err = errno;
+    result->detail = "recvfrom failed sequence=" + std::to_string(sequence) +
+                     ": " + FormatErrno(errno);
+    return false;
+  }
+  result->bytes_received += static_cast<std::size_t>(received_count);
+  const std::span<const std::uint8_t> reply(
+      received.data(), static_cast<std::size_t>(received_count));
+  if (!IsExpectedReply(reply, payload)) {
+    result->detail = "unexpected echo sequence=" + std::to_string(sequence) +
+                     " source=" + FormatEndpoint(source);
+    return false;
+  }
+  if (source_length < sizeof(sockaddr_in) || source.sin_family != AF_INET ||
+      source.sin_addr.s_addr != remote.sin_addr.s_addr ||
+      source.sin_port != remote.sin_port) {
+    result->detail =
+        "unexpected reply endpoint sequence=" + std::to_string(sequence) +
+        " source=" + FormatEndpoint(source);
+    return false;
+  }
+  return true;
+}
+
+[[nodiscard]] bool
+VerifyTerminalSend(const int descriptor,
+                   const std::span<const std::uint8_t> payload,
+                   ScenarioResult *const result) {
+  const ssize_t sent = send(descriptor, payload.data(), payload.size(), 0);
+  if (sent < 0 && errno == ECONNABORTED) {
+    return true;
+  }
+  result->err = sent < 0 ? errno : 0;
+  result->detail = "post-closure send did not return ECONNABORTED";
+  if (result->err != 0) {
+    result->detail += ": " + FormatErrno(result->err);
+  }
+  return false;
 }
 
 } // namespace
@@ -306,6 +400,81 @@ RunBsdSystemUdpWorkload(AppContext &ctx, const TunnelUdpWorkloadConfig &config,
       received{};
   std::uint32_t echoed = 0;
   std::uint32_t queue_full_retries = 0;
+  bool writable_recovery = false;
+
+  if (bsd_config.expected_outcome ==
+      BsdSystemUdpExpectedOutcome::NoReplyTimeout) {
+    BuildPayload(payload, 0, 0, config);
+    const BsdSendResult send_result = SendWithWritableRetry(
+        descriptors[0], payload, config.receive_deadline_ms);
+    queue_full_retries += send_result.queue_full_retries;
+    writable_recovery = send_result.writable_after_queue_full;
+    if (!send_result.sent) {
+      result.err = send_result.error;
+      result.detail = send_result.detail;
+    } else {
+      result.bytes_sent += payload.size();
+      const BsdPollResult poll_result =
+          WaitForInput(descriptors[0], config.receive_deadline_ms);
+      if (IsExpectedBsdPollObservation(bsd_config.expected_outcome,
+                                       poll_result.observation)) {
+        result.success = true;
+        result.detail = "bsd:s no-reply timeout confirmed workload=" +
+                        std::to_string(config.workload_id) + " deadline_ms=" +
+                        std::to_string(config.receive_deadline_ms);
+      } else {
+        result.err = poll_result.error;
+        result.detail = "no-reply poll unexpected revents=" +
+                        std::to_string(poll_result.revents);
+      }
+    }
+    CloseDescriptors(descriptors);
+    return result;
+  }
+
+  if (bsd_config.expected_outcome ==
+      BsdSystemUdpExpectedOutcome::TerminalClosure) {
+    BuildPayload(payload, 0, 0, config);
+    const BsdSendResult send_result = SendWithWritableRetry(
+        descriptors[0], payload, config.receive_deadline_ms);
+    queue_full_retries += send_result.queue_full_retries;
+    writable_recovery = send_result.writable_after_queue_full;
+    if (!send_result.sent) {
+      result.err = send_result.error;
+      result.detail = send_result.detail;
+    } else {
+      result.bytes_sent += payload.size();
+      if (ReceiveExpectedEcho(descriptors[0], payload, received, remote,
+                              config.receive_deadline_ms, &result, 0)) {
+        ++echoed;
+        logger::Status(ctx,
+                       "bsd_system_udp terminal flow waiting deadline_ms=%u",
+                       config.receive_deadline_ms);
+        const BsdPollResult poll_result =
+            WaitForInput(descriptors[0], config.receive_deadline_ms);
+        if (!IsExpectedBsdPollObservation(bsd_config.expected_outcome,
+                                          poll_result.observation)) {
+          result.err = poll_result.error;
+          result.detail = "terminal poll unexpected revents=" +
+                          std::to_string(poll_result.revents);
+        } else if (VerifyTerminalSend(descriptors[0], payload, &result)) {
+          if (close(descriptors[0]) != 0) {
+            result.err = errno;
+            result.detail = "terminal close failed: " + FormatErrno(errno);
+          } else {
+            descriptors[0] = -1;
+            result.success = true;
+            result.detail = "bsd:s terminal closure confirmed workload=" +
+                            std::to_string(config.workload_id) +
+                            " echoed=" + std::to_string(echoed) +
+                            " post_send=ECONNABORTED";
+          }
+        }
+      }
+    }
+    CloseDescriptors(descriptors);
+    return result;
+  }
 
   for (std::uint32_t sequence = 0; sequence < config.datagram_count;
        ++sequence) {
@@ -315,6 +484,8 @@ RunBsdSystemUdpWorkload(AppContext &ctx, const TunnelUdpWorkloadConfig &config,
     const BsdSendResult send_result =
         SendWithWritableRetry(descriptor, payload, config.receive_deadline_ms);
     queue_full_retries += send_result.queue_full_retries;
+    writable_recovery =
+        writable_recovery || send_result.writable_after_queue_full;
     if (!send_result.sent) {
       result.err = send_result.error;
       result.detail =
@@ -325,63 +496,15 @@ RunBsdSystemUdpWorkload(AppContext &ctx, const TunnelUdpWorkloadConfig &config,
     result.bytes_sent += payload.size();
 
     if (config.echo_replies) {
-      pollfd poll_descriptor{
-          .fd = descriptor,
-          .events = POLLIN,
-          .revents = 0,
-      };
-      const int poll_result = poll(
-          &poll_descriptor, 1, static_cast<int>(config.receive_deadline_ms));
-      if (poll_result < 0) {
-        result.err = errno;
-        result.detail = "poll failed sequence=" + std::to_string(sequence) +
-                        ": " + FormatErrno(errno);
-        break;
-      }
-      if (poll_result == 0) {
-        result.err = ETIMEDOUT;
-        result.detail = "poll timed out sequence=" + std::to_string(sequence);
-        break;
-      }
-      if ((poll_descriptor.revents & POLLIN) == 0) {
-        result.detail =
-            "poll missing POLLIN sequence=" + std::to_string(sequence) +
-            " revents=" + std::to_string(poll_descriptor.revents);
-        break;
-      }
-
-      sockaddr_in source{};
-      socklen_t source_length = sizeof(source);
-      const ssize_t received_count =
-          recvfrom(descriptor, received.data(), received.size(), 0,
-                   reinterpret_cast<sockaddr *>(&source), &source_length);
-      if (received_count < 0) {
-        result.err = errno;
-        result.detail = "recvfrom failed sequence=" + std::to_string(sequence) +
-                        ": " + FormatErrno(errno);
-        break;
-      }
-      result.bytes_received += static_cast<std::size_t>(received_count);
-      const std::span<const std::uint8_t> reply(
-          received.data(), static_cast<std::size_t>(received_count));
-      if (!IsExpectedReply(reply, payload)) {
-        result.detail = "unexpected echo sequence=" + std::to_string(sequence) +
-                        " source=" + FormatEndpoint(source);
-        break;
-      }
-      if (source_length < sizeof(sockaddr_in) || source.sin_family != AF_INET ||
-          source.sin_addr.s_addr != remote.sin_addr.s_addr ||
-          source.sin_port != remote.sin_port) {
-        result.detail =
-            "unexpected reply endpoint sequence=" + std::to_string(sequence) +
-            " source=" + FormatEndpoint(source);
+      if (!ReceiveExpectedEcho(descriptor, payload, received, remote,
+                               config.receive_deadline_ms, &result, sequence)) {
         break;
       }
       ++echoed;
       if (sequence == 0 || sequence + 1 == config.datagram_count) {
         REQUESTER_LOG_PACKET(
-            ctx, "bsd_system_udp echo flow=%u sequence=%u source=%s",
-            flow_index, sequence, FormatEndpoint(source).c_str());
+            ctx, "bsd_system_udp echo flow=%u sequence=%u reply_received",
+            flow_index, sequence);
       }
     }
 
@@ -391,16 +514,22 @@ RunBsdSystemUdpWorkload(AppContext &ctx, const TunnelUdpWorkloadConfig &config,
   }
 
   CloseDescriptors(descriptors);
+  if (result.detail.empty() && bsd_config.require_writable_recovery &&
+      !HasWritableRecovery(queue_full_retries, writable_recovery)) {
+    result.detail = "writable recovery was not observed";
+  }
   if (result.detail.empty() &&
       (!config.echo_replies || echoed == config.datagram_count)) {
     result.success = true;
     result.detail =
         "bsd_service=system destination=" + config.destination_ipv4 + ":" +
         std::to_string(config.destination_port) +
+        " workload=" + std::to_string(config.workload_id) +
         " flows=" + std::to_string(config.concurrent_flows) +
         " sent=" + std::to_string(config.datagram_count) +
         " echoed=" + std::to_string(echoed) +
-        " queue_full_retries=" + std::to_string(queue_full_retries);
+        " queue_full_retries=" + std::to_string(queue_full_retries) +
+        " writable_recovery=" + (writable_recovery ? "true" : "false");
   }
   return result;
 }

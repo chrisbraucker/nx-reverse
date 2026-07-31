@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "bsd_system_udp_outcome.hpp"
+
 namespace requester {
 
 struct TunnelUdpWorkloadConfig {
@@ -30,6 +32,9 @@ struct TunnelContractValidationConfig {
 struct BsdSystemUdpWorkloadConfig {
   bool enabled{false};
   bool verify_post_route_rejection{false};
+  BsdSystemUdpExpectedOutcome expected_outcome{
+      BsdSystemUdpExpectedOutcome::EchoReply};
+  bool require_writable_recovery{false};
 };
 
 struct RuntimeConfig {
@@ -53,5 +58,7 @@ bool SaveRuntimeConfig(const RuntimeConfig &config, std::string *error,
                        const char *path = RuntimeConfigPath);
 bool ValidateRuntimeConfig(const RuntimeConfig &config, std::string *error);
 bool EnsureRuntimeConfigDirectories();
+const char *
+BsdSystemUdpExpectedOutcomeName(BsdSystemUdpExpectedOutcome expected_outcome);
 
 } // namespace requester

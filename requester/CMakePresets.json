@@ -7,6 +7,17 @@
   },
   "configurePresets": [
     {
+      "name": "host-tests",
+      "displayName": "Requester host tests",
+      "description": "Build pure requester outcome tests without the Switch toolchain.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-host-tests",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "REQUESTER_BUILD_HOST_TESTS": "ON"
+      }
+    },
+    {
       "name": "switch",
       "displayName": "Nintendo Switch",
       "description": "Build the requester NRO with devkitPro and Borealis.",
@@ -19,6 +30,13 @@
     }
   ],
   "buildPresets": [
+    {
+      "name": "host-tests",
+      "configurePreset": "host-tests",
+      "targets": [
+        "requester_bsd_outcome_tests"
+      ]
+    },
     {
       "name": "requester",
       "displayName": "Requester NRO",

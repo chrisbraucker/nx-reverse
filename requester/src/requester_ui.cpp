@@ -35,6 +35,9 @@ constexpr float LogFontSize = 16.0F;
 constexpr char ProjectUrl[] = APP_PROJECT_URL;
 constexpr int TunnelDataPathIndex = 0;
 constexpr int BsdSystemDataPathIndex = 1;
+constexpr int BsdExpectedNormalIndex = 0;
+constexpr int BsdExpectedNoReplyTimeoutIndex = 1;
+constexpr int BsdExpectedTerminalClosureIndex = 2;
 
 class LogPanel;
 
@@ -66,6 +69,10 @@ std::string FormatRuntimeConfig(const RuntimeConfig &config) {
          std::to_string(tunnel.payload_bytes) + " B | datagrams " +
          std::to_string(tunnel.datagram_count) + " | flows " +
          std::to_string(tunnel.concurrent_flows) + " | data path " + data_path +
+         (config.bsd_system_udp.enabled
+              ? " | BSD outcome " + std::string(BsdSystemUdpExpectedOutcomeName(
+                                        config.bsd_system_udp.expected_outcome))
+              : "") +
          " | contract " +
          (config.tunnel_contract.enabled ? "enabled" : "disabled");
 }
@@ -237,9 +244,33 @@ public:
     AddHeader(content, "BSD:S Contract Validation",
               "Extra checks for the requester-only transparent UDP path.",
               SettingsSectionGap);
-    verify_bsd_post_route_rejection_ = AddBoolean(
-        content, "Verify tunneled socket option rejection",
-        &model_->config.bsd_system_udp.verify_post_route_rejection);
+    verify_bsd_post_route_rejection_ =
+        AddBoolean(content, "Verify tunneled socket option rejection",
+                   &model_->config.bsd_system_udp.verify_post_route_rejection);
+    expected_bsd_outcome_ = new brls::SelectorCell();
+    expected_bsd_outcome_->init(
+        "Expected BSD:S outcome",
+        {"Normal workload", "No-reply timeout", "Terminal closure"},
+        BsdExpectedNormalIndex, [model = model_](int next) {
+          switch (next) {
+          case BsdExpectedNoReplyTimeoutIndex:
+            model->config.bsd_system_udp.expected_outcome =
+                BsdSystemUdpExpectedOutcome::NoReplyTimeout;
+            break;
+          case BsdExpectedTerminalClosureIndex:
+            model->config.bsd_system_udp.expected_outcome =
+                BsdSystemUdpExpectedOutcome::TerminalClosure;
+            break;
+          default:
+            model->config.bsd_system_udp.expected_outcome =
+                BsdSystemUdpExpectedOutcome::EchoReply;
+            break;
+          }
+        });
+    content->addView(expected_bsd_outcome_);
+    require_bsd_writable_recovery_ =
+        AddBoolean(content, "Require writable recovery after queue pressure",
+                   &model_->config.bsd_system_udp.require_writable_recovery);
 
     AddHeader(content, "Tunnel Contract Validation",
               "Clone lifetime and mixed-batch API coverage.",
@@ -443,6 +474,20 @@ private:
     echo_replies_->setOn(tunnel.echo_replies, false);
     verify_bsd_post_route_rejection_->setOn(
         model_->config.bsd_system_udp.verify_post_route_rejection, false);
+    int expected_bsd_outcome = BsdExpectedNormalIndex;
+    switch (model_->config.bsd_system_udp.expected_outcome) {
+    case BsdSystemUdpExpectedOutcome::NoReplyTimeout:
+      expected_bsd_outcome = BsdExpectedNoReplyTimeoutIndex;
+      break;
+    case BsdSystemUdpExpectedOutcome::TerminalClosure:
+      expected_bsd_outcome = BsdExpectedTerminalClosureIndex;
+      break;
+    case BsdSystemUdpExpectedOutcome::EchoReply:
+      break;
+    }
+    expected_bsd_outcome_->setSelection(expected_bsd_outcome, true);
+    require_bsd_writable_recovery_->setOn(
+        model_->config.bsd_system_udp.require_writable_recovery, false);
     const auto &contract = model_->config.tunnel_contract;
     contract_enabled_->setOn(contract.enabled, false);
     verify_cloned_session_lifetime_->setOn(
@@ -464,6 +509,8 @@ private:
   brls::InputNumericCell *payload_seed_{};
   brls::BooleanCell *echo_replies_{};
   brls::BooleanCell *verify_bsd_post_route_rejection_{};
+  brls::SelectorCell *expected_bsd_outcome_{};
+  brls::BooleanCell *require_bsd_writable_recovery_{};
   brls::BooleanCell *contract_enabled_{};
   brls::BooleanCell *verify_cloned_session_lifetime_{};
   brls::BooleanCell *verify_mixed_batch_{};

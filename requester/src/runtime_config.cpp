@@ -95,6 +95,24 @@ bool EnsureDirectory(const char *path) {
   return mkdir(path, 0777) == 0 || errno == EEXIST;
 }
 
+bool ParseBsdSystemUdpExpectedOutcome(
+    const std::string_view value,
+    BsdSystemUdpExpectedOutcome *const expected_outcome) {
+  if (value == "echo") {
+    *expected_outcome = BsdSystemUdpExpectedOutcome::EchoReply;
+    return true;
+  }
+  if (value == "no_reply_timeout") {
+    *expected_outcome = BsdSystemUdpExpectedOutcome::NoReplyTimeout;
+    return true;
+  }
+  if (value == "terminal_closure") {
+    *expected_outcome = BsdSystemUdpExpectedOutcome::TerminalClosure;
+    return true;
+  }
+  return false;
+}
+
 void ResetToDefault(const RuntimeConfig &defaults, RuntimeConfig *config,
                     std::string_view key) {
   if (key == "tunnel_udp.enabled") {
@@ -133,6 +151,12 @@ void ResetToDefault(const RuntimeConfig &defaults, RuntimeConfig *config,
   } else if (key == "bsd_system_udp.verify_post_route_rejection") {
     config->bsd_system_udp.verify_post_route_rejection =
         defaults.bsd_system_udp.verify_post_route_rejection;
+  } else if (key == "bsd_system_udp.expected_outcome") {
+    config->bsd_system_udp.expected_outcome =
+        defaults.bsd_system_udp.expected_outcome;
+  } else if (key == "bsd_system_udp.require_writable_recovery") {
+    config->bsd_system_udp.require_writable_recovery =
+        defaults.bsd_system_udp.require_writable_recovery;
   }
 }
 
@@ -237,6 +261,16 @@ bool ApplySetting(const RuntimeConfig &defaults, RuntimeConfig *config,
                      &config->bsd_system_udp.verify_post_route_rejection) ||
            invalid();
   }
+  if (key == "bsd_system_udp.expected_outcome") {
+    return ParseBsdSystemUdpExpectedOutcome(
+               value, &config->bsd_system_udp.expected_outcome) ||
+           invalid();
+  }
+  if (key == "bsd_system_udp.require_writable_recovery") {
+    return ParseBool(value,
+                     &config->bsd_system_udp.require_writable_recovery) ||
+           invalid();
+  }
   *error = "unrecognized configuration key " + std::string(key);
   return false;
 }
@@ -244,6 +278,9 @@ bool ApplySetting(const RuntimeConfig &defaults, RuntimeConfig *config,
 } // namespace
 
 RuntimeConfig CompiledRuntimeDefaults() {
+  BsdSystemUdpExpectedOutcome bsd_expected_outcome{};
+  static_cast<void>(ParseBsdSystemUdpExpectedOutcome(
+      config::BsdSystemUdpExpectedOutcome, &bsd_expected_outcome));
   return {
       .tunnel_udp =
           {
@@ -271,6 +308,9 @@ RuntimeConfig CompiledRuntimeDefaults() {
               .enabled = config::EnableScenarioBsdSystemUdpWorkload,
               .verify_post_route_rejection =
                   config::BsdSystemUdpVerifyPostRouteRejection,
+              .expected_outcome = bsd_expected_outcome,
+              .require_writable_recovery =
+                  config::BsdSystemUdpRequireWritableRecovery,
           },
   };
 }
@@ -343,6 +383,15 @@ bool ValidateRuntimeConfig(const RuntimeConfig &config, std::string *error) {
       !config.bsd_system_udp.enabled) {
     return fail("bsd_system_udp rejection validation requires the bsd:s path");
   }
+  if (config.bsd_system_udp.require_writable_recovery &&
+      !config.bsd_system_udp.enabled) {
+    return fail("bsd_system_udp writable recovery requires the bsd:s path");
+  }
+  if (config.bsd_system_udp.expected_outcome !=
+          BsdSystemUdpExpectedOutcome::EchoReply &&
+      !config.bsd_system_udp.enabled) {
+    return fail("bsd_system_udp expected outcome requires the bsd:s path");
+  }
   if (!IsValidIpv4(tunnel.destination_ipv4)) {
     return fail("tunnel_udp.destination_ipv4 must be an IPv4 address");
   }
@@ -365,6 +414,21 @@ bool ValidateRuntimeConfig(const RuntimeConfig &config, std::string *error) {
       tunnel.concurrent_flows > wgnx::tunnel::MaximumFlowsPerClient) {
     return fail("tunnel_udp.concurrent_flows is outside the supported range");
   }
+  if (config.bsd_system_udp.expected_outcome ==
+          BsdSystemUdpExpectedOutcome::NoReplyTimeout &&
+      (tunnel.echo_replies || tunnel.datagram_count != 1 ||
+       tunnel.concurrent_flows != 1)) {
+    return fail(
+        "BSD no-reply timeout requires no echo, one datagram, and one flow");
+  }
+  if (config.bsd_system_udp.expected_outcome ==
+          BsdSystemUdpExpectedOutcome::TerminalClosure &&
+      (config.bsd_system_udp.require_writable_recovery ||
+       !tunnel.echo_replies || tunnel.datagram_count != 1 ||
+       tunnel.concurrent_flows != 1)) {
+    return fail("BSD terminal closure requires echo, one datagram, one flow, "
+                "and no writable recovery");
+  }
   if (config.tunnel_contract.enabled &&
       !config.tunnel_contract.verify_cloned_session_lifetime &&
       !config.tunnel_contract.verify_mixed_batch) {
@@ -376,6 +440,19 @@ bool ValidateRuntimeConfig(const RuntimeConfig &config, std::string *error) {
 bool EnsureRuntimeConfigDirectories() {
   return EnsureDirectory("sdmc:/switch") &&
          EnsureDirectory("sdmc:/switch/requester");
+}
+
+const char *BsdSystemUdpExpectedOutcomeName(
+    const BsdSystemUdpExpectedOutcome expected_outcome) {
+  switch (expected_outcome) {
+  case BsdSystemUdpExpectedOutcome::EchoReply:
+    return "echo";
+  case BsdSystemUdpExpectedOutcome::NoReplyTimeout:
+    return "no_reply_timeout";
+  case BsdSystemUdpExpectedOutcome::TerminalClosure:
+    return "terminal_closure";
+  }
+  return "invalid";
 }
 
 bool SaveRuntimeConfig(const RuntimeConfig &config, std::string *error,
@@ -418,7 +495,9 @@ bool SaveRuntimeConfig(const RuntimeConfig &config, std::string *error,
       "tunnel_contract.verify_cloned_session_lifetime=%s\n"
       "tunnel_contract.verify_mixed_batch=%s\n"
       "bsd_system_udp.enabled=%s\n"
-      "bsd_system_udp.verify_post_route_rejection=%s\n",
+      "bsd_system_udp.verify_post_route_rejection=%s\n"
+      "bsd_system_udp.expected_outcome=%s\n"
+      "bsd_system_udp.require_writable_recovery=%s\n",
       tunnel.enabled ? "true" : "false", tunnel.destination_ipv4.c_str(),
       tunnel.destination_port, tunnel.workload_id, tunnel.payload_bytes,
       tunnel.datagram_count, tunnel.pacing_ms, tunnel.concurrent_flows,
@@ -428,7 +507,9 @@ bool SaveRuntimeConfig(const RuntimeConfig &config, std::string *error,
       config.tunnel_contract.verify_cloned_session_lifetime ? "true" : "false",
       config.tunnel_contract.verify_mixed_batch ? "true" : "false",
       config.bsd_system_udp.enabled ? "true" : "false",
-      config.bsd_system_udp.verify_post_route_rejection ? "true" : "false");
+      config.bsd_system_udp.verify_post_route_rejection ? "true" : "false",
+      BsdSystemUdpExpectedOutcomeName(config.bsd_system_udp.expected_outcome),
+      config.bsd_system_udp.require_writable_recovery ? "true" : "false");
   const bool flush_failed = std::fflush(file) != 0;
   const bool close_failed = std::fclose(file) != 0;
   const bool write_failed = flush_failed || close_failed;
