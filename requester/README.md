@@ -90,6 +90,9 @@ At startup, the requester overlays recognized settings from `sdmc:/switch/reques
 
 Unknown keys and invalid values are logged and that individual setting falls back to its compiled default.
 
+The Settings page initializes and resets every control from the loaded runtime configuration.
+In particular, `Expected BSD:S outcome` reflects a persisted no-reply or terminal-closure selection rather than always displaying the normal workload.
+
 The configuration page writes the same file only after an explicit `Save configuration` action.
 
 The workload runs on Borealis' worker queue so the UI remains responsive while waiting for a completion event.
