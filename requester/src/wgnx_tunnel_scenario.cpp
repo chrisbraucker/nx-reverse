@@ -206,8 +206,9 @@ CompletionWaitResult WaitForEcho(
     return result;
 }
 
-CompletionWaitResult
-WaitForWritable(wgnx::tunnel::client::ScopedClient& client, Event* event, wgnx::tunnel::FlowHandle flow, std::uint32_t timeout_ms) {
+CompletionWaitResult WaitForWritable(
+    wgnx::tunnel::client::ScopedClient& client, Event* event, wgnx::tunnel::FlowHandle flow, std::uint32_t timeout_ms
+) {
     CompletionWaitResult result{};
     const std::uint64_t deadline = DeadlineAfterMilliseconds(timeout_ms);
     std::array<wgnx::tunnel::CompletionRecord, wgnx::tunnel::MaximumBatchEntries> completions{};
@@ -491,8 +492,9 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
     return result;
 }
 
-ScenarioResult
-RunWgnxTunnelContractValidation(AppContext& ctx, const TunnelUdpWorkloadConfig& workload, const TunnelContractValidationConfig& config) {
+ScenarioResult RunWgnxTunnelContractValidation(
+    AppContext& ctx, const TunnelUdpWorkloadConfig& workload, const TunnelContractValidationConfig& config
+) {
     using namespace wgnx::tunnel;
 
     ScenarioResult result{.name = "wgnx_tunnel_contract_validation"};

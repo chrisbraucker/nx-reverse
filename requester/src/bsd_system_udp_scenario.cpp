@@ -128,8 +128,9 @@ void CloseDescriptors(std::span<int> descriptors) {
     return std::string(text != nullptr ? text : "<invalid>") + ":" + std::to_string(ntohs(endpoint.sin_port));
 }
 
-[[nodiscard]] bool
-VerifyVisibleLocalEndpoint(AppContext& ctx, const int descriptor, ScenarioResult* result, const std::uint32_t flow_index) {
+[[nodiscard]] bool VerifyVisibleLocalEndpoint(
+    AppContext& ctx, const int descriptor, ScenarioResult* result, const std::uint32_t flow_index
+) {
     sockaddr_in local{};
     socklen_t local_length = sizeof(local);
     if (getsockname(descriptor, reinterpret_cast<sockaddr*>(&local), &local_length) != 0) {
@@ -284,8 +285,9 @@ struct BsdPollResult {
 
 } // namespace
 
-ScenarioResult
-RunBsdSystemUdpWorkload(AppContext& ctx, const TunnelUdpWorkloadConfig& config, const BsdSystemUdpWorkloadConfig& bsd_config) {
+ScenarioResult RunBsdSystemUdpWorkload(
+    AppContext& ctx, const TunnelUdpWorkloadConfig& config, const BsdSystemUdpWorkloadConfig& bsd_config
+) {
     ScenarioResult result{.name = "bsd_system_udp_workload"};
     logger::Status(ctx, "Running normal bsd:s UDP workload to %s:%u", config.destination_ipv4.c_str(), config.destination_port);
 

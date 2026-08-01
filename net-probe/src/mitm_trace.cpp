@@ -746,8 +746,9 @@ size_t CopyTrackedDomainPathsLocked(DomainPathEntry* out_entries, size_t max_ent
     return cursor;
 }
 
-size_t
-CopyTrackedDomainPathsForSessionLocked(u64 session_id, DomainPathEntry* out_entries, size_t max_entries, SessionEntry* out_session_entry) {
+size_t CopyTrackedDomainPathsForSessionLocked(
+    u64 session_id, DomainPathEntry* out_entries, size_t max_entries, SessionEntry* out_session_entry
+) {
     if (out_session_entry != nullptr) {
         *out_session_entry = {};
         if (const auto* session_entry = FindSessionEntryLocked(session_id); session_entry != nullptr) {
