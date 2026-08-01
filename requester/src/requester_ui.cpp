@@ -40,6 +40,18 @@ constexpr int BsdExpectedNormalIndex = 0;
 constexpr int BsdExpectedNoReplyTimeoutIndex = 1;
 constexpr int BsdExpectedTerminalClosureIndex = 2;
 
+int BsdExpectedOutcomeIndex(const BsdSystemUdpExpectedOutcome expected_outcome) {
+    switch (expected_outcome) {
+    case BsdSystemUdpExpectedOutcome::NoReplyTimeout:
+        return BsdExpectedNoReplyTimeoutIndex;
+    case BsdSystemUdpExpectedOutcome::TerminalClosure:
+        return BsdExpectedTerminalClosureIndex;
+    case BsdSystemUdpExpectedOutcome::EchoReply:
+        return BsdExpectedNormalIndex;
+    }
+    return BsdExpectedNormalIndex;
+}
+
 class LogPanel;
 
 struct MainPageBindings {
@@ -227,7 +239,7 @@ class SettingsPage final : public brls::ScrollingFrame {
         expected_bsd_outcome_->init(
             "Expected BSD:S outcome",
             {"Normal workload", "No-reply timeout", "Terminal closure"},
-            BsdExpectedNormalIndex,
+            BsdExpectedOutcomeIndex(model_->config.bsd_system_udp.expected_outcome),
             [model = model_](int next) {
                 switch (next) {
                 case BsdExpectedNoReplyTimeoutIndex:
@@ -432,18 +444,7 @@ class SettingsPage final : public brls::ScrollingFrame {
         payload_seed_->setValue(static_cast<long>(tunnel.payload_seed));
         echo_replies_->setOn(tunnel.echo_replies, false);
         verify_bsd_post_route_rejection_->setOn(model_->config.bsd_system_udp.verify_post_route_rejection, false);
-        int expected_bsd_outcome = BsdExpectedNormalIndex;
-        switch (model_->config.bsd_system_udp.expected_outcome) {
-        case BsdSystemUdpExpectedOutcome::NoReplyTimeout:
-            expected_bsd_outcome = BsdExpectedNoReplyTimeoutIndex;
-            break;
-        case BsdSystemUdpExpectedOutcome::TerminalClosure:
-            expected_bsd_outcome = BsdExpectedTerminalClosureIndex;
-            break;
-        case BsdSystemUdpExpectedOutcome::EchoReply:
-            break;
-        }
-        expected_bsd_outcome_->setSelection(expected_bsd_outcome, true);
+        expected_bsd_outcome_->setSelection(BsdExpectedOutcomeIndex(model_->config.bsd_system_udp.expected_outcome), true);
         require_bsd_writable_recovery_->setOn(model_->config.bsd_system_udp.require_writable_recovery, false);
         const auto& contract = model_->config.tunnel_contract;
         contract_enabled_->setOn(contract.enabled, false);
