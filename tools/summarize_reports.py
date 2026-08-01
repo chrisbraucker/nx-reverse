@@ -56,8 +56,9 @@ def rows_for_file(path: Path, label: str) -> list[dict[str, str]]:
 
 def render(rows: list[dict[str, str]]) -> None:
     columns = ["run", "kind", "workload", "flow", "status", "sent", "received",
-               "echoed", "accepted", "send_admitted", "queue_full", "send_queue_full",
-               "writable", "reason"]
+               "echoed", "sends", "adapter_queued", "adapter_queue_full", "accepted",
+               "send_admitted", "queue_full", "send_queue_full", "too_large", "queued",
+               "discarded", "writable", "reason"]
     present = [column for column in columns if any(column in row for row in rows)]
     widths = {column: max(len(column), *(len(row.get(column, "")) for row in rows))
               for column in present}
@@ -68,11 +69,48 @@ def render(rows: list[dict[str, str]]) -> None:
                         for column in present))
 
 
+def counter(row: dict[str, str], name: str) -> int:
+    return int(row[name])
+
+
+def check(rows: list[dict[str, str]]) -> tuple[list[str], int]:
+    errors: list[str] = []
+    mitm_checks = 0
+    for row in rows:
+        if row["kind"] == "mitm" and all(
+            name in row for name in ("sends", "adapter_queued", "adapter_queue_full", "too_large", "accepted", "discarded", "queued")
+        ):
+            mitm_checks += 1
+            sends = counter(row, "sends")
+            adapter_queued = counter(row, "adapter_queued")
+            adapter_queue_full = counter(row, "adapter_queue_full")
+            too_large = counter(row, "too_large")
+            if sends != adapter_queued + adapter_queue_full + too_large:
+                errors.append(
+                    f"MITM fd={row['flow']}: sends={sends} does not equal adapter_queued + adapter_queue_full + too_large"
+                )
+            accepted = counter(row, "accepted")
+            discarded = counter(row, "discarded")
+            queued = counter(row, "queued")
+            if adapter_queued != accepted + discarded + queued:
+                errors.append(
+                    f"MITM fd={row['flow']}: adapter_queued={adapter_queued} does not equal accepted + discarded + queued"
+                )
+        if row["kind"] == "wgnx" and all(name in row for name in ("send_attempts", "send_admitted")):
+            if counter(row, "send_admitted") > counter(row, "send_attempts"):
+                errors.append(
+                    f"WGNX flow={row['flow']}: send_admitted exceeds send_attempts"
+                )
+    return errors, mitm_checks
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("logs", nargs="+", type=Path)
     parser.add_argument("--label", default="run",
                         help="label applied to rows without a requester workload ID")
+    parser.add_argument("--check", action="store_true",
+                        help="check available per-flow accounting invariants")
     args = parser.parse_args()
 
     rows: list[dict[str, str]] = []
@@ -83,6 +121,16 @@ def main() -> int:
     if not rows:
         parser.error("no Task 4 aggregate summaries found")
     render(rows)
+    if args.check:
+        errors, mitm_checks = check(rows)
+        for error in errors:
+            print(f"CHECK failed: {error}")
+        if errors:
+            return 1
+        if mitm_checks == 0:
+            print("CHECK unavailable: no MITM flow summary includes the local-admission counters")
+            return 2
+        print(f"CHECK passed: {mitm_checks} MITM per-flow accounting invariant(s) hold")
     return 0
 
 

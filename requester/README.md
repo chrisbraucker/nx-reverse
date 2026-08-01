@@ -164,7 +164,9 @@ bsd_system_udp.expected_outcome=echo
 bsd_system_udp.require_writable_recovery=false
 ```
 
-Run `python3 tools/summarize_task4.py <requester.log> <harness.log> <mitm.log> <wgnx.log>` from the repository root to render the aggregate Task 4 rows.
+Run `python3 tools/summarize_reports.py --check <requester.log> <harness.log> <mitm.log> <wgnx.log>` from the repository root to render the aggregate Task 4 rows and validate the available per-flow accounting invariants.
+`adapter_queued` records a successful BSD-to-MITM local FIFO admission, while `adapter_queue_full` records a BSD-visible `EAGAIN` before that admission.
+`queue_full` and WireGuard `send_queue_full` record later downstream staging pressure, which can occur after the BSD send has succeeded and is therefore not expected to equal requester retry count.
 The tool does not parse per-packet output and leaves raw logs authoritative.
 
 ### Contract Validation
