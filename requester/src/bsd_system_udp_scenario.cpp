@@ -18,6 +18,7 @@
 #include "config.hpp"
 #include "logger.hpp"
 #include "runtime.hpp"
+#include "udp_workload_metrics.hpp"
 #include "wgnx/tunnel_protocol.hpp"
 
 namespace requester {
@@ -349,18 +350,48 @@ ScenarioResult RunBsdSystemUdpWorkload(
     std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadStorageBytes> payload_storage{};
     const std::span<std::uint8_t> payload(payload_storage.data(), config.payload_bytes);
     std::array<std::uint8_t, wgnx::tunnel::MaximumUdpPayloadStorageBytes> received{};
+    const std::uint64_t tick_frequency = armGetSystemTickFreq();
+    UdpWorkloadMetrics workload_metrics;
     std::uint32_t echoed = 0;
     std::uint32_t queue_full_retries = 0;
     bool writable_recovery = false;
+    const auto log_metrics = [&] {
+        logger::Log(
+            ctx,
+            "[udp-workload-summary] kind=bsd-system workload=%u scope=workload flow=all "
+            "attempted=%u accepted=%u submitted_bytes=%llu submission_elapsed_ns=%llu echoed=%u received_bytes=%llu "
+            "rtt_samples=%u rtt_min_ns=%llu rtt_mean_ns=%llu rtt_p50_upper_ns=%llu "
+            "rtt_p95_upper_ns=%llu rtt_p99_upper_ns=%llu rtt_max_ns=%llu queue_full_retries=%u",
+            config.workload_id,
+            workload_metrics.attempted_datagrams(),
+            workload_metrics.submitted_datagrams(),
+            static_cast<unsigned long long>(workload_metrics.submitted_bytes()),
+            static_cast<unsigned long long>(workload_metrics.SubmissionElapsedNanoseconds(tick_frequency)),
+            workload_metrics.echoed_datagrams(),
+            static_cast<unsigned long long>(workload_metrics.echoed_bytes()),
+            workload_metrics.echoed_datagrams(),
+            static_cast<unsigned long long>(workload_metrics.RttMinimumNanoseconds()),
+            static_cast<unsigned long long>(workload_metrics.RttMeanNanoseconds()),
+            static_cast<unsigned long long>(workload_metrics.RttPercentileUpperNanoseconds(50)),
+            static_cast<unsigned long long>(workload_metrics.RttPercentileUpperNanoseconds(95)),
+            static_cast<unsigned long long>(workload_metrics.RttPercentileUpperNanoseconds(99)),
+            static_cast<unsigned long long>(workload_metrics.RttMaximumNanoseconds()),
+            queue_full_retries
+        );
+    };
 
     if (bsd_config.expected_outcome == BsdSystemUdpExpectedOutcome::NoReplyTimeout) {
         BuildPayload(payload, 0, 0, config);
+        workload_metrics.RecordAttempt();
         const BsdSendResult send_result = SendWithWritableRetry(descriptors[0], payload, config.receive_deadline_ms);
+        queue_full_retries += send_result.queue_full_retries;
         if (!send_result.sent) {
             result.err = send_result.error;
             result.detail = send_result.detail;
         } else {
             result.bytes_sent += payload.size();
+            const std::uint64_t accepted_tick = armGetSystemTick();
+            workload_metrics.RecordSubmission(accepted_tick, payload.size());
             const BsdPollResult poll_result = WaitForInput(descriptors[0], config.receive_deadline_ms);
             if (IsExpectedBsdPollObservation(bsd_config.expected_outcome, poll_result.observation)) {
                 result.success = true;
@@ -371,20 +402,28 @@ ScenarioResult RunBsdSystemUdpWorkload(
                 result.detail = "no-reply poll unexpected revents=" + std::to_string(poll_result.revents);
             }
         }
+        log_metrics();
         CloseDescriptors(descriptors);
         return result;
     }
 
     if (bsd_config.expected_outcome == BsdSystemUdpExpectedOutcome::TerminalClosure) {
         BuildPayload(payload, 0, 0, config);
+        const std::uint64_t send_start_tick = armGetSystemTick();
+        workload_metrics.RecordAttempt();
         const BsdSendResult send_result = SendWithWritableRetry(descriptors[0], payload, config.receive_deadline_ms);
+        queue_full_retries += send_result.queue_full_retries;
         if (!send_result.sent) {
             result.err = send_result.error;
             result.detail = send_result.detail;
         } else {
             result.bytes_sent += payload.size();
+            const std::uint64_t accepted_tick = armGetSystemTick();
+            workload_metrics.RecordSubmission(accepted_tick, payload.size());
             if (ReceiveExpectedEcho(descriptors[0], payload, received, remote, config.receive_deadline_ms, &result, 0)) {
                 ++echoed;
+                const std::uint64_t received_tick = armGetSystemTick();
+                workload_metrics.RecordEcho(send_start_tick, received_tick, tick_frequency, payload.size());
                 logger::Status(ctx, "bsd_system_udp terminal flow waiting deadline_ms=%u", config.receive_deadline_ms);
                 const BsdPollResult poll_result = WaitForInput(descriptors[0], config.receive_deadline_ms);
                 if (!IsExpectedBsdPollObservation(bsd_config.expected_outcome, poll_result.observation)) {
@@ -399,10 +438,12 @@ ScenarioResult RunBsdSystemUdpWorkload(
                         result.success = true;
                         result.detail = "bsd:s terminal closure confirmed workload=" + std::to_string(config.workload_id) +
                                         " echoed=" + std::to_string(echoed) + " post_send=ECONNABORTED";
+                        result.detail += " avg_echo_latency_ms=" + std::to_string(workload_metrics.RttMeanMilliseconds());
                     }
                 }
             }
         }
+        log_metrics();
         CloseDescriptors(descriptors);
         return result;
     }
@@ -411,6 +452,8 @@ ScenarioResult RunBsdSystemUdpWorkload(
         const std::uint32_t flow_index = sequence % config.concurrent_flows;
         const int descriptor = descriptors[flow_index];
         BuildPayload(payload, sequence, flow_index, config);
+        const std::uint64_t send_start_tick = armGetSystemTick();
+        workload_metrics.RecordAttempt();
         const BsdSendResult send_result = SendWithWritableRetry(descriptor, payload, config.receive_deadline_ms);
         queue_full_retries += send_result.queue_full_retries;
         writable_recovery = writable_recovery || send_result.writable_after_queue_full;
@@ -421,12 +464,16 @@ ScenarioResult RunBsdSystemUdpWorkload(
             break;
         }
         result.bytes_sent += payload.size();
+        const std::uint64_t accepted_tick = armGetSystemTick();
+        workload_metrics.RecordSubmission(accepted_tick, payload.size());
 
         if (config.echo_replies) {
             if (!ReceiveExpectedEcho(descriptor, payload, received, remote, config.receive_deadline_ms, &result, sequence)) {
                 break;
             }
             ++echoed;
+            const std::uint64_t received_tick = armGetSystemTick();
+            workload_metrics.RecordEcho(send_start_tick, received_tick, tick_frequency, payload.size());
             if (sequence == 0 || sequence + 1 == config.datagram_count) {
                 REQUESTER_LOG_PACKET(ctx, "bsd_system_udp echo flow=%u sequence=%u reply_received", flow_index, sequence);
             }
@@ -438,6 +485,7 @@ ScenarioResult RunBsdSystemUdpWorkload(
     }
 
     CloseDescriptors(descriptors);
+    log_metrics();
     if (result.detail.empty() && bsd_config.require_writable_recovery && !HasWritableRecovery(queue_full_retries, writable_recovery)) {
         result.detail = "writable recovery was not observed";
     }
@@ -448,6 +496,9 @@ ScenarioResult RunBsdSystemUdpWorkload(
                         " sent=" + std::to_string(config.datagram_count) + " echoed=" + std::to_string(echoed) +
                         " queue_full_retries=" + std::to_string(queue_full_retries) +
                         " writable_recovery=" + (writable_recovery ? "true" : "false");
+        if (config.echo_replies) {
+            result.detail += " avg_echo_latency_ms=" + std::to_string(workload_metrics.RttMeanMilliseconds());
+        }
     }
     return result;
 }

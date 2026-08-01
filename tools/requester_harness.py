@@ -8,6 +8,7 @@ import signal
 import socketserver
 import ssl
 import threading
+import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -48,6 +49,8 @@ class UdpWorkloadStats:
         self._last_sequence: dict[tuple[str, int, int], int] = {}
         self._duplicates = Counter[tuple[str, int, int]]()
         self._reordered = Counter[tuple[str, int, int]]()
+        self._first_received_ns: dict[tuple[str, int, int], int] = {}
+        self._last_received_ns: dict[tuple[str, int, int], int] = {}
         self._unexpected = 0
         self._malformed = 0
 
@@ -62,8 +65,11 @@ class UdpWorkloadStats:
                 return None
             workload_kind, workload_id, flow_index, sequence, seed = identity
             key = (workload_kind, workload_id, flow_index)
+            received_ns = time.monotonic_ns()
             self._received[key] += 1
             self._bytes_received[key] += len(data)
+            self._first_received_ns.setdefault(key, received_ns)
+            self._last_received_ns[key] = received_ns
             self._sources[key].add(source)
             if sequence in self._sequences[key]:
                 self._duplicates[key] += 1
@@ -77,19 +83,65 @@ class UdpWorkloadStats:
                 self._bytes_echoed[key] += len(data)
         return f"kind={workload_kind} workload={workload_id} flow={flow_index} sequence={sequence} seed=0x{seed:08x}"
 
-    def log_summary(self) -> None:
+    def summary_rows(self) -> list[dict[str, int | str]]:
         with self._lock:
             keys = sorted(set(self._received) | set(self._echoed))
-            for workload_kind, workload_id, flow_index in keys:
-                key = (workload_kind, workload_id, flow_index)
-                log(
-                    "[udp-summary] "
-                    f"kind={workload_kind} workload={workload_id} flow={flow_index} "
-                    f"received={self._received[key]} received_bytes={self._bytes_received[key]} "
-                    f"echoed={self._echoed[key]} echoed_bytes={self._bytes_echoed[key]} "
-                    f"duplicates={self._duplicates[key]} reordered={self._reordered[key]} "
-                    f"sources={sorted(self._sources[key])}"
+            rows = [self._summary_row(key, "flow") for key in keys]
+            workload_keys: dict[tuple[str, int], list[tuple[str, int, int]]] = defaultdict(list)
+            for key in keys:
+                workload_keys[key[:2]].append(key)
+            for workload_kind, workload_id in sorted(workload_keys):
+                grouped_keys = workload_keys[(workload_kind, workload_id)]
+                first_received_ns = min(self._first_received_ns[key] for key in grouped_keys)
+                last_received_ns = max(self._last_received_ns[key] for key in grouped_keys)
+                rows.append(
+                    {
+                        "kind": workload_kind,
+                        "workload": workload_id,
+                        "scope": "workload",
+                        "flow": "all",
+                        "received": sum(self._received[key] for key in grouped_keys),
+                        "received_bytes": sum(self._bytes_received[key] for key in grouped_keys),
+                        "echoed": sum(self._echoed[key] for key in grouped_keys),
+                        "echoed_bytes": sum(self._bytes_echoed[key] for key in grouped_keys),
+                        "unique": sum(len(self._sequences[key]) for key in grouped_keys),
+                        "duplicates": sum(self._duplicates[key] for key in grouped_keys),
+                        "reordered": sum(self._reordered[key] for key in grouped_keys),
+                        "receive_elapsed_ns": last_received_ns - first_received_ns,
+                        "sources": ",".join(sorted({source for key in grouped_keys for source in self._sources[key]})),
+                    }
                 )
+            return rows
+
+    def _summary_row(self, key: tuple[str, int, int], scope: str) -> dict[str, int | str]:
+        workload_kind, workload_id, flow_index = key
+        return {
+            "kind": workload_kind,
+            "workload": workload_id,
+            "scope": scope,
+            "flow": flow_index,
+            "received": self._received[key],
+            "received_bytes": self._bytes_received[key],
+            "echoed": self._echoed[key],
+            "echoed_bytes": self._bytes_echoed[key],
+            "unique": len(self._sequences[key]),
+            "duplicates": self._duplicates[key],
+            "reordered": self._reordered[key],
+            "receive_elapsed_ns": self._last_received_ns[key] - self._first_received_ns[key],
+            "sources": ",".join(sorted(self._sources[key])),
+        }
+
+    def log_summary(self) -> None:
+        for row in self.summary_rows():
+            log(
+                "[udp-summary] "
+                f"kind={row['kind']} workload={row['workload']} scope={row['scope']} flow={row['flow']} "
+                f"received={row['received']} received_bytes={row['received_bytes']} "
+                f"echoed={row['echoed']} echoed_bytes={row['echoed_bytes']} unique={row['unique']} "
+                f"duplicates={row['duplicates']} reordered={row['reordered']} "
+                f"receive_elapsed_ns={row['receive_elapsed_ns']} sources={row['sources']}"
+            )
+        with self._lock:
             if self._unexpected:
                 log(f"[udp-summary] unexpected_datagrams={self._unexpected}")
             if self._malformed:

@@ -44,6 +44,12 @@ if(REQUESTER_BUILD_HOST_TESTS)
     target_compile_features(requester_bsd_outcome_tests PRIVATE cxx_std_23)
     target_compile_options(requester_bsd_outcome_tests PRIVATE -Wall -Wextra -Werror)
     add_test(NAME requester_bsd_outcome_tests COMMAND requester_bsd_outcome_tests)
+    add_executable(requester_udp_workload_metrics_tests test/udp_workload_metrics_tests.cpp)
+    target_include_directories(requester_udp_workload_metrics_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_features(requester_udp_workload_metrics_tests PRIVATE cxx_std_23)
+    target_compile_options(requester_udp_workload_metrics_tests PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME requester_udp_workload_metrics_tests COMMAND requester_udp_workload_metrics_tests)
     return()
 endif()
 

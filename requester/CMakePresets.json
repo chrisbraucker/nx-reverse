@@ -34,7 +34,8 @@
       "name": "host-tests",
       "configurePreset": "host-tests",
       "targets": [
-        "requester_bsd_outcome_tests"
+        "requester_bsd_outcome_tests",
+        "requester_udp_workload_metrics_tests"
       ]
     },
     {

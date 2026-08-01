@@ -13,6 +13,7 @@ REQUESTER = re.compile(
     r"\[(?P<status>OK|FAIL)\] bsd_system_udp_workload \| sent=(?P<sent>\d+) "
     r"recv=(?P<received>\d+) \| (?P<detail>.*)"
 )
+REQUESTER_METRICS = re.compile(r"\[udp-workload-summary\] (?P<detail>.*)")
 HARNESS = re.compile(r"\[udp-summary\] (?P<detail>.*)")
 MITM = re.compile(r"tunnel flow summary (?P<detail>.*)")
 MITM_WORKER = re.compile(r"tunnel worker summary (?P<detail>.*)")
@@ -23,6 +24,12 @@ def fields(detail: str) -> dict[str, str]:
     return dict(KEY_VALUE.findall(detail))
 
 
+def rate_mb_s(byte_count: str | None, elapsed_ns: str | None) -> str | None:
+    if byte_count is None or elapsed_ns is None or int(elapsed_ns) == 0:
+        return None
+    return f"{(int(byte_count) * 1000) / int(elapsed_ns):.3f}"
+
+
 def rows_for_file(path: Path, label: str) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for line in path.read_text(errors="replace").splitlines():
@@ -31,9 +38,19 @@ def rows_for_file(path: Path, label: str) -> list[dict[str, str]]:
             row.update(kind="requester", status=match.group("status"),
                        sent=match.group("sent"), received=match.group("received"))
             rows.append(row)
+        elif match := REQUESTER_METRICS.search(line):
+            row = fields(match.group("detail"))
+            row["workload_kind"] = row.pop("kind", "-")
+            row["kind"] = "requester"
+            if rate := rate_mb_s(row.get("submitted_bytes"), row.get("submission_elapsed_ns")):
+                row["submission_rate_mb_s"] = rate
+            rows.append(row)
         elif match := HARNESS.search(line):
             row = fields(match.group("detail"))
+            row["workload_kind"] = row.pop("kind", "-")
             row["kind"] = "harness"
+            if rate := rate_mb_s(row.get("received_bytes"), row.get("receive_elapsed_ns")):
+                row["receiver_goodput_mb_s"] = rate
             rows.append(row)
         elif match := MITM.search(line):
             row = fields(match.group("detail"))
@@ -55,10 +72,12 @@ def rows_for_file(path: Path, label: str) -> list[dict[str, str]]:
 
 
 def render(rows: list[dict[str, str]]) -> None:
-    columns = ["run", "kind", "workload", "flow", "status", "sent", "received",
-               "echoed", "sends", "adapter_queued", "adapter_queue_full", "accepted",
-               "send_admitted", "queue_full", "send_queue_full", "too_large", "queued",
-               "discarded", "writable", "reason"]
+    columns = ["run", "kind", "workload_kind", "workload", "scope", "flow", "status", "sent", "attempted", "accepted", "submitted",
+               "received", "submitted_bytes", "received_bytes", "submission_elapsed_ns", "submission_rate_mb_s",
+               "receive_elapsed_ns", "receiver_goodput_mb_s", "echoed", "rtt_mean_ns", "rtt_p50_upper_ns",
+               "rtt_p95_upper_ns", "rtt_p99_upper_ns", "rtt_max_ns", "sends", "adapter_queued",
+               "adapter_queue_full", "send_admitted", "queue_full", "send_queue_full", "too_large",
+               "queued", "discarded", "writable", "reason"]
     present = [column for column in columns if any(column in row for row in rows)]
     widths = {column: max(len(column), *(len(row.get(column, "")) for row in rows))
               for column in present}

@@ -72,6 +72,14 @@ Packet-granularity requester logs are disabled by default so workload measuremen
 
 Enable them only for diagnostics with `-DREQUESTER_PACKET_DIAGNOSTICS=ON` during CMake configuration.
 
+Each UDP workload emits one final aggregate `[udp-workload-summary]` record.
+They report accepted submission bytes and interval, echoed bytes, queue-pressure events, and a fixed-bucket RTT summary when echo is enabled.
+`rtt_p50_upper_ns`, `rtt_p95_upper_ns`, and `rtt_p99_upper_ns` are conservative power-of-two histogram upper bounds rather than exact sample percentiles.
+Successful echo workload results also display `avg_echo_latency_ms` in the requester log.
+
+The controlled harness emits matching `[udp-summary]` records per flow and per workload with unique payload count, byte totals, and its local receive-window interval.
+Requester submission rate and harness receiver goodput are intentionally separate local-clock measurements and must not be subtracted across hosts.
+
 To start from a clean build tree, remove the generated directories.
 
 ```sh
@@ -165,6 +173,7 @@ bsd_system_udp.require_writable_recovery=false
 ```
 
 Run `python3 tools/summarize_reports.py --check <requester.log> <harness.log> <mitm.log> <wgnx.log>` from the repository root to render the aggregate Task 4 rows and validate the available per-flow accounting invariants.
+For the new timing records, it displays requester `submission_rate_mb_s` and harness `receiver_goodput_mb_s` separately.
 `adapter_queued` records a successful BSD-to-MITM local FIFO admission, while `adapter_queue_full` records a BSD-visible `EAGAIN` before that admission.
 `queue_full` and WireGuard `send_queue_full` record later downstream staging pressure, which can occur after the BSD send has succeeded and is therefore not expected to equal requester retry count.
 The tool does not parse per-packet output and leaves raw logs authoritative.

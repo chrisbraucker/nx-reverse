@@ -13,6 +13,7 @@
 
 #include "logger.hpp"
 #include "runtime_config.hpp"
+#include "udp_workload_metrics.hpp"
 #include "wgnx/tunnel_client.hpp"
 
 namespace requester {
@@ -291,6 +292,10 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
         result.detail = "wgnx:tun is not running";
         return result;
     }
+    if (config.concurrent_flows == 0 || config.concurrent_flows > MaximumFlowsPerClient) {
+        result.detail = "configured WGNX workload flow count is unsupported";
+        return result;
+    }
 
     client::ScopedRootService root;
     Result rc = root.Open();
@@ -383,12 +388,38 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
 
     std::array<std::uint8_t, MaximumUdpPayloadStorageBytes> payload_storage{};
     const std::span<std::uint8_t> payload(payload_storage.data(), config.payload_bytes);
+    const std::uint64_t tick_frequency = armGetSystemTickFreq();
+    UdpWorkloadMetrics workload_metrics;
     std::uint32_t accepted = 0;
     std::uint32_t echoed = 0;
     std::uint32_t ignored_completions = 0;
     std::uint32_t event_wakes = 0;
     std::uint32_t queue_full_events = 0;
     bool tunnel_service_lost = false;
+    const auto log_metrics = [&] {
+        logger::Log(
+            ctx,
+            "[udp-workload-summary] kind=wgnx-tun workload=%u scope=workload flow=all "
+            "attempted=%u accepted=%u submitted_bytes=%llu submission_elapsed_ns=%llu echoed=%u received_bytes=%llu "
+            "rtt_samples=%u rtt_min_ns=%llu rtt_mean_ns=%llu rtt_p50_upper_ns=%llu "
+            "rtt_p95_upper_ns=%llu rtt_p99_upper_ns=%llu rtt_max_ns=%llu queue_full_events=%u",
+            config.workload_id,
+            workload_metrics.attempted_datagrams(),
+            workload_metrics.submitted_datagrams(),
+            static_cast<unsigned long long>(workload_metrics.submitted_bytes()),
+            static_cast<unsigned long long>(workload_metrics.SubmissionElapsedNanoseconds(tick_frequency)),
+            workload_metrics.echoed_datagrams(),
+            static_cast<unsigned long long>(workload_metrics.echoed_bytes()),
+            workload_metrics.echoed_datagrams(),
+            static_cast<unsigned long long>(workload_metrics.RttMinimumNanoseconds()),
+            static_cast<unsigned long long>(workload_metrics.RttMeanNanoseconds()),
+            static_cast<unsigned long long>(workload_metrics.RttPercentileUpperNanoseconds(50)),
+            static_cast<unsigned long long>(workload_metrics.RttPercentileUpperNanoseconds(95)),
+            static_cast<unsigned long long>(workload_metrics.RttPercentileUpperNanoseconds(99)),
+            static_cast<unsigned long long>(workload_metrics.RttMaximumNanoseconds()),
+            queue_full_events
+        );
+    };
     for (std::uint32_t sequence = 0; sequence < config.datagram_count; ++sequence) {
         const std::uint32_t flow_index = sequence % config.concurrent_flows;
         BuildPayload(payload, sequence, flow_index, config);
@@ -398,6 +429,8 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
             .payload_size = static_cast<std::uint32_t>(payload.size()),
             .client_tag = (static_cast<std::uint64_t>(config.workload_id) << 32U) | sequence,
         };
+        const std::uint64_t send_start_tick = armGetSystemTick();
+        workload_metrics.RecordAttempt();
         std::uint32_t queue_full_retries_for_datagram = 0;
         for (;;) {
             DatagramDisposition disposition{};
@@ -440,6 +473,8 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
         }
         ++accepted;
         result.bytes_sent += payload.size();
+        const std::uint64_t accepted_tick = armGetSystemTick();
+        workload_metrics.RecordSubmission(accepted_tick, payload.size());
 
         if (config.echo_replies) {
             const CompletionWaitResult wait =
@@ -454,6 +489,8 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
             }
             ++echoed;
             result.bytes_received += payload.size();
+            const std::uint64_t received_tick = armGetSystemTick();
+            workload_metrics.RecordEcho(send_start_tick, received_tick, tick_frequency, payload.size());
         }
         if (config.pacing_ms != 0) {
             SleepMilliseconds(config.pacing_ms);
@@ -480,6 +517,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
         }
     }
     eventClose(&completion_event);
+    log_metrics();
 
     if (accepted == config.datagram_count && (!config.echo_replies || echoed == accepted)) {
         result.success = true;
@@ -488,6 +526,9 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
                         " accepted=" + std::to_string(accepted) + " echoed=" + std::to_string(echoed) +
                         " queue_full_events=" + std::to_string(queue_full_events) +
                         " ignored_completions=" + std::to_string(ignored_completions) + " event_wakes=" + std::to_string(event_wakes);
+        if (config.echo_replies) {
+            result.detail += " avg_echo_latency_ms=" + std::to_string(workload_metrics.RttMeanMilliseconds());
+        }
     }
     return result;
 }
