@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 REPORTS_DIR = REPO_ROOT / "workspace" / "reports"
 PROBE_META = REPO_ROOT / "net-probe" / "res" / "module.json"
 PROBE_NSP = REPO_ROOT / "net-probe" / "out" / "net-probe.nsp"
-REQUESTER_NRO = REPO_ROOT / "requester" / "out" / "requester.nro"
+TOOLBOX_NRO = REPO_ROOT / "toolbox" / "out" / "toolbox.nro"
 
 
 def load_title_id(meta_path) -> str:
@@ -24,7 +24,7 @@ def load_title_id(meta_path) -> str:
 PROBE_TITLE_ID = load_title_id(PROBE_META)
 
 REMOTE_PROBE = PurePosixPath(f"sdmc:/atmosphere/contents/{PROBE_TITLE_ID}/exefs.nsp")
-REMOTE_REQUESTER = PurePosixPath("sdmc:/switch/requester/requester.nro")
+REMOTE_TOOLBOX = PurePosixPath("sdmc:/switch/nxrv-toolbox/nxrv-toolbox.nro")
 
 REMOTE_FATAL_ERROR_DIR = PurePosixPath("sdmc:/atmosphere/fatal_errors")
 REMOTE_FATAL_REPORT_DIR = PurePosixPath("sdmc:/atmosphere/fatal_reports")
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=10.0, help="FTP timeout in seconds")
 
     parser.add_argument("-p", "--push-probe", action="store_true", help="Upload probe NSP to Atmosphere contents")
-    parser.add_argument("-r", "--push-requester", action="store_true", help="Upload requester NRO to /switch/")
+    parser.add_argument("-t", "--push-toolbox", action="store_true", help="Upload toolbox NRO to /switch/")
     parser.add_argument("-F", "--pull-fatal-errors", action="store_true", help="Download all files from /atmosphere/fatal_errors/")
     parser.add_argument("-R", "--pull-fatal-reports", action="store_true", help="Download all files from /atmosphere/fatal_reports/")
     parser.add_argument("-E", "--pull-erpt-reports", action="store_true", help="Download all files from /atmosphere/erpt_reports/")
@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.all:
         args.push_probe = True
-        args.push_requester = True
+        args.push_toolbox = True
         args.pull_fatal_errors = True
         args.pull_fatal_reports = True
         args.pull_erpt_reports = True
@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
 
     if not any((
         args.push_probe,
-        args.push_requester,
+        args.push_toolbox,
         args.pull_fatal_errors,
         args.pull_fatal_reports,
         args.pull_erpt_reports,
@@ -246,8 +246,8 @@ def main() -> int:
 
         if args.push_probe:
             upload_file(ftp, PROBE_NSP, REMOTE_PROBE)
-        if args.push_requester:
-            upload_file(ftp, REQUESTER_NRO, REMOTE_REQUESTER)
+        if args.push_toolbox:
+            upload_file(ftp, TOOLBOX_NRO, REMOTE_TOOLBOX)
         if args.pull_fatal_errors:
             pull_path(ftp, REMOTE_FATAL_ERROR_DIR, reports_dir, delete_remote=args.clean)
         if args.pull_fatal_reports:

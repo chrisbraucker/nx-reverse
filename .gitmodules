@@ -1,9 +1,9 @@
 [submodule "net-probe/lib/Atmosphere-libs"]
 	path = net-probe/lib/Atmosphere-libs
 	url = git@github.com:chrisbraucker/Atmosphere-libs.git
-[submodule "requester/libs/wireguard-nx"]
-	path = requester/libs/wireguard-nx
+[submodule "toolbox/libs/wireguard-nx"]
+	path = toolbox/libs/wireguard-nx
 	url = git@github.com:chrisbraucker/wireguard-nx.git
-[submodule "requester/libs/borealis"]
-	path = requester/libs/borealis
+[submodule "toolbox/libs/borealis"]
+	path = toolbox/libs/borealis
 	url = https://github.com/xfangfang/borealis.git

@@ -1,0 +1,50 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "host-tests",
+      "displayName": "Toolbox host tests",
+      "description": "Build pure toolbox outcome tests without the Switch toolchain.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-host-tests",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "TOOLBOX_BUILD_HOST_TESTS": "ON"
+      }
+    },
+    {
+      "name": "switch",
+      "displayName": "Nintendo Switch",
+      "description": "Build the toolbox NRO with devkitPro and Borealis.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "host-tests",
+      "configurePreset": "host-tests",
+      "targets": [
+        "toolbox_bsd_outcome_tests",
+        "toolbox_udp_workload_metrics_tests"
+      ]
+    },
+    {
+      "name": "toolbox",
+      "displayName": "Toolbox NRO",
+      "configurePreset": "switch",
+      "targets": [
+        "toolbox_nro"
+      ]
+    }
+  ]
+}
