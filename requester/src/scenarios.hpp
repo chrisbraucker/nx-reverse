@@ -1,6 +1,8 @@
 #pragma once
 
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "runtime.hpp"
@@ -18,6 +20,14 @@ struct ScenarioResult {
     std::string detail;
 };
 
+struct ScenarioDescriptor {
+    std::string_view name;
+    std::string_view description;
+    std::string_view compiled_defaults;
+};
+
+std::span<const ScenarioDescriptor> AvailableScenarios();
+ScenarioResult RunScenario(AppContext& ctx, std::string_view name);
 std::vector<ScenarioResult> RunScenarios(AppContext& ctx);
 
 } // namespace requester

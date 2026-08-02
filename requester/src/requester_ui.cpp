@@ -16,6 +16,7 @@
 #include "logger.hpp"
 #include "nxrv/build_info.hpp"
 #include "runtime_config.hpp"
+#include "scenarios.hpp"
 #include "wgnx/client.hpp"
 #include "wgnx/protocol.hpp"
 #include "wgnx/tunnel_protocol.hpp"
@@ -25,14 +26,15 @@ namespace requester {
 
 namespace {
 
-constexpr float PagePadding = 28.0F;
+constexpr float PagePadding = 24.0F;
 constexpr float MainLogPanelHeight = 220.0F;
+constexpr float ScenarioLogPanelHeight = 170.0F;
 constexpr std::size_t MainLogPanelLines = 12;
 constexpr float OffsetTolerance = 1.0F;
 constexpr float SettingsActionGap = 18.0F;
 constexpr float SettingsSectionGap = 24.0F;
 constexpr float RequesterSidebarWidth = 250.0F;
-constexpr float LogFontSize = 16.0F;
+constexpr float LogFontSize = 14.0F;
 constexpr char ProjectUrl[] = APP_PROJECT_URL;
 constexpr int TunnelDataPathIndex = 0;
 constexpr int BsdSystemDataPathIndex = 1;
@@ -61,12 +63,19 @@ struct MainPageBindings {
     LogPanel* log_panel{};
 };
 
+struct ScenarioPageBindings {
+    brls::Button* run_button{};
+    brls::Label* status_label{};
+    LogPanel* log_panel{};
+};
+
 struct UiModel {
     AppContext* context{};
     RuntimeConfig defaults;
     RuntimeConfig config;
     std::string configuration_source;
     MainPageBindings main;
+    ScenarioPageBindings scenario;
     LogPanel* logs_panel{};
     std::string run_status{"Ready to run the configured workload."};
     bool active{true};
@@ -132,6 +141,9 @@ class LogPanel final : public brls::ScrollingFrame {
     }
 
     void Refresh(bool reset_auto_scroll = false) {
+        if (cleared_) {
+            return;
+        }
         const float current_offset = getContentOffsetY();
         if (reset_auto_scroll) {
             auto_scroll_ = true;
@@ -146,11 +158,22 @@ class LogPanel final : public brls::ScrollingFrame {
         }
     }
 
+    void Clear() {
+        cleared_ = true;
+        label_->setText("Log output cleared.");
+    }
+
+    void ShowRecent() {
+        cleared_ = false;
+        Refresh(true);
+    }
+
   private:
     brls::Label* label_{};
     std::size_t maximum_line_count_{};
     float last_automatic_offset_{};
     bool auto_scroll_{true};
+    bool cleared_{false};
 };
 
 void RefreshLogViews(const std::shared_ptr<UiModel>& model) {
@@ -162,6 +185,21 @@ void RefreshLogViews(const std::shared_ptr<UiModel>& model) {
     }
     if (model->logs_panel != nullptr) {
         model->logs_panel->Refresh();
+    }
+    if (model->scenario.log_panel != nullptr) {
+        model->scenario.log_panel->Refresh();
+    }
+}
+
+void RefreshScenarioPage(const std::shared_ptr<UiModel>& model) {
+    if (!model->active) {
+        return;
+    }
+    if (model->scenario.status_label != nullptr) {
+        model->scenario.status_label->setText(model->run_status);
+    }
+    if (model->scenario.run_button != nullptr) {
+        model->scenario.run_button->setState(model->run_active ? brls::ButtonState::DISABLED : brls::ButtonState::ENABLED);
     }
 }
 
@@ -620,6 +658,157 @@ class LogsPage final : public brls::Box {
     std::shared_ptr<UiModel> model_;
 };
 
+class ScenariosPage final : public brls::Box {
+  public:
+    explicit ScenariosPage(std::shared_ptr<UiModel> model) : brls::Box(brls::Axis::COLUMN), model_(std::move(model)) {
+        setPadding(PagePadding);
+        setShrink(1.0F);
+
+        const auto scenarios = AvailableScenarios();
+        scenario_names_.reserve(scenarios.size());
+        for (const ScenarioDescriptor& scenario : scenarios) {
+            scenario_names_.emplace_back(scenario.name);
+        }
+
+        auto* header = new brls::Header();
+        header->setTitle("Scenarios");
+        header->setSubtitle("Run one compiled diagnostic scenario at a time.");
+        addView(header);
+
+        selector_ = new brls::SelectorCell();
+        selector_->init("Scenario", scenario_names_, 0, [this](int index) {
+            selected_index_ = static_cast<std::size_t>(index);
+            UpdateDetails();
+        });
+        addView(selector_);
+
+        description_ = new brls::Label();
+        description_->setSingleLine(false);
+        description_->setAutoAnimate(false);
+        description_->setMarginTop(12.0F);
+        addView(description_);
+
+        auto* defaults_header = new brls::Header();
+        defaults_header->setTitle("Compiled Defaults");
+        defaults_header->setSubtitle("Read from config.hpp");
+        defaults_header->setMarginTop(12.0F);
+        addView(defaults_header);
+
+        defaults_ = new brls::Label();
+        defaults_->setMarginTop(8.0F);
+        defaults_->setFontSize(16.0F);
+        defaults_->setSingleLine(false);
+        defaults_->setAutoAnimate(false);
+        addView(defaults_);
+
+        model_->scenario.status_label = new brls::Label();
+        model_->scenario.status_label->setHeight(40.0F);
+
+        auto* log_header = new brls::Header();
+        log_header->setTitle("Scenario Log");
+        log_header->setSubtitle("Recent output is shown while the selected scenario runs.");
+        log_header->setMarginTop(12.0F);
+        addView(log_header);
+
+        model_->scenario.log_panel = new LogPanel(MainLogPanelLines);
+        model_->scenario.log_panel->setWidthPercentage(100.0F);
+        model_->scenario.log_panel->setHeight(ScenarioLogPanelHeight);
+        addView(model_->scenario.log_panel);
+
+        auto* footer = new brls::Box(brls::Axis::ROW);
+        footer->setWidthPercentage(100.0F);
+        footer->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
+        footer->setMarginTop(20.0F);
+        footer->setHeight(40.0F);
+
+        auto* commands = new brls::Box(brls::Axis::ROW);
+
+        auto* clear = new brls::Button();
+        clear->setText("Clear log");
+        clear->setWidth(190.0F);
+        clear->registerClickAction([model = model_](brls::View*) {
+            model->scenario.log_panel->Clear();
+            return true;
+        });
+        model_->scenario.run_button = new brls::Button();
+        model_->scenario.run_button->setStyle(&brls::BUTTONSTYLE_PRIMARY);
+        model_->scenario.run_button->setText("Run scenario");
+        model_->scenario.run_button->setWidth(190.0F);
+        model_->scenario.run_button->setMarginLeft(SettingsActionGap);
+        model_->scenario.run_button->registerClickAction([this](brls::View*) {
+            StartRun();
+            return true;
+        });
+        commands->addView(clear);
+        commands->addView(model_->scenario.run_button);
+        footer->addView(model_->scenario.status_label);
+        footer->addView(commands);
+        addView(footer);
+
+        UpdateDetails();
+        RefreshScenarioPage(model_);
+    }
+
+    ~ScenariosPage() override {
+        if (model_->scenario.log_panel != nullptr) {
+            model_->scenario = {};
+        }
+    }
+
+  private:
+    void UpdateDetails() {
+        const ScenarioDescriptor& scenario = AvailableScenarios()[selected_index_];
+        description_->setText(std::string(scenario.description));
+        defaults_->setText(std::string(scenario.compiled_defaults));
+    }
+
+    void StartRun() {
+        if (model_->run_active) {
+            return;
+        }
+
+        const std::string name = scenario_names_[selected_index_];
+        model_->run_active = true;
+        model_->run_status = "Running " + name;
+        model_->scenario.log_panel->ShowRecent();
+        RefreshMainPage(model_);
+        RefreshScenarioPage(model_);
+        AppContext* const context = model_->context;
+        logger::Status(*context, "scenario requested: %s", name.c_str());
+
+        brls::async([model = model_, context, name] {
+            const ScenarioResult result = RunScenario(*context, name);
+            const char* const state = result.skipped ? "SKIP" : (result.success ? "OK" : "FAIL");
+            logger::Status(
+                *context,
+                "[%s] %s | sent=%zu recv=%zu | %s",
+                state,
+                result.name.c_str(),
+                result.bytes_sent,
+                result.bytes_received,
+                result.detail.c_str()
+            );
+            brls::sync([model, result] {
+                if (!model->active) {
+                    return;
+                }
+                model->run_active = false;
+                model->run_status = result.name + ": " + (result.skipped ? "skipped" : (result.success ? "completed" : "failed"));
+                RefreshMainPage(model);
+                RefreshScenarioPage(model);
+                RefreshLogViews(model);
+            });
+        });
+    }
+
+    std::shared_ptr<UiModel> model_;
+    brls::SelectorCell* selector_{};
+    brls::Label* description_{};
+    brls::Label* defaults_{};
+    std::vector<std::string> scenario_names_;
+    std::size_t selected_index_{};
+};
+
 class AboutPage final : public brls::ScrollingFrame {
   public:
     explicit AboutPage(const std::shared_ptr<UiModel>& model) {
@@ -673,6 +862,9 @@ class RequesterTabs final : public brls::TabFrame {
         addTab("Main", [model = model_] { return new MainPage(model); });
         addTab("Logs", [model = model_] { return new LogsPage(model); });
         addTab("Settings", [model = model_] { return new SettingsPage(model); });
+        addSeparator();
+        addTab("Scenarios", [model = model_] { return new ScenariosPage(model); });
+        addSeparator();
         addTab("About", [model = model_] { return new AboutPage(model); });
         focusTab(0);
     }

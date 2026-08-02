@@ -42,6 +42,9 @@ constexpr bool EnableScenarioHttpGet = false;
 constexpr bool EnableScenarioHttpsGet = false;
 constexpr bool EnableScenarioCurlHttpGet = false;
 constexpr bool EnableScenarioCurlHttpsGet = false;
+constexpr bool EnableScenarioConnectionTestDownload30M = false;
+constexpr bool EnableScenarioConnectionTestUpload1M = false;
+constexpr bool EnableScenarioConnectionTestUpload30M = false;
 constexpr bool EnableScenarioUdpSocketOnly = false;
 constexpr bool EnableScenarioUdpSocketSetSockOpt = false;
 constexpr bool EnableScenarioUdpSetSockOptReuseAddr = false;
@@ -141,6 +144,13 @@ constexpr char HttpPath[] = "/";
 constexpr char HttpsHost[] = "example.com";
 constexpr std::uint16_t HttpsPort = 443;
 constexpr char HttpsPath[] = "/";
+
+constexpr char ConnectionTestDownloadHost[] = "ctest-dl-lp1.cdn.nintendo.net";
+constexpr char ConnectionTestUploadHost[] = "ctest-ul-lp1.cdn.nintendo.net";
+constexpr std::uint16_t ConnectionTestPort = 80;
+constexpr std::size_t ConnectionTestUpload1MBytes = 1U << 20;
+constexpr std::size_t ConnectionTestTransfer30MBytes = 30U << 20;
+constexpr std::uint32_t ConnectionTestTimeoutMs = 60000;
 
 constexpr char UdpHost[] = "";
 constexpr std::uint16_t UdpPort = 0;

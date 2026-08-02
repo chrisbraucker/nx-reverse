@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <string_view>
 
 #include <arpa/inet.h>
 #include <curl/curl.h>
@@ -28,6 +29,9 @@ namespace {
 
 constexpr std::size_t Ipv4StringCapacity = 16;
 constexpr std::size_t SslVerifyErrorCapacity = 8;
+constexpr std::size_t ConnectionTestBufferBytes = 64U * 1024U;
+constexpr std::size_t MaximumHttpHeaderBytes = 4096;
+constexpr int HttpStatusOk = 200;
 
 struct ResolvedEndpoint {
     sockaddr_storage addr{};
@@ -38,6 +42,38 @@ struct ResolvedEndpoint {
 struct ConnectedTcpSocket {
     int sockfd = -1;
     std::string ip;
+};
+
+struct ConnectionTestSpec {
+    const char* name;
+    const char* host;
+    const char* path;
+    std::size_t body_bytes;
+    bool upload;
+};
+
+class ConnectionTestSocketScope {
+  public:
+    Result Initialize() {
+        m_rc = socketInitialize(&config::SocketConfigApplication);
+        m_initialized = R_SUCCEEDED(m_rc);
+        return m_rc;
+    }
+
+    ~ConnectionTestSocketScope() {
+        if (m_initialized) {
+            socketExit();
+        }
+    }
+
+  private:
+    Result m_rc{};
+    bool m_initialized{};
+};
+
+struct HttpResponse {
+    int status{};
+    std::size_t body_bytes{};
 };
 
 struct CurlResponseBuffer {
@@ -64,7 +100,7 @@ std::string FormatSocketAddress(const sockaddr_storage& address, socklen_t addre
 using ScenarioFn = ScenarioResult (*)(AppContext& ctx);
 
 struct ScenarioStep {
-    const char* name;
+    ScenarioDescriptor descriptor;
     bool enabled;
     ScenarioFn fn;
 };
@@ -774,6 +810,223 @@ ScenarioResult RunCurlHttpsGet(AppContext& ctx) {
     return result;
 }
 
+bool SetConnectionTestTimeouts(const int sockfd, ScenarioResult& result) {
+    const struct timeval timeout{
+        .tv_sec = static_cast<long>(config::ConnectionTestTimeoutMs / 1000U),
+        .tv_usec = static_cast<long>((config::ConnectionTestTimeoutMs % 1000U) * 1000U),
+    };
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+        setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0) {
+        result.err = errno;
+        result.detail = "connection test timeout configuration failed: " + FormatErrno(errno);
+        return false;
+    }
+    return true;
+}
+
+bool SendAll(const int sockfd, const void* const data, const std::size_t size, ScenarioResult& result) {
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    std::size_t sent = 0;
+    while (sent < size) {
+        const ssize_t rc = send(sockfd, bytes + sent, size - sent, 0);
+        if (rc <= 0) {
+            result.err = rc < 0 ? errno : EPIPE;
+            result.detail = "send failed: " + FormatErrno(result.err);
+            return false;
+        }
+        sent += static_cast<std::size_t>(rc);
+    }
+    return true;
+}
+
+bool ParseHttpStatus(const std::string& header, int& status) {
+    if (header.size() < 12 || !header.starts_with("HTTP/1.") || header[8] != ' ') {
+        return false;
+    }
+    const char* const digits = header.data() + 9;
+    if (digits[0] < '0' || digits[0] > '9' || digits[1] < '0' || digits[1] > '9' || digits[2] < '0' || digits[2] > '9') {
+        return false;
+    }
+    status = (digits[0] - '0') * 100 + (digits[1] - '0') * 10 + (digits[2] - '0');
+    return true;
+}
+
+bool ReceiveHttpResponse(const int sockfd, HttpResponse& response, ScenarioResult& result) {
+    std::vector<char> buffer(ConnectionTestBufferBytes);
+    std::string header;
+    header.reserve(MaximumHttpHeaderBytes);
+    bool received_header = false;
+
+    for (;;) {
+        const ssize_t rc = recv(sockfd, buffer.data(), buffer.size(), 0);
+        if (rc == 0) {
+            break;
+        }
+        if (rc < 0) {
+            result.err = errno;
+            result.detail = "receive failed: " + FormatErrno(errno);
+            return false;
+        }
+
+        const std::size_t received = static_cast<std::size_t>(rc);
+        if (received_header) {
+            response.body_bytes += received;
+            continue;
+        }
+
+        const std::size_t available = MaximumHttpHeaderBytes - header.size();
+        const std::size_t copied = std::min(available, received);
+        header.append(buffer.data(), copied);
+        const std::size_t header_end = header.find("\r\n\r\n");
+        if (header_end == std::string::npos) {
+            if (header.size() == MaximumHttpHeaderBytes) {
+                result.detail = "HTTP response headers exceed the bounded parser limit";
+                return false;
+            }
+            continue;
+        }
+        if (!ParseHttpStatus(header, response.status)) {
+            result.detail = "invalid HTTP response status";
+            return false;
+        }
+        received_header = true;
+        response.body_bytes += received - (header_end + 4U);
+    }
+
+    if (!received_header) {
+        result.detail = "connection closed before HTTP response headers";
+        return false;
+    }
+    return true;
+}
+
+std::string FormatConnectionTestDetail(
+    const ConnectedTcpSocket& connection, const HttpResponse& response, const std::size_t transfer_bytes, const std::uint64_t started_ticks
+) {
+    const std::uint64_t elapsed_ticks = armGetSystemTick() - started_ticks;
+    const std::uint64_t tick_frequency = armGetSystemTickFreq();
+    const double elapsed_seconds = static_cast<double>(elapsed_ticks) / static_cast<double>(tick_frequency);
+    const double throughput = elapsed_seconds > 0.0 ? static_cast<double>(transfer_bytes) / elapsed_seconds / 1'000'000.0 : 0.0;
+    char timing[128];
+    std::snprintf(timing, sizeof(timing), "elapsed_ms=%.2f throughput=%.2f MB/s", elapsed_seconds * 1000.0, throughput);
+    return "connected_ip=" + connection.ip + " http_status=" + std::to_string(response.status) +
+           " response_body_bytes=" + std::to_string(response.body_bytes) + " " + timing;
+}
+
+ScenarioResult RunConnectionTest(AppContext& ctx, const ConnectionTestSpec& spec) {
+    ScenarioResult result{.name = spec.name};
+    logger::Status(ctx, "Running %s http://%s%s", spec.name, spec.host, spec.path);
+
+    ConnectionTestSocketScope socket_scope;
+    const Result socket_rc = socket_scope.Initialize();
+    if (R_FAILED(socket_rc)) {
+        result.rc = socket_rc;
+        result.detail = "socketInitialize failed: " + FormatResult(socket_rc);
+        return result;
+    }
+
+    const std::uint64_t started_ticks = armGetSystemTick();
+    ConnectedTcpSocket connection{};
+    if (!ConnectResolvedTcp(ctx, spec.host, config::ConnectionTestPort, connection, result.detail)) {
+        return result;
+    }
+    if (!SetConnectionTestTimeouts(connection.sockfd, result)) {
+        close(connection.sockfd);
+        return result;
+    }
+
+    std::array<char, 512> request{};
+    const int request_size = spec.upload ? std::snprintf(
+                                               request.data(),
+                                               request.size(),
+                                               "POST %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: Nintendo NX\r\nAccept: */*\r\n"
+                                               "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: %zu\r\n\r\n",
+                                               spec.path,
+                                               spec.host,
+                                               spec.body_bytes
+                                           )
+                                         : std::snprintf(
+                                               request.data(),
+                                               request.size(),
+                                               "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: Nintendo NX\r\nAccept: */*\r\n\r\n",
+                                               spec.path,
+                                               spec.host
+                                           );
+    if (request_size <= 0 || static_cast<std::size_t>(request_size) >= request.size()) {
+        result.detail = "request formatting failed";
+        close(connection.sockfd);
+        return result;
+    }
+    if (!SendAll(connection.sockfd, request.data(), static_cast<std::size_t>(request_size), result)) {
+        close(connection.sockfd);
+        return result;
+    }
+
+    if (spec.upload) {
+        std::vector<std::uint8_t> payload(std::min(spec.body_bytes, ConnectionTestBufferBytes));
+        randomGet(payload.data(), payload.size());
+        for (std::size_t remaining = spec.body_bytes; remaining > 0;) {
+            const std::size_t chunk_size = std::min(remaining, payload.size());
+            if (!SendAll(connection.sockfd, payload.data(), chunk_size, result)) {
+                close(connection.sockfd);
+                return result;
+            }
+            remaining -= chunk_size;
+        }
+        result.bytes_sent = spec.body_bytes;
+    } else {
+        result.bytes_sent = static_cast<std::size_t>(request_size);
+    }
+
+    HttpResponse response{};
+    if (!ReceiveHttpResponse(connection.sockfd, response, result)) {
+        close(connection.sockfd);
+        return result;
+    }
+    close(connection.sockfd);
+
+    result.bytes_received = response.body_bytes;
+    const std::size_t expected_response_bytes = spec.upload ? 0 : spec.body_bytes;
+    result.success = response.status == HttpStatusOk && response.body_bytes == expected_response_bytes;
+    result.detail = FormatConnectionTestDetail(connection, response, spec.upload ? spec.body_bytes : response.body_bytes, started_ticks);
+    if (!result.success) {
+        result.detail += " expected_response_body_bytes=" + std::to_string(expected_response_bytes);
+    }
+    return result;
+}
+
+ScenarioResult RunConnectionTestDownload30M(AppContext& ctx) {
+    return RunConnectionTest(
+        ctx,
+        {.name = "Download test 30M",
+         .host = config::ConnectionTestDownloadHost,
+         .path = "/30m",
+         .body_bytes = config::ConnectionTestTransfer30MBytes}
+    );
+}
+
+ScenarioResult RunConnectionTestUpload1M(AppContext& ctx) {
+    return RunConnectionTest(
+        ctx,
+        {.name = "Upload test 1M",
+         .host = config::ConnectionTestUploadHost,
+         .path = "/1m",
+         .body_bytes = config::ConnectionTestUpload1MBytes,
+         .upload = true}
+    );
+}
+
+ScenarioResult RunConnectionTestUpload30M(AppContext& ctx) {
+    return RunConnectionTest(
+        ctx,
+        {.name = "Upload test 30M",
+         .host = config::ConnectionTestUploadHost,
+         .path = "/30m",
+         .body_bytes = config::ConnectionTestTransfer30MBytes,
+         .upload = true}
+    );
+}
+
 bool PrepareUdpTarget(AppContext& ctx, ScenarioResult& result, ResolvedEndpoint& endpoint) {
     if (config::UdpHost[0] == '\0' || config::UdpPort == 0) {
         result.skipped = true;
@@ -1155,9 +1408,139 @@ void LogScenarioResult(AppContext& ctx, const ScenarioResult& result) {
     );
 }
 
+const std::array<ScenarioStep, 23>& ScenarioSteps() {
+    static const std::array<ScenarioStep, 23> steps = {{
+        {{"Download test 30M",
+          "Fetches 30MiB from the official endpoint natively and reports end-to-end throughput.",
+          "GET http://ctest-dl-lp1.cdn.nintendo.net/30m HTTP/1.0, User-Agent: Nintendo NX, Accept: */*"},
+         config::EnableScenarioConnectionTestDownload30M,
+         RunConnectionTestDownload30M},
+        {{"Upload test 1M",
+          "Posts a 1 MiB body the official endpoint natively and reports end-to-end throughput.",
+          "POST http://ctest-ul-lp1.cdn.nintendo.net/1m HTTP/1.0, User-Agent: Nintendo NX, Accept: */*, "
+          "application/x-www-form-urlencoded"},
+         config::EnableScenarioConnectionTestUpload1M,
+         RunConnectionTestUpload1M},
+        {{"Upload test 30M",
+          "Posts a 30 MiB body to the official endpoint natively and reports end-to-end throughput.",
+          "POST http://ctest-ul-lp1.cdn.nintendo.net/30m HTTP/1.0, User-Agent: Nintendo NX, Accept: */*, "
+          "application/x-www-form-urlencoded"},
+         config::EnableScenarioConnectionTestUpload30M,
+         RunConnectionTestUpload30M},
+        {{"manual_bsd_lifecycle",
+          "Opens bsd:s and reproduces the selected raw client-registration lifecycle. It closes every service and transfer-memory "
+          "handle "
+          "before returning.",
+          "Root session, transfer memory, and RegisterClient are enabled. Monitor, StartMonitoring, and root clone are disabled."},
+         config::EnableScenarioManualBsdLifecycle,
+         RunManualBsdLifecycle},
+        {{"environment_snapshot",
+          "Reads NIFM connection status, the current address, and the configured network information. It does not send network "
+          "traffic.",
+          "Requires NIFM initialization, which is disabled in this build."},
+         config::EnableScenarioEnvironmentSnapshot,
+         RunEnvironmentSnapshot},
+        {{"dns_resolve",
+          "Resolves the compiled IPv4 hostname through Horizon's resolver path. It records every IPv4 address returned.",
+          "host=example.com"},
+         config::EnableScenarioDnsResolve,
+         RunDnsResolve},
+        {{"plain_tcp_connect",
+          "Connects to the compiled TCP endpoint, sends a small payload, and reads one response. It exercises ordinary BSD TCP "
+          "operations.",
+          "host=example.com port=80 payload=nxrv-requester-tcp timeout=5000 ms"},
+         config::EnableScenarioPlainTcpConnect,
+         RunPlainTcpConnect},
+        {{"tcp_idle_hold",
+          "Connects to the compiled TCP endpoint and leaves the socket idle briefly. It is useful for observing connection lifetime "
+          "handling.",
+          "host=example.com port=80 hold=1500 ms"},
+         config::EnableScenarioIdleTcpHold,
+         RunIdleTcpHold},
+        {{"http_get",
+          "Makes one manual HTTP/1.1 GET through a BSD TCP socket. It logs a bounded response preview.",
+          "host=example.com port=80 path=/"},
+         config::EnableScenarioHttpGet,
+         RunHttpGet},
+        {{"https_get",
+          "Makes one HTTPS GET through libnx ssl after resolving and opening the BSD socket itself. It verifies the peer CA, hostname, "
+          "and "
+          "date.",
+          "host=example.com port=443 path=/ timeout=5000 ms, SSL initialization required"},
+         config::EnableScenarioHttpsGet,
+         RunHttpsGet},
+        {{"curl_http_get",
+          "Makes one HTTP GET through libcurl. It is a higher-level comparison against the manual HTTP scenario.",
+          "host=example.com port=80 path=/, curl initialization required"},
+         config::EnableScenarioCurlHttpGet,
+         RunCurlHttpGet},
+        {{"curl_https_get",
+          "Makes one HTTPS GET through libcurl with certificate verification disabled. Use it only against a controlled endpoint.",
+          "host=example.com port=443 path=/ timeout=5000 ms, curl initialization required"},
+         config::EnableScenarioCurlHttpsGet,
+         RunCurlHttpsGet},
+        {{"udp_socket_only",
+          "Opens and closes an IPv4 UDP socket without sending traffic. It isolates socket creation and teardown.",
+          "No endpoint or socket options."},
+         config::EnableScenarioUdpSocketOnly,
+         RunUdpSocketOnly},
+        {{"udp_socket_setsockopt",
+          "Opens a UDP socket and applies receive and send timeouts. It isolates the common timeout socket options.",
+          "timeout=5000 ms"},
+         config::EnableScenarioUdpSocketSetSockOpt,
+         RunUdpSocketSetSockOpt},
+        {{"udp_setsockopt_reuseaddr", "Opens a UDP socket and applies SO_REUSEADDR. It isolates that one socket option.", "SO_REUSEADDR=1"},
+         config::EnableScenarioUdpSetSockOptReuseAddr,
+         RunUdpSetSockOptReuseAddr},
+        {{"udp_setsockopt_recv_timeout",
+          "Opens a UDP socket and applies SO_RCVTIMEO. It isolates the receive timeout socket option.",
+          "SO_RCVTIMEO=5000 ms"},
+         config::EnableScenarioUdpSetSockOptRecvTimeout,
+         RunUdpSetSockOptRecvTimeout},
+        {{"udp_setsockopt_send_timeout",
+          "Opens a UDP socket and applies SO_SNDTIMEO. It isolates the send timeout socket option.",
+          "SO_SNDTIMEO=5000 ms"},
+         config::EnableScenarioUdpSetSockOptSendTimeout,
+         RunUdpSetSockOptSendTimeout},
+        {{"udp_sendto_only",
+          "Resolves the configured UDP target and sends one datagram with sendto. It does not wait for a reply.",
+          "host=<unset> port=0 payload=nxrv-requester-udp, internal timeouts disabled"},
+         config::EnableScenarioUdpSendToOnly,
+         RunUdpSendToOnly},
+        {{"udp_connect_send_only",
+          "Resolves the configured UDP target, connects the socket, and sends one datagram. It does not wait for a reply.",
+          "host=<unset> port=0 payload=nxrv-requester-udp timeout=5000 ms"},
+         config::EnableScenarioUdpConnectSendOnly,
+         RunUdpConnectSendOnly},
+        {{"udp_echo",
+          "Resolves the configured UDP target, sends one datagram, and validates an identical reply. It uses poll before receive.",
+          "host=<unset> port=0 payload=nxrv-requester-udp poll timeout=5000 ms"},
+         config::EnableScenarioUdpEcho,
+         RunUdpEcho},
+        {{"tcp_multi_connect",
+          "Opens several TCP connections, holds them, then exchanges one payload on each. It exercises concurrent BSD TCP sessions.",
+          "host=example.com port=80 sockets=3 hold=1000 ms"},
+         config::EnableScenarioConcurrentTcpBurst,
+         RunConcurrentTcpBurst},
+        {{"wgnx_packet_udp_echo",
+          "Builds one complete inner IPv4 and UDP packet and submits it through wgnx:ctl. It waits for and validates the matching "
+          "returned "
+          "packet.",
+          "source=10.0.0.2:39000 destination=10.1.0.2:29000 timeout=5000 ms"},
+         config::EnableScenarioWgnxUdpEcho,
+         RunWgnxPacketUdpEcho},
+        {{"wgnx_tunnel_udp_workload",
+          "Runs the direct wgnx:tun UDP workload with the compiled defaults. It validates queued datagrams and optional echo replies.",
+          "destination=10.1.0.2:29000 payload=48 B datagrams=1 flows=1 echo=true timeout=5000 ms"},
+         config::EnableScenarioWgnxTunnelUdpWorkload,
+         RunWgnxTunnelUdpWorkload},
+    }};
+    return steps;
+}
+
 void RunScenarioStep(AppContext& ctx, std::vector<ScenarioResult>& results, const ScenarioStep& step, const char* next_enabled_name) {
     if (!step.enabled) {
-        ScenarioResult skipped{.name = step.name};
+        ScenarioResult skipped{.name = std::string(step.descriptor.name)};
         skipped.skipped = true;
         skipped.detail = "disabled by config";
         results.push_back(std::move(skipped));
@@ -1177,7 +1560,7 @@ void RunScenarioStep(AppContext& ctx, std::vector<ScenarioResult>& results, cons
 const char* FindNextEnabledScenarioName(const ScenarioStep* steps, std::size_t count, std::size_t current_index) {
     for (std::size_t i = current_index + 1; i < count; ++i) {
         if (steps[i].enabled) {
-            return steps[i].name;
+            return steps[i].descriptor.name.data();
         }
     }
     return nullptr;
@@ -1185,35 +1568,40 @@ const char* FindNextEnabledScenarioName(const ScenarioStep* steps, std::size_t c
 
 } // namespace
 
+std::span<const ScenarioDescriptor> AvailableScenarios() {
+    static const std::array<ScenarioDescriptor, 23> descriptors = [] {
+        std::array<ScenarioDescriptor, 23> result{};
+        const auto& steps = ScenarioSteps();
+        for (std::size_t index = 0; index < steps.size(); ++index) {
+            result[index] = steps[index].descriptor;
+        }
+        return result;
+    }();
+    return descriptors;
+}
+
+ScenarioResult RunScenario(AppContext& ctx, std::string_view name) {
+    for (const ScenarioStep& step : ScenarioSteps()) {
+        if (step.descriptor.name == name) {
+            ScenarioResult result = step.fn(ctx);
+            LogScenarioResult(ctx, result);
+            return result;
+        }
+    }
+
+    ScenarioResult result{.name = std::string(name), .skipped = true, .detail = "unknown scenario"};
+    LogScenarioResult(ctx, result);
+    return result;
+}
+
 std::vector<ScenarioResult> RunScenarios(AppContext& ctx) {
-    const ScenarioStep steps[] = {
-        {"manual_bsd_lifecycle", config::EnableScenarioManualBsdLifecycle, RunManualBsdLifecycle},
-        {"environment_snapshot", config::EnableScenarioEnvironmentSnapshot, RunEnvironmentSnapshot},
-        {"dns_resolve", config::EnableScenarioDnsResolve, RunDnsResolve},
-        {"plain_tcp_connect", config::EnableScenarioPlainTcpConnect, RunPlainTcpConnect},
-        {"tcp_idle_hold", config::EnableScenarioIdleTcpHold, RunIdleTcpHold},
-        {"http_get", config::EnableScenarioHttpGet, RunHttpGet},
-        {"https_get", config::EnableScenarioHttpsGet, RunHttpsGet},
-        {"curl_http_get", config::EnableScenarioCurlHttpGet, RunCurlHttpGet},
-        {"curl_https_get", config::EnableScenarioCurlHttpsGet, RunCurlHttpsGet},
-        {"udp_socket_only", config::EnableScenarioUdpSocketOnly, RunUdpSocketOnly},
-        {"udp_socket_setsockopt", config::EnableScenarioUdpSocketSetSockOpt, RunUdpSocketSetSockOpt},
-        {"udp_setsockopt_reuseaddr", config::EnableScenarioUdpSetSockOptReuseAddr, RunUdpSetSockOptReuseAddr},
-        {"udp_setsockopt_recv_timeout", config::EnableScenarioUdpSetSockOptRecvTimeout, RunUdpSetSockOptRecvTimeout},
-        {"udp_setsockopt_send_timeout", config::EnableScenarioUdpSetSockOptSendTimeout, RunUdpSetSockOptSendTimeout},
-        {"udp_sendto_only", config::EnableScenarioUdpSendToOnly, RunUdpSendToOnly},
-        {"udp_connect_send_only", config::EnableScenarioUdpConnectSendOnly, RunUdpConnectSendOnly},
-        {"udp_echo", config::EnableScenarioUdpEcho, RunUdpEcho},
-        {"tcp_multi_connect", config::EnableScenarioConcurrentTcpBurst, RunConcurrentTcpBurst},
-        {"wgnx_packet_udp_echo", config::EnableScenarioWgnxUdpEcho, RunWgnxPacketUdpEcho},
-        {"wgnx_tunnel_udp_workload", config::EnableScenarioWgnxTunnelUdpWorkload, RunWgnxTunnelUdpWorkload},
-    };
+    const auto& steps = ScenarioSteps();
 
     std::vector<ScenarioResult> results;
     results.reserve(std::size(steps));
 
     for (std::size_t i = 0; i < std::size(steps); ++i) {
-        RunScenarioStep(ctx, results, steps[i], FindNextEnabledScenarioName(steps, std::size(steps), i));
+        RunScenarioStep(ctx, results, steps[i], FindNextEnabledScenarioName(steps.data(), steps.size(), i));
     }
 
     return results;
