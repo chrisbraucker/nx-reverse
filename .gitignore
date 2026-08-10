@@ -7,7 +7,9 @@ net-probe/build/
 net-probe/out/
 toolbox/build*/
 toolbox/out/
-toolbox/CMakeUserPresets.json
+CMakeFiles/
+CMakeUserPresets.json
+CMakeCache.txt
 
 *.o
 *.d

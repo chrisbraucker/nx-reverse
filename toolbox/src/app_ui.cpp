@@ -59,6 +59,9 @@ class LogPanel;
 struct MainPageBindings {
     brls::Label* scenario_label{};
     brls::Label* status_label{};
+    brls::Label* workload_id_label{};
+    brls::Button* increment_workload_id_button{};
+    brls::Button* decrement_workload_id_button{};
     brls::Button* run_button{};
     LogPanel* log_panel{};
 };
@@ -212,6 +215,15 @@ void RefreshMainPage(const std::shared_ptr<UiModel>& model) {
     }
     if (model->main.status_label != nullptr) {
         model->main.status_label->setText(model->run_status);
+    }
+    if (model->main.workload_id_label != nullptr) {
+        model->main.workload_id_label->setText("wID: " + std::to_string(model->config.tunnel_udp.workload_id));
+    }
+    if (model->main.increment_workload_id_button != nullptr) {
+        model->main.increment_workload_id_button->setState(model->run_active ? brls::ButtonState::DISABLED : brls::ButtonState::ENABLED);
+    }
+    if (model->main.decrement_workload_id_button != nullptr) {
+        model->main.decrement_workload_id_button->setState(model->run_active ? brls::ButtonState::DISABLED : brls::ButtonState::ENABLED);
     }
     if (model->main.run_button != nullptr) {
         model->main.run_button->setState(model->run_active ? brls::ButtonState::DISABLED : brls::ButtonState::ENABLED);
@@ -541,9 +553,31 @@ class MainPage final : public brls::Box {
         addView(model_->main.log_panel);
 
         auto* commands = new brls::Box(brls::Axis::ROW);
+
+        auto* workload_control = new brls::Box(brls::Axis::ROW);
+
         commands->setWidthPercentage(100.0F);
-        commands->setJustifyContent(brls::JustifyContent::FLEX_END);
+        commands->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
         commands->setMarginTop(18.0F);
+        model_->main.decrement_workload_id_button = new brls::Button();
+        model_->main.decrement_workload_id_button->setText("-");
+        model_->main.decrement_workload_id_button->setMarginRight(SettingsActionGap);
+        model_->main.decrement_workload_id_button->registerClickAction([model = model_](brls::View*) {
+            --model->config.tunnel_udp.workload_id;
+            RefreshMainPage(model);
+            return true;
+        });
+        model_->main.workload_id_label = new brls::Label();
+        model_->main.workload_id_label->setWidth(100.0F);
+        model_->main.increment_workload_id_button = new brls::Button();
+        model_->main.increment_workload_id_button->setText("+");
+        //model_->main.increment_workload_id_button->setWidth(190.0F);
+        model_->main.increment_workload_id_button->setMarginLeft(SettingsActionGap);
+        model_->main.increment_workload_id_button->registerClickAction([model = model_](brls::View*) {
+            ++model->config.tunnel_udp.workload_id;
+            RefreshMainPage(model);
+            return true;
+        });
         model_->main.run_button = new brls::Button();
         model_->main.run_button->setStyle(&brls::BUTTONSTYLE_PRIMARY);
         model_->main.run_button->setText("Run");
@@ -552,6 +586,12 @@ class MainPage final : public brls::Box {
             StartRun(model);
             return true;
         });
+
+        workload_control->addView(model_->main.decrement_workload_id_button);
+        workload_control->addView(model_->main.workload_id_label);
+        workload_control->addView(model_->main.increment_workload_id_button);
+        
+        commands->addView(workload_control);
         commands->addView(model_->main.run_button);
         addView(commands);
 
