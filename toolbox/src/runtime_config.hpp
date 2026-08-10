@@ -35,6 +35,7 @@ struct BsdSystemUdpWorkloadConfig {
 
 enum class RuntimeScenario : std::uint8_t {
     DirectTunnelUdp,
+    DirectTunnelTcp,
     BsdSystemUdp,
     BsdSystemTcp,
     TunnelContractValidation,

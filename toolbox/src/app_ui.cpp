@@ -92,8 +92,8 @@ std::string FormatRuntimeConfig(const RuntimeConfig& config) {
     }
     const bool bsd_scenario = config.scenario == RuntimeScenario::BsdSystemUdp || config.scenario == RuntimeScenario::BsdSystemTcp;
     const std::string destination = bsd_scenario ? profile->bsd_destination_ipv4 : profile->tunnel_destination_ipv4;
-    const std::uint16_t port =
-        config.scenario == RuntimeScenario::BsdSystemTcp ? profile->tcp_destination_port : profile->udp_destination_port;
+    const bool tcp_scenario = config.scenario == RuntimeScenario::DirectTunnelTcp || config.scenario == RuntimeScenario::BsdSystemTcp;
+    const std::uint16_t port = tcp_scenario ? profile->tcp_destination_port : profile->udp_destination_port;
     return "dest " + destination + ":" + std::to_string(port) + " | payload " + std::to_string(config.udp.payload_bytes) +
            " B | datagrams " + std::to_string(config.udp.datagram_count) + " | flows " + std::to_string(config.udp.concurrent_flows) +
            " | next ID " + std::to_string(config.next_workload_id);
@@ -102,6 +102,7 @@ std::string FormatRuntimeConfig(const RuntimeConfig& config) {
 std::vector<std::string> RuntimeScenarioNames() {
     return {
         RuntimeScenarioName(RuntimeScenario::DirectTunnelUdp),
+        RuntimeScenarioName(RuntimeScenario::DirectTunnelTcp),
         RuntimeScenarioName(RuntimeScenario::BsdSystemUdp),
         RuntimeScenarioName(RuntimeScenario::BsdSystemTcp),
         RuntimeScenarioName(RuntimeScenario::TunnelContractValidation),
@@ -112,12 +113,14 @@ int RuntimeScenarioIndex(RuntimeScenario scenario) {
     switch (scenario) {
     case RuntimeScenario::DirectTunnelUdp:
         return 0;
-    case RuntimeScenario::BsdSystemUdp:
+    case RuntimeScenario::DirectTunnelTcp:
         return 1;
-    case RuntimeScenario::BsdSystemTcp:
+    case RuntimeScenario::BsdSystemUdp:
         return 2;
-    case RuntimeScenario::TunnelContractValidation:
+    case RuntimeScenario::BsdSystemTcp:
         return 3;
+    case RuntimeScenario::TunnelContractValidation:
+        return 4;
     }
     return 0;
 }
@@ -125,10 +128,12 @@ int RuntimeScenarioIndex(RuntimeScenario scenario) {
 RuntimeScenario RuntimeScenarioAt(int index) {
     switch (index) {
     case 1:
-        return RuntimeScenario::BsdSystemUdp;
+        return RuntimeScenario::DirectTunnelTcp;
     case 2:
-        return RuntimeScenario::BsdSystemTcp;
+        return RuntimeScenario::BsdSystemUdp;
     case 3:
+        return RuntimeScenario::BsdSystemTcp;
+    case 4:
         return RuntimeScenario::TunnelContractValidation;
     default:
         return RuntimeScenario::DirectTunnelUdp;
@@ -803,6 +808,13 @@ class MainPage final : public brls::Box {
             case RuntimeScenario::DirectTunnelUdp:
                 result = RunWgnxTunnelUdpWorkload(*context, workload);
                 break;
+            case RuntimeScenario::DirectTunnelTcp: {
+                const RuntimeProfile* const active_profile = ActiveRuntimeProfile(runtime_config);
+                result = active_profile == nullptr
+                             ? ScenarioResult{.name = "wgnx_tunnel_tcp_exchange", .detail = "active profile disappeared"}
+                             : RunWgnxTunnelTcpExchange(*context, *active_profile, workload.workload_id, runtime_config.tcp);
+                break;
+            }
             case RuntimeScenario::BsdSystemUdp:
                 result = RunBsdSystemUdpWorkload(*context, workload, runtime_config.bsd_system_udp);
                 break;

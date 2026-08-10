@@ -105,6 +105,10 @@ bool ParseRuntimeScenario(std::string_view value, RuntimeScenario* scenario) {
         *scenario = RuntimeScenario::DirectTunnelUdp;
         return true;
     }
+    if (value == "direct_tunnel_tcp") {
+        *scenario = RuntimeScenario::DirectTunnelTcp;
+        return true;
+    }
     if (value == "bsd_system_udp") {
         *scenario = RuntimeScenario::BsdSystemUdp;
         return true;
@@ -502,6 +506,8 @@ const char* RuntimeScenarioName(RuntimeScenario scenario) {
     switch (scenario) {
     case RuntimeScenario::DirectTunnelUdp:
         return "Direct tunnel UDP";
+    case RuntimeScenario::DirectTunnelTcp:
+        return "Direct tunnel TCP exchange";
     case RuntimeScenario::BsdSystemUdp:
         return "BSD system UDP";
     case RuntimeScenario::BsdSystemTcp:
@@ -564,9 +570,11 @@ bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const ch
         "profiles.count=%zu\n",
         config.scenario == RuntimeScenario::DirectTunnelUdp
             ? "direct_tunnel_udp"
-            : (config.scenario == RuntimeScenario::BsdSystemUdp
-                   ? "bsd_system_udp"
-                   : (config.scenario == RuntimeScenario::BsdSystemTcp ? "bsd_system_tcp" : "tunnel_contract_validation")),
+            : (config.scenario == RuntimeScenario::DirectTunnelTcp
+                   ? "direct_tunnel_tcp"
+                   : (config.scenario == RuntimeScenario::BsdSystemUdp
+                          ? "bsd_system_udp"
+                          : (config.scenario == RuntimeScenario::BsdSystemTcp ? "bsd_system_tcp" : "tunnel_contract_validation"))),
         config.next_workload_id,
         config.active_profile,
         config.profiles.size()

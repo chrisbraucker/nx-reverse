@@ -22,6 +22,7 @@ namespace {
 
 constexpr std::size_t PayloadHeaderBytes = 24;
 constexpr std::uint32_t MaximumQueueFullRetriesPerDatagram = 16;
+constexpr char TcpExpectedReply[] = "NXRV TCP ACK\r\n";
 
 const char* StatusName(wgnx::tunnel::ProtocolStatus status) {
     using wgnx::tunnel::ProtocolStatus;
@@ -115,6 +116,8 @@ struct CompletionWaitResult {
     bool writable{false};
     bool terminal{false};
     bool service_lost{false};
+    bool open{false};
+    bool remote_write_closed{false};
     std::uint32_t ignored{0};
     std::uint32_t wake_count{0};
     std::string detail;
@@ -171,7 +174,7 @@ CompletionWaitResult WaitForEcho(
                 &status
             );
             if (R_FAILED(rc)) {
-                // API v3 permits this exact wake-without-record sequence while the
+                // API v4 permits this exact wake-without-record sequence while the
                 // sysmodule performs an orderly shutdown and closes this session.
                 result.terminal = true;
                 result.service_lost = true;
@@ -245,7 +248,7 @@ CompletionWaitResult WaitForWritable(
                 &status
             );
             if (R_FAILED(rc)) {
-                // API v3 permits this exact wake-without-record sequence while the
+                // API v4 permits this exact wake-without-record sequence while the
                 // sysmodule performs an orderly shutdown and closes this session.
                 result.terminal = true;
                 result.service_lost = true;
@@ -281,7 +284,253 @@ CompletionWaitResult WaitForWritable(
     return result;
 }
 
+CompletionWaitResult WaitForTcpProgress(
+    wgnx::tunnel::client::ScopedClient& client,
+    Event* event,
+    wgnx::tunnel::FlowHandle flow,
+    bool require_open,
+    bool require_reply,
+    bool require_remote_write_closed,
+    std::uint32_t timeout_ms
+) {
+    using namespace wgnx::tunnel;
+
+    CompletionWaitResult result{};
+    const std::uint64_t deadline = DeadlineAfterMilliseconds(timeout_ms);
+    std::array<CompletionRecord, MaximumBatchEntries> completions{};
+    std::array<std::uint8_t, MaximumTcpWriteStorageBytes> payload{};
+    std::array<std::uint8_t, sizeof(TcpExpectedReply) - 1> reply{};
+    std::size_t reply_size{};
+
+    while (armGetSystemTick() < deadline) {
+        const std::uint64_t remaining_ticks = deadline - armGetSystemTick();
+        const std::uint64_t remaining_ns = (remaining_ticks * 1000000000ULL) / armGetSystemTickFreq();
+        const Result wait_rc = eventWait(event, remaining_ns);
+        if (R_FAILED(wait_rc)) {
+            result.rc = wait_rc;
+            result.detail = "TCP completion event wait rc=" + FormatResult(wait_rc);
+            return result;
+        }
+        ++result.wake_count;
+
+        for (;;) {
+            std::uint32_t count{};
+            ProtocolStatus status = ProtocolStatus::QueueEmpty;
+            const Result rc =
+                client::ReceiveCompletions(client, completions.data(), completions.size(), payload.data(), payload.size(), &count, &status);
+            if (R_FAILED(rc)) {
+                result.rc = rc;
+                result.terminal = true;
+                result.service_lost = true;
+                result.detail = "wgnx:tun service closed after TCP completion wake ReceiveCompletions CMIF rc=" + FormatResult(rc);
+                return result;
+            }
+            if (status == ProtocolStatus::QueueEmpty) {
+                break;
+            }
+            if (status != ProtocolStatus::Success) {
+                result.detail = "TCP ReceiveCompletions status=" + std::string(StatusName(status));
+                return result;
+            }
+            for (std::uint32_t index = 0; index < count; ++index) {
+                const CompletionRecord& completion = completions[index];
+                if (completion.flow.value != flow.value || completion.flow_kind != FlowKind::Tcp) {
+                    ++result.ignored;
+                    continue;
+                }
+                if (completion.type == CompletionType::FlowStateChanged) {
+                    if (completion.flow_state == FlowState::Closed) {
+                        result.terminal = true;
+                        result.detail = "TCP flow terminal=" + std::to_string(static_cast<std::uint32_t>(completion.terminal_reason));
+                        return result;
+                    }
+                    result.open = completion.flow_state == FlowState::Open;
+                    FlowStateResult state{};
+                    const Result state_rc = wgnx::tunnel::client::GetFlowState(client, flow, &state);
+                    if (R_FAILED(state_rc) || state.status != ProtocolStatus::Success) {
+                        result.rc = state_rc;
+                        result.detail = R_FAILED(state_rc) ? "GetFlowState CMIF failure"
+                                                           : "GetFlowState status=" + std::string(StatusName(state.status));
+                        return result;
+                    }
+                    result.remote_write_closed = (state.stream_flags & FlowStreamFlagRemoteWriteOpen) == FlowStreamFlagNone;
+                    continue;
+                }
+                if (completion.type != CompletionType::InboundTcpStream || completion.payload_offset > payload.size() ||
+                    completion.payload_size > payload.size() - completion.payload_offset ||
+                    reply_size + completion.payload_size > reply.size()) {
+                    ++result.ignored;
+                    continue;
+                }
+                std::memcpy(reply.data() + reply_size, payload.data() + completion.payload_offset, completion.payload_size);
+                reply_size += completion.payload_size;
+            }
+            const bool reply_valid = reply_size == reply.size() && std::memcmp(reply.data(), TcpExpectedReply, reply.size()) == 0;
+            if ((require_open && !result.open) || (require_reply && !reply_valid) ||
+                (require_remote_write_closed && !result.remote_write_closed)) {
+                continue;
+            }
+            result.received_expected = true;
+            return result;
+        }
+    }
+    result.detail = "TCP completion deadline expired";
+    return result;
+}
+
 } // namespace
+
+ScenarioResult RunWgnxTunnelTcpExchange(
+    AppContext& ctx, const RuntimeProfile& profile, const std::uint32_t workload_id, const TcpScenarioConfig& config
+) {
+    using namespace wgnx::tunnel;
+
+    ScenarioResult result{.name = "wgnx_tunnel_tcp_exchange"};
+    const TunnelServiceAvailability availability = QueryTunnelServiceAvailability();
+    if (R_FAILED(availability.rc) || !availability.present) {
+        result.rc = availability.rc;
+        result.detail = R_FAILED(availability.rc) ? "wgnx:tun availability query failed" : "wgnx:tun is not running";
+        return result;
+    }
+
+    client::ScopedRootService root;
+    Result rc = root.Open();
+    if (R_FAILED(rc)) {
+        result.rc = rc;
+        result.detail = "wgnx:tun root open failure";
+        return result;
+    }
+    Capabilities capabilities{};
+    rc = client::GetTunCapabilities(root, &capabilities);
+    if (R_FAILED(rc) || capabilities.api_version != TunApiVersion ||
+        (capabilities.capability_mask & CapabilityMask(Capability::ConnectedIpv4Tcp)) == 0) {
+        result.rc = rc;
+        result.detail = R_FAILED(rc) ? "GetCapabilities CMIF failure" : "connected TCP capability unavailable or API mismatch";
+        return result;
+    }
+
+    std::array<std::uint8_t, 4> destination{};
+    if (!ParseIpv4(profile.tunnel_destination_ipv4.c_str(), &destination)) {
+        result.detail = "invalid configured tunnel TCP destination";
+        return result;
+    }
+    client::ScopedClient tunnel_client;
+    rc = client::OpenTunnelClient(root, &tunnel_client);
+    if (R_FAILED(rc)) {
+        result.rc = rc;
+        result.detail = "OpenTunnelClient CMIF failure";
+        return result;
+    }
+    Handle event_handle = INVALID_HANDLE;
+    rc = client::GetCompletionEvent(tunnel_client, &event_handle);
+    if (R_FAILED(rc)) {
+        result.rc = rc;
+        result.detail = "GetCompletionEvent CMIF failure";
+        return result;
+    }
+    Event completion_event{};
+    eventLoadRemote(&completion_event, event_handle, false);
+
+    const OpenConnectedFlowRequest request{
+        .remote =
+            {.address = {destination[0], destination[1], destination[2], destination[3]},
+             .port = profile.tcp_destination_port,
+             .reserved = 0},
+        .diagnostic_tag = workload_id,
+    };
+    OpenConnectedFlowResult opened{};
+    rc = client::OpenConnectedTcpFlow(tunnel_client, request, &opened);
+    if (R_FAILED(rc) || opened.status != ProtocolStatus::Success) {
+        eventClose(&completion_event);
+        result.rc = rc;
+        result.detail =
+            R_FAILED(rc) ? "OpenConnectedTcpFlow CMIF failure" : "OpenConnectedTcpFlow status=" + std::string(StatusName(opened.status));
+        return result;
+    }
+    const auto close_flow = [&] {
+        ProtocolStatus ignored{};
+        static_cast<void>(client::CloseFlow(tunnel_client, opened.flow, &ignored));
+    };
+
+    const CompletionWaitResult connected =
+        WaitForTcpProgress(tunnel_client, &completion_event, opened.flow, true, false, false, config.receive_deadline_ms);
+    if (!connected.received_expected) {
+        close_flow();
+        eventClose(&completion_event);
+        result.rc = connected.rc;
+        result.detail = "TCP connect failure: " + connected.detail;
+        return result;
+    }
+    FlowStateResult state{};
+    rc = client::GetFlowState(tunnel_client, opened.flow, &state);
+    if (R_FAILED(rc) || state.status != ProtocolStatus::Success || state.state != FlowState::Open || state.flow_kind != FlowKind::Tcp ||
+        state.advertised_local.port == 0) {
+        close_flow();
+        eventClose(&completion_event);
+        result.rc = rc;
+        result.detail = R_FAILED(rc) ? "GetFlowState CMIF failure" : "TCP flow did not publish an open virtual local endpoint";
+        return result;
+    }
+
+    std::array<char, 32> request_bytes{};
+    const int request_size = std::snprintf(request_bytes.data(), request_bytes.size(), "NXRV TCP %u\r\n", workload_id);
+    if (request_size <= 0 || static_cast<std::size_t>(request_size) >= request_bytes.size() ||
+        static_cast<std::size_t>(request_size) > capabilities.maximum_tcp_write_bytes) {
+        close_flow();
+        eventClose(&completion_event);
+        result.detail = "TCP request exceeds the configured stream-write bound";
+        return result;
+    }
+    const PayloadRange range{
+        .flow = opened.flow,
+        .payload_offset = 0,
+        .payload_size = static_cast<std::uint32_t>(request_size),
+        .client_tag = workload_id,
+    };
+    PayloadResult write{};
+    rc = client::WriteTcpStream(tunnel_client, range, request_bytes.data(), static_cast<std::size_t>(request_size), &write);
+    if (R_FAILED(rc) || write.status != ProtocolStatus::Success || write.accepted_bytes != static_cast<std::uint32_t>(request_size)) {
+        close_flow();
+        eventClose(&completion_event);
+        result.rc = rc;
+        result.detail = R_FAILED(rc) ? "WriteTcpStream CMIF failure" : "WriteTcpStream status=" + std::string(StatusName(write.status));
+        return result;
+    }
+    ProtocolStatus shutdown_status{};
+    rc = client::ShutdownTcpWrite(tunnel_client, opened.flow, &shutdown_status);
+    if (R_FAILED(rc) || shutdown_status != ProtocolStatus::Success) {
+        close_flow();
+        eventClose(&completion_event);
+        result.rc = rc;
+        result.detail =
+            R_FAILED(rc) ? "ShutdownTcpWrite CMIF failure" : "ShutdownTcpWrite status=" + std::string(StatusName(shutdown_status));
+        return result;
+    }
+    const CompletionWaitResult reply =
+        WaitForTcpProgress(tunnel_client, &completion_event, opened.flow, false, true, true, config.receive_deadline_ms);
+    eventClose(&completion_event);
+    if (!reply.received_expected) {
+        close_flow();
+        result.rc = reply.rc;
+        result.detail = "TCP reply failure: " + reply.detail;
+        return result;
+    }
+    ProtocolStatus close_status{};
+    const Result close_rc = client::CloseFlow(tunnel_client, opened.flow, &close_status);
+    if (R_FAILED(close_rc) || close_status != ProtocolStatus::Success) {
+        result.rc = close_rc;
+        result.detail = R_FAILED(close_rc) ? "CloseFlow CMIF failure" : "CloseFlow status=" + std::string(StatusName(close_status));
+        return result;
+    }
+    result.success = true;
+    result.bytes_sent = static_cast<std::size_t>(request_size);
+    result.bytes_received = sizeof(TcpExpectedReply) - 1;
+    result.detail = "api=" + std::to_string(capabilities.api_version) +
+                    " virtual_local_port=" + std::to_string(state.advertised_local.port) +
+                    " accepted=" + std::to_string(write.accepted_bytes) +
+                    " event_wakes=" + std::to_string(connected.wake_count + reply.wake_count) + " reply=validated eof=observed close=ok";
+    return result;
+}
 
 ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkloadConfig& config) {
     using namespace wgnx::tunnel;
@@ -314,7 +563,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
     rc = client::GetTunCapabilities(root, &root_capabilities);
     if (R_FAILED(rc) || root_capabilities.api_version != TunApiVersion) {
         result.rc = rc;
-        result.detail = R_FAILED(rc) ? "GetTunApiVersion CMIF failure"
+        result.detail = R_FAILED(rc) ? "GetCapabilities CMIF failure"
                                      : "API mismatch compiled=" + std::to_string(TunApiVersion) +
                                            " actual=" + std::to_string(root_capabilities.api_version);
         return result;
@@ -583,7 +832,7 @@ ScenarioResult RunWgnxTunnelContractValidation(
     rc = client::GetTunCapabilities(root, &capabilities);
     if (R_FAILED(rc) || capabilities.api_version != TunApiVersion) {
         result.rc = rc;
-        result.detail = R_FAILED(rc) ? "GetTunApiVersion CMIF failure" : "wgnx:tun API version mismatch";
+        result.detail = R_FAILED(rc) ? "GetCapabilities CMIF failure" : "wgnx:tun API version mismatch";
         return result;
     }
     if (workload.payload_bytes > capabilities.maximum_udp_payload_bytes) {
