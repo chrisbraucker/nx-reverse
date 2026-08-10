@@ -17,18 +17,12 @@
             ]
         }
     },
-    "features": {
-        "ghcr.io/devcontainers/features/node:1": {
-            "version": "v24.15.0"
-        }
-    },
     "containerEnv": {
         "WORKSPACE_FOLDER": "${containerWorkspaceFolder}",
         "NX_REVERSE_TOOLCHAIN_PREFIX": "/opt/toolchain"
     },
     "forwardPorts": [28771],
     "mounts": [
-        {"source": "codex-data", "target": "/codex", "type": "volume"},
         {"source": "nx-reverse-history", "target": "/history", "type": "volume"}
     ],
     "overrideCommand": true,

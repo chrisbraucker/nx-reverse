@@ -22,6 +22,7 @@ RUN apt-get update \
     ccache \
     clang-21 \
     clang-format-21 \
+    clang-tidy-21 \
     cppcheck \
     curl \
     file \
@@ -47,11 +48,10 @@ RUN apt-get update \
 RUN adduser --disabled-password "$CUSER" \
  && usermod -aG sudo "$CUSER" \
  && sed -ri '/^%sudo[[:space:]]+ALL=/c\%sudo ALL=(ALL:ALL) NOPASSWD: ALL' /etc/sudoers \
- && mkdir -p "$TOOLCHAIN_PREFIX" /src \
- && chown -R "$CUSER:$CUSER" "$TOOLCHAIN_PREFIX" /src
+ && mkdir -p "$TOOLCHAIN_PREFIX" /src
 
-USER ${CUSER}
-ENV HOME=/home/${CUSER}
+#USER ${CUSER}
+#ENV HOME=/home/${CUSER}
 ENV NX_REVERSE_TOOLCHAIN_PREFIX=${TOOLCHAIN_PREFIX}
 
 COPY ./toolchain/ /src/toolchain/
