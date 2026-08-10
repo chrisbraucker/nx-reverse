@@ -42,7 +42,7 @@ const char* StatusName(wgnx::tunnel::ProtocolStatus status) {
         return "transport_unavailable";
     case ProtocolStatus::FlowQuotaExhausted:
         return "flow_quota_exhausted";
-    case ProtocolStatus::DatagramTooLarge:
+    case ProtocolStatus::PayloadTooLarge:
         return "datagram_too_large";
     case ProtocolStatus::QueueFull:
         return "queue_full";
@@ -58,6 +58,12 @@ const char* StatusName(wgnx::tunnel::ProtocolStatus status) {
         return "reverse_tuple_exhausted";
     case ProtocolStatus::TunnelBlockedByPolicy:
         return "tunnel_blocked_by_policy";
+    case ProtocolStatus::WrongFlowKind:
+        return "wrong_flow_kind";
+    case ProtocolStatus::NotConnected:
+        return "not_connected";
+    case ProtocolStatus::LocalWriteClosed:
+        return "local_write_closed";
     }
     return "unknown";
 }
@@ -189,7 +195,7 @@ CompletionWaitResult WaitForEcho(
                     result.detail = "flow terminal=" + std::to_string(static_cast<std::uint32_t>(completion.terminal_reason));
                     return result;
                 }
-                if (completion.type != wgnx::tunnel::CompletionType::InboundDatagram || completion.flow.value != flow.value ||
+                if (completion.type != wgnx::tunnel::CompletionType::InboundUdpDatagram || completion.flow.value != flow.value ||
                     completion.payload_offset > payload.size() || completion.payload_size > payload.size() - completion.payload_offset) {
                     ++result.ignored;
                     continue;
@@ -357,7 +363,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
     std::array<FlowHandle, MaximumFlowsPerClient> flows{};
     std::uint32_t opened_flows = 0;
     for (; opened_flows < config.concurrent_flows; ++opened_flows) {
-        const OpenConnectedUdpFlowRequest request{
+        const OpenConnectedFlowRequest request{
             .remote =
                 {.address = {destination[0], destination[1], destination[2], destination[3]},
                  .port = config.destination_port,
@@ -365,7 +371,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
             .diagnostic_tag = (static_cast<std::uint64_t>(config.workload_id) << 32U) | opened_flows,
         };
         const auto opened = [&] {
-            OpenConnectedUdpFlowResult value{};
+            OpenConnectedFlowResult value{};
             rc = client::OpenConnectedUdpFlow(tunnel_client, request, &value);
             return value;
         }();
@@ -423,7 +429,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
     for (std::uint32_t sequence = 0; sequence < config.datagram_count; ++sequence) {
         const std::uint32_t flow_index = sequence % config.concurrent_flows;
         BuildPayload(payload, sequence, flow_index, config);
-        const DatagramDescriptor descriptor{
+        const PayloadRange descriptor{
             .flow = flows[flow_index],
             .payload_offset = 0,
             .payload_size = static_cast<std::uint32_t>(payload.size()),
@@ -433,7 +439,7 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
         workload_metrics.RecordAttempt();
         std::uint32_t queue_full_retries_for_datagram = 0;
         for (;;) {
-            DatagramDisposition disposition{};
+            PayloadResult disposition{};
             rc = client::SendUdpDatagram(tunnel_client, descriptor, payload.data(), payload.size(), &disposition);
             if (R_FAILED(rc)) {
                 result.rc = rc;
@@ -593,13 +599,13 @@ ScenarioResult RunWgnxTunnelContractValidation(
         return result;
     }
 
-    const OpenConnectedUdpFlowRequest request{
+    const OpenConnectedFlowRequest request{
         .remote =
             {.address = {destination[0], destination[1], destination[2], destination[3]}, .port = workload.destination_port, .reserved = 0},
         .diagnostic_tag = (static_cast<std::uint64_t>(workload.workload_id) << 32U) | 0x434F4E54U,
     };
     const auto open_flow = [&](client::ScopedClient& tunnel_client, FlowHandle* out_flow) -> bool {
-        OpenConnectedUdpFlowResult opened{};
+        OpenConnectedFlowResult opened{};
         rc = client::OpenConnectedUdpFlow(tunnel_client, request, &opened);
         if (R_FAILED(rc) || opened.status != ProtocolStatus::Success) {
             result.rc = rc;
@@ -685,13 +691,13 @@ ScenarioResult RunWgnxTunnelContractValidation(
             return result;
         }
 
-        const DatagramDescriptor descriptor{
+        const PayloadRange descriptor{
             .flow = cloned_flow,
             .payload_offset = 0,
             .payload_size = static_cast<std::uint32_t>(expected_payload.size()),
             .client_tag = 0x434C4F4EU,
         };
-        DatagramDisposition disposition{};
+        PayloadResult disposition{};
         rc = client::SendUdpDatagram(clone, descriptor, expected_payload.data(), expected_payload.size(), &disposition);
         if (R_FAILED(rc) || disposition.status != ProtocolStatus::Success) {
             eventClose(&completion_event);
@@ -732,33 +738,33 @@ ScenarioResult RunWgnxTunnelContractValidation(
         if (!open_flow(primary, &batch_flow)) {
             return result;
         }
-        const std::array<DatagramDescriptor, 4> descriptors = {
-            DatagramDescriptor{
+        const std::array<PayloadRange, 4> descriptors = {
+            PayloadRange{
                 .flow = batch_flow,
                 .payload_offset = 0,
                 .payload_size = static_cast<std::uint32_t>(expected_payload.size()),
                 .client_tag = 1
             },
-            DatagramDescriptor{
+            PayloadRange{
                 .flow = batch_flow,
                 .payload_offset = static_cast<std::uint32_t>(payload_storage.size()),
                 .payload_size = 1,
                 .client_tag = 2
             },
-            DatagramDescriptor{
+            PayloadRange{
                 .flow = batch_flow,
                 .payload_offset = 0,
                 .payload_size = static_cast<std::uint32_t>(payload_storage.size()),
                 .client_tag = 3
             },
-            DatagramDescriptor{
+            PayloadRange{
                 .flow = {},
                 .payload_offset = 0,
                 .payload_size = static_cast<std::uint32_t>(expected_payload.size()),
                 .client_tag = 4
             },
         };
-        std::array<DatagramDisposition, descriptors.size()> dispositions{};
+        std::array<PayloadResult, descriptors.size()> dispositions{};
         rc = client::SendUdpDatagramBatch(
             primary,
             descriptors.data(),
@@ -771,7 +777,7 @@ ScenarioResult RunWgnxTunnelContractValidation(
         const std::array<ProtocolStatus, dispositions.size()> expected = {
             ProtocolStatus::Success,
             ProtocolStatus::MalformedInput,
-            ProtocolStatus::DatagramTooLarge,
+            ProtocolStatus::PayloadTooLarge,
             ProtocolStatus::StaleHandle,
         };
         bool dispositions_match = R_SUCCEEDED(rc);
