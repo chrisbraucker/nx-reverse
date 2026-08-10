@@ -8,6 +8,7 @@
 
 #include "config.hpp"
 #include "logger.hpp"
+#include "socket_config.hpp"
 
 namespace toolbox {
 

@@ -16,6 +16,7 @@
 #include "config.hpp"
 #include "logger.hpp"
 #include "runtime.hpp"
+#include "socket_config.hpp"
 
 namespace toolbox {
 

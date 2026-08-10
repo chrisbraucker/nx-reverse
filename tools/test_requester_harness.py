@@ -24,5 +24,19 @@ class UdpWorkloadStatsTests(unittest.TestCase):
         self.assertEqual(rows[("workload", "all")]["receive_elapsed_ns"], 200)
 
 
+class StallTcpHandlerTests(unittest.TestCase):
+    def test_stall_handler_holds_the_established_stream_without_replying(self) -> None:
+        class Request:
+            def settimeout(self, timeout: float) -> None:
+                del timeout
+
+        handler = requester_harness.StallTcpHandler.__new__(requester_harness.StallTcpHandler)
+        handler.request = Request()
+        handler.client_address = ("10.0.0.2", 49152)
+        with patch.object(requester_harness.time, "sleep") as sleep:
+            handler.handle()
+        sleep.assert_called_once_with(requester_harness.TCP_STALL_SECONDS)
+
+
 if __name__ == "__main__":
     unittest.main()

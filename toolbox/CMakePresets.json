@@ -9,7 +9,7 @@
     {
       "name": "host-tests",
       "displayName": "Toolbox host tests",
-      "description": "Build pure toolbox outcome tests without the Switch toolchain.",
+      "description": "Build pure toolbox configuration and outcome tests without the Switch toolchain.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-host-tests",
       "cacheVariables": {
@@ -35,7 +35,9 @@
       "configurePreset": "host-tests",
       "targets": [
         "toolbox_bsd_outcome_tests",
-        "toolbox_udp_workload_metrics_tests"
+        "toolbox_udp_workload_metrics_tests",
+        "toolbox_runtime_scenario_tests",
+        "toolbox_runtime_config_tests"
       ]
     },
     {

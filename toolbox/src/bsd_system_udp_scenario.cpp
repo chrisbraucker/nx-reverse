@@ -18,6 +18,7 @@
 #include "config.hpp"
 #include "logger.hpp"
 #include "runtime.hpp"
+#include "socket_config.hpp"
 #include "udp_workload_metrics.hpp"
 #include "wgnx/tunnel_protocol.hpp"
 

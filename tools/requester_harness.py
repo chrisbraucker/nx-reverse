@@ -15,6 +15,8 @@ from pathlib import Path
 # Easy-to-edit endpoint configuration.
 LISTEN_HOST = "0.0.0.0"
 TCP_ACK_PORT = 28080
+TCP_STALL_PORT = 28082
+TCP_STALL_SECONDS = 10.0
 HTTP_PORT = 28081
 HTTPS_PORT = 28443
 UDP_PORTS = (29000, 29001)
@@ -195,6 +197,13 @@ class PlainTcpHandler(socketserver.BaseRequestHandler):
         self.request.sendall(TCP_REPLY)
 
 
+class StallTcpHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        peer = f"{self.client_address[0]}:{self.client_address[1]}"
+        log(f"[tcp-stall] peer={peer} holding_open_seconds={TCP_STALL_SECONDS:g}")
+        time.sleep(TCP_STALL_SECONDS)
+
+
 class UdpHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         data, sock = self.request
@@ -277,6 +286,9 @@ def build_https_server() -> QuietHttpServer:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Controlled requester counterparty")
     parser.add_argument("--listen-host", default=LISTEN_HOST)
+    parser.add_argument("--tcp-ack-port", type=int, default=TCP_ACK_PORT)
+    parser.add_argument("--tcp-stall-port", type=int, default=TCP_STALL_PORT)
+    parser.add_argument("--tcp-stall-seconds", type=float, default=TCP_STALL_SECONDS)
     parser.add_argument("--udp-ports", default=",".join(str(port) for port in UDP_PORTS))
     parser.add_argument("--udp-no-echo", action="store_true", help="record UDP traffic without replying")
     parser.add_argument("--udp-quiet", action="store_true", help="aggregate UDP workload accounting and suppress per-datagram output")
@@ -284,20 +296,29 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    global LISTEN_HOST, UDP_PORTS, UDP_ECHO_INPUT, UDP_VERBOSE
+    global LISTEN_HOST, TCP_ACK_PORT, TCP_STALL_PORT, TCP_STALL_SECONDS, UDP_PORTS, UDP_ECHO_INPUT, UDP_VERBOSE
     args = parse_args()
     LISTEN_HOST = args.listen_host
+    TCP_ACK_PORT = args.tcp_ack_port
+    TCP_STALL_PORT = args.tcp_stall_port
+    TCP_STALL_SECONDS = args.tcp_stall_seconds
     UDP_PORTS = tuple(int(value) for value in args.udp_ports.split(",") if value)
+    if any(port < 1 or port > 65535 for port in (TCP_ACK_PORT, TCP_STALL_PORT)) or TCP_ACK_PORT == TCP_STALL_PORT:
+        raise SystemExit("--tcp-ack-port and --tcp-stall-port must be distinct ports in 1..65535")
+    if TCP_STALL_SECONDS <= 0:
+        raise SystemExit("--tcp-stall-seconds must be greater than zero")
     if not UDP_PORTS or any(port < 1 or port > 65535 for port in UDP_PORTS):
         raise SystemExit("--udp-ports must contain one or more ports in 1..65535")
     UDP_ECHO_INPUT = not args.udp_no_echo
     UDP_VERBOSE = not args.udp_quiet
     tcp_server = ThreadedTcpServer((LISTEN_HOST, TCP_ACK_PORT), PlainTcpHandler)
+    tcp_stall_server = ThreadedTcpServer((LISTEN_HOST, TCP_STALL_PORT), StallTcpHandler)
     http_server = QuietHttpServer((LISTEN_HOST, HTTP_PORT), CannedHttpHandler)
     #https_server = build_https_server()
 
     servers: list[tuple[str, socketserver.BaseServer]] = [
         ("tcp", tcp_server),
+        ("tcp-stall", tcp_stall_server),
         ("http", http_server),
         #("https", https_server),
     ]
@@ -320,6 +341,7 @@ def main() -> int:
 
     log("requester harness listening")
     log(f"  tcp   : {LISTEN_HOST}:{TCP_ACK_PORT}")
+    log(f"  tcp-stall : {LISTEN_HOST}:{TCP_STALL_PORT} hold_open_seconds={TCP_STALL_SECONDS:g}")
     log(f"  http  : {LISTEN_HOST}:{HTTP_PORT}")
     #log(f"  https : {LISTEN_HOST}:{HTTPS_PORT} cert={TLS_CERT_FILE}")
     for port in UDP_PORTS:

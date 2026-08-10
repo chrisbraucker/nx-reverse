@@ -160,8 +160,9 @@ It does not replace the service traces produced by `net-probe`.
 Two helper scripts should be used with the requester:
 
 - `tools/requester_harness.py`
-  - starts one plain TCP endpoint, one HTTP endpoint, one HTTPS endpoint, and one UDP endpoint at the same time
-  - keeps all listening ports as top-level constants so retargeting is trivial
+  - starts a replying TCP endpoint, a stalled TCP endpoint, one HTTP endpoint, one HTTPS endpoint, and UDP endpoints at the same time
+  - accepts `--tcp-ack-port`, `--tcp-stall-port`, and `--tcp-stall-seconds` to make controlled TCP comparisons reproducible
+  - the stalled endpoint completes the TCP handshake but intentionally sends no application reply, so it tests stream-progress deadlines rather than a blackholed SYN
 - `tools/generate_requester_https_certs.sh`
   - creates a minimal self-signed keypair for the HTTPS listener
   - defaults to writing under `workspace/requester-harness/tls/`
@@ -384,11 +385,11 @@ Those can be added once the basic requester is producing useful traces.
 
 ## Direct WireGuard Packet Scenario
 
-`wgnx_packet_udp_echo` tests API v3 without initializing BSD.
+`wgnx_packet_udp_echo` tests API v5 without initializing BSD.
 It constructs a complete inner IPv4/UDP datagram from the `Wgnx*` values in `requester/src/config.hpp`, adds a random per-run token, and submits it through `wgnx:ctl`.
 Receive polling is nonblocking and bounded by `WgnxPacketTimeoutMs`.
 
-API v3 accepts submissions from any process that can open `wgnx:ctl`; it no longer resolves the caller's Program ID or requires the requester forwarder's Title ID at sysmodule build time.
+API v5 accepts submissions from any process that can open `wgnx:ctl`; it no longer resolves the caller's Program ID or requires the requester forwarder's Title ID at sysmodule build time.
 Caller PID remains part of both commands so the sysmodule can pin one packet-stream owner, flush stale queues when a new process submits, and reject receives from non-owner processes.
 
 A reply is accepted only when its IPv4 header, total length, fragmentation state, IPv4 checksum, UDP length, UDP checksum, source/destination addresses, ports, and random payload all match.

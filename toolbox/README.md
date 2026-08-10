@@ -129,11 +129,11 @@ The scenario result records total `queue_full_events` so a bounded-burst evaluat
 
 ### WireGuard Sysmodule Shutdown
 
-The toolbox consumes `wgnx:ctl` API v5 and `wgnx:tun` API v3 from the configured `WGNX_COMMON` headers.
+The toolbox consumes `wgnx:ctl` API v5 and `wgnx:tun` API v4 from the configured `WGNX_COMMON` headers.
 
 Before opening `wgnx:tun`, toolbox uses Atmosphere's read-only SM `HasService` extension so an absent sysmodule reports a scenario error without blocking the worker or mutating SM registration state.
 
-`wgnx:tun` API v3 signals every client completion event during orderly sysmodule shutdown without enqueuing a synthetic completion record.
+`wgnx:tun` API v4 signals every client completion event during orderly sysmodule shutdown without enqueuing a synthetic completion record.
 
 When a running workload wakes and its following `ReceiveCompletions` call fails, toolbox records terminal `wgnx:tun service closed` state, stops the workload, and releases its local event, flow, and CMIF session state without retrying the closed service.
 

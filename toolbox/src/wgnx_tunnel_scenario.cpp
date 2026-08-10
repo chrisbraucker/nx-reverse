@@ -44,7 +44,7 @@ const char* StatusName(wgnx::tunnel::ProtocolStatus status) {
     case ProtocolStatus::FlowQuotaExhausted:
         return "flow_quota_exhausted";
     case ProtocolStatus::PayloadTooLarge:
-        return "datagram_too_large";
+        return "payload_too_large";
     case ProtocolStatus::QueueFull:
         return "queue_full";
     case ProtocolStatus::StaleHandle:
@@ -65,6 +65,37 @@ const char* StatusName(wgnx::tunnel::ProtocolStatus status) {
         return "not_connected";
     case ProtocolStatus::LocalWriteClosed:
         return "local_write_closed";
+    }
+    return "unknown";
+}
+
+const char* TerminalReasonName(wgnx::tunnel::FlowTerminalReason reason) {
+    using wgnx::tunnel::FlowTerminalReason;
+    switch (reason) {
+    case FlowTerminalReason::None:
+        return "none";
+    case FlowTerminalReason::ClientClosed:
+        return "client_closed";
+    case FlowTerminalReason::PeerDeactivated:
+        return "peer_deactivated";
+    case FlowTerminalReason::PeerActivationChanged:
+        return "peer_activation_changed";
+    case FlowTerminalReason::PolicyInvalidated:
+        return "policy_invalidated";
+    case FlowTerminalReason::SysmoduleShutdown:
+        return "sysmodule_shutdown";
+    case FlowTerminalReason::RemoteClosed:
+        return "remote_closed";
+    case FlowTerminalReason::ResetDuringConnect:
+        return "reset_during_connect";
+    case FlowTerminalReason::ResetAfterConnect:
+        return "reset_after_connect";
+    case FlowTerminalReason::ConnectTimedOut:
+        return "connect_timed_out";
+    case FlowTerminalReason::RouteLost:
+        return "route_lost";
+    case FlowTerminalReason::LocalResourceFailure:
+        return "local_resource_failure";
     }
     return "unknown";
 }
@@ -118,6 +149,10 @@ struct CompletionWaitResult {
     bool service_lost{false};
     bool open{false};
     bool remote_write_closed{false};
+    bool deadline_expired{false};
+    bool malformed_reply{false};
+    bool premature_eof{false};
+    wgnx::tunnel::FlowTerminalReason terminal_reason{wgnx::tunnel::FlowTerminalReason::None};
     std::uint32_t ignored{0};
     std::uint32_t wake_count{0};
     std::string detail;
@@ -308,7 +343,9 @@ CompletionWaitResult WaitForTcpProgress(
         const Result wait_rc = eventWait(event, remaining_ns);
         if (R_FAILED(wait_rc)) {
             result.rc = wait_rc;
-            result.detail = "TCP completion event wait rc=" + FormatResult(wait_rc);
+            result.deadline_expired = wait_rc == KERNELRESULT(TimedOut);
+            result.detail = result.deadline_expired ? (require_open ? "TCP connect deadline expired" : "TCP reply deadline expired")
+                                                    : "TCP completion event wait rc=" + FormatResult(wait_rc);
             return result;
         }
         ++result.wake_count;
@@ -341,7 +378,8 @@ CompletionWaitResult WaitForTcpProgress(
                 if (completion.type == CompletionType::FlowStateChanged) {
                     if (completion.flow_state == FlowState::Closed) {
                         result.terminal = true;
-                        result.detail = "TCP flow terminal=" + std::to_string(static_cast<std::uint32_t>(completion.terminal_reason));
+                        result.terminal_reason = completion.terminal_reason;
+                        result.detail = "TCP flow terminal=" + std::string(TerminalReasonName(completion.terminal_reason));
                         return result;
                     }
                     result.open = completion.flow_state == FlowState::Open;
@@ -357,15 +395,30 @@ CompletionWaitResult WaitForTcpProgress(
                     continue;
                 }
                 if (completion.type != CompletionType::InboundTcpStream || completion.payload_offset > payload.size() ||
-                    completion.payload_size > payload.size() - completion.payload_offset ||
-                    reply_size + completion.payload_size > reply.size()) {
+                    completion.payload_size > payload.size() - completion.payload_offset) {
                     ++result.ignored;
+                    continue;
+                }
+                if (reply_size + completion.payload_size > reply.size()) {
+                    result.malformed_reply = true;
                     continue;
                 }
                 std::memcpy(reply.data() + reply_size, payload.data() + completion.payload_offset, completion.payload_size);
                 reply_size += completion.payload_size;
             }
             const bool reply_valid = reply_size == reply.size() && std::memcmp(reply.data(), TcpExpectedReply, reply.size()) == 0;
+            if (require_reply && reply_size == reply.size() && !reply_valid) {
+                result.malformed_reply = true;
+            }
+            if (require_reply && result.remote_write_closed && !reply_valid) {
+                result.premature_eof = !result.malformed_reply;
+                result.detail = result.malformed_reply ? "TCP malformed reply before remote EOF" : "TCP premature remote EOF";
+                return result;
+            }
+            if (result.malformed_reply) {
+                result.detail = "TCP malformed reply";
+                return result;
+            }
             if ((require_open && !result.open) || (require_reply && !reply_valid) ||
                 (require_remote_write_closed && !result.remote_write_closed)) {
                 continue;
@@ -374,7 +427,8 @@ CompletionWaitResult WaitForTcpProgress(
             return result;
         }
     }
-    result.detail = "TCP completion deadline expired";
+    result.deadline_expired = true;
+    result.detail = require_open ? "TCP connect deadline expired" : "TCP reply deadline expired";
     return result;
 }
 
@@ -402,10 +456,17 @@ ScenarioResult RunWgnxTunnelTcpExchange(
     }
     Capabilities capabilities{};
     rc = client::GetTunCapabilities(root, &capabilities);
-    if (R_FAILED(rc) || capabilities.api_version != TunApiVersion ||
-        (capabilities.capability_mask & CapabilityMask(Capability::ConnectedIpv4Tcp)) == 0) {
+    if (R_FAILED(rc)) {
         result.rc = rc;
-        result.detail = R_FAILED(rc) ? "GetCapabilities CMIF failure" : "connected TCP capability unavailable or API mismatch";
+        result.detail = "GetCapabilities CMIF failure";
+        return result;
+    }
+    if (capabilities.api_version != TunApiVersion) {
+        result.detail = "API mismatch compiled=" + std::to_string(TunApiVersion) + " actual=" + std::to_string(capabilities.api_version);
+        return result;
+    }
+    if ((capabilities.capability_mask & CapabilityMask(Capability::ConnectedIpv4Tcp)) == 0) {
+        result.detail = "connected TCP capability unavailable";
         return result;
     }
 

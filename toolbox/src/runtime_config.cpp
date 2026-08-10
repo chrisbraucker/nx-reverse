@@ -10,9 +10,8 @@
 
 #include <sys/stat.h>
 
-#include <switch.h>
-
 #include "config.hpp"
+#include "runtime_scenario.hpp"
 #include "wgnx/tunnel_protocol.hpp"
 
 namespace toolbox {
@@ -95,30 +94,6 @@ bool ParseBsdSystemUdpExpectedOutcome(std::string_view value, BsdSystemUdpExpect
     }
     if (value == "terminal_closure") {
         *expected_outcome = BsdSystemUdpExpectedOutcome::TerminalClosure;
-        return true;
-    }
-    return false;
-}
-
-bool ParseRuntimeScenario(std::string_view value, RuntimeScenario* scenario) {
-    if (value == "direct_tunnel_udp") {
-        *scenario = RuntimeScenario::DirectTunnelUdp;
-        return true;
-    }
-    if (value == "direct_tunnel_tcp") {
-        *scenario = RuntimeScenario::DirectTunnelTcp;
-        return true;
-    }
-    if (value == "bsd_system_udp") {
-        *scenario = RuntimeScenario::BsdSystemUdp;
-        return true;
-    }
-    if (value == "bsd_system_tcp") {
-        *scenario = RuntimeScenario::BsdSystemTcp;
-        return true;
-    }
-    if (value == "tunnel_contract_validation") {
-        *scenario = RuntimeScenario::TunnelContractValidation;
         return true;
     }
     return false;
@@ -381,7 +356,7 @@ RuntimeConfig CompiledRuntimeDefaults() {
 }
 
 ConfigLoadReport LoadRuntimeConfig(const RuntimeConfig& defaults, const char* path) {
-    ConfigLoadReport report{.config = defaults};
+    ConfigLoadReport report{.config = defaults, .loaded_from_file = false, .diagnostics = {}};
     FILE* file = std::fopen(path, "r");
     if (file == nullptr) {
         if (errno != ENOENT) {

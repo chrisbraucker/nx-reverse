@@ -20,6 +20,7 @@
 #include "config.hpp"
 #include "logger.hpp"
 #include "manual_bsd_lifecycle.hpp"
+#include "socket_config.hpp"
 #include "wgnx_packet_scenario.hpp"
 #include "wgnx_tunnel_scenario.hpp"
 

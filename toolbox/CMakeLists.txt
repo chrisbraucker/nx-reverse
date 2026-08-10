@@ -50,6 +50,25 @@ if(TOOLBOX_BUILD_HOST_TESTS)
     target_compile_features(toolbox_udp_workload_metrics_tests PRIVATE cxx_std_23)
     target_compile_options(toolbox_udp_workload_metrics_tests PRIVATE -Wall -Wextra -Werror)
     add_test(NAME toolbox_udp_workload_metrics_tests COMMAND toolbox_udp_workload_metrics_tests)
+    add_executable(toolbox_runtime_scenario_tests
+        src/runtime_scenario.cpp
+        test/runtime_scenario_tests.cpp)
+    target_include_directories(toolbox_runtime_scenario_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${WGNX_COMMON}/include")
+    target_compile_features(toolbox_runtime_scenario_tests PRIVATE cxx_std_23)
+    target_compile_options(toolbox_runtime_scenario_tests PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME toolbox_runtime_scenario_tests COMMAND toolbox_runtime_scenario_tests)
+    add_executable(toolbox_runtime_config_tests
+        src/runtime_config.cpp
+        src/runtime_scenario.cpp
+        test/runtime_config_tests.cpp)
+    target_include_directories(toolbox_runtime_config_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${WGNX_COMMON}/include")
+    target_compile_features(toolbox_runtime_config_tests PRIVATE cxx_std_23)
+    target_compile_options(toolbox_runtime_config_tests PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME toolbox_runtime_config_tests COMMAND toolbox_runtime_config_tests)
     return()
 endif()
 
