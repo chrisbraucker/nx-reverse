@@ -3,10 +3,17 @@
 #---------------------------------------------------------------------------------
 
 TOPDIR ?= $(CURDIR)
+LOCAL_MK ?= $(TOPDIR)/local.mk
+-include $(LOCAL_MK)
+
 HOST_ONLY_GOALS := format-check static-check tidy-check
 HOST_ONLY_BUILD := $(strip $(filter $(HOST_ONLY_GOALS),$(MAKECMDGOALS)))
 
 ifeq ($(HOST_ONLY_BUILD),)
+ifeq ($(strip $(TOOLBOX_FORWARDER_PROGRAM_ID)),)
+$(error Set TOOLBOX_FORWARDER_PROGRAM_ID in $(LOCAL_MK) or on the make command line)
+endif
+
 ifeq ($(strip $(DEVKITPRO)),)
 $(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
 endif
@@ -34,6 +41,7 @@ DEFINES	+=	-DDISABLE_IPC -D__SWITCH__ \
 	-DTARGET="\"$(TARGET)\"" \
 	-DNXRV_VERSION="\"$(APP_VERSION)\"" \
 	-DNXRV_BUILD_ID="\"$(NXRV_BUILD_ID)\"" \
+	-DWGNX_NET_PROBE_TOOLBOX_FORWARDER_PROGRAM_ID=$(TOOLBOX_FORWARDER_PROGRAM_ID) \
 	$(EXTRA_DEFINES)
 
 CFLAGS	+= $(INCLUDE) -Wno-unused-result

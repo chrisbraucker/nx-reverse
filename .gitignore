@@ -5,6 +5,7 @@ __pycache__/
 
 net-probe/build/
 net-probe/out/
+net-probe/local.mk
 toolbox/build*/
 toolbox/out/
 CMakeFiles/

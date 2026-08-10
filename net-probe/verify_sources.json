@@ -37,6 +37,7 @@
     "-D_GNU_SOURCE",
     "-DNXRV_VERSION=\"0.0.1-dev\"",
     "-DNXRV_BUILD_ID=\"tidy\"",
+    "-DWGNX_NET_PROBE_TOOLBOX_FORWARDER_PROGRAM_ID=0",
     "-fno-rtti",
     "-fno-exceptions",
     "-isystem",

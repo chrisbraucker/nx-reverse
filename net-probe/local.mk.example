@@ -1,0 +1,8 @@
+# Copy this file to local.mk.
+# local.mk is ignored so device-specific program IDs stay outside Git history.
+
+# Program ID of the installed toolbox or toolbox forwarder to trace.
+# TOOLBOX_FORWARDER_PROGRAM_ID := 0x05720820ABC97000
+
+# Optional additional compiler definitions for a focused local experiment.
+# EXTRA_DEFINES += -DWGNX_BSD_REGISTER_CLIENT_FORWARD_MODE=0

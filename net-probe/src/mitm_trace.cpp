@@ -189,7 +189,7 @@ std::array<DomainPathEntry, MaxTrackedDomainPaths> g_snapshot_domain_paths = {};
 std::array<SessionEntry, MaxTrackedSessions> g_snapshot_sessions = {};
 std::array<CloneHandleEntry, MaxTrackedCloneHandles> g_clone_handles = {};
 
-constexpr ams::ncm::ProgramId RequesterForwarderProgramId{0x05720820ABC97000ul};
+constexpr ams::ncm::ProgramId ToolboxForwarderProgramId{build_config::ToolboxForwarderProgramId};
 
 int ClampLength(int written, size_t capacity) {
     if (written <= 0) {
@@ -1987,7 +1987,7 @@ bool TryAppendBsdSockOptResponseSummary(
 }
 
 bool ShouldSuppressBsdTrace(const char* service_name, u32 command_id) {
-    return StartsWith(service_name, "bsd:") && command_id == BsdCommandPoll;
+    return StartsWith(service_name, "bsd:") && command_id == BsdCommandPoll && !build_config::TraceBsdPoll;
 }
 
 template <typename T> bool ReadPod(T* out, const u8* bytes, size_t size, size_t offset = 0) {
@@ -4500,11 +4500,11 @@ void OnForwardRequestPreprocess(
 ) {
     namespace cfg = build_config;
 
-    const auto mutation_mode = cfg::RequesterBsdSendToMutation;
+    const auto mutation_mode = cfg::ToolboxBsdSendToMutation;
     const bool mutation_mode_supported = mutation_mode == cfg::BsdSendToMutationMode::ShadowCopy ||
                                          mutation_mode == cfg::BsdSendToMutationMode::RewritePort ||
                                          mutation_mode == cfg::BsdSendToMutationMode::RewriteIpv4;
-    if (out_replacement == nullptr || !mutation_mode_supported || ctx.client_info.program_id != RequesterForwarderProgramId) {
+    if (out_replacement == nullptr || !mutation_mode_supported || ctx.client_info.program_id != ToolboxForwarderProgramId) {
         return;
     }
 
@@ -4542,8 +4542,8 @@ void OnForwardRequestPreprocess(
     }
 
     const bool is_ipv4 = sockaddr_bytes[1] == BsdAddressFamilyInet || ReadLe16(sockaddr_bytes) == BsdAddressFamilyInet;
-    const bool endpoint_matches = is_ipv4 && ReadBe16(sockaddr_bytes + 2) == cfg::RequesterUdpEchoPort &&
-                                  std::memcmp(sockaddr_bytes + 4, cfg::RequesterUdpEchoIpv4, sizeof(cfg::RequesterUdpEchoIpv4)) == 0;
+    const bool endpoint_matches = is_ipv4 && ReadBe16(sockaddr_bytes + 2) == cfg::ToolboxUdpEchoPort &&
+                                  std::memcmp(sockaddr_bytes + 4, cfg::ToolboxUdpEchoIpv4, sizeof(cfg::ToolboxUdpEchoIpv4)) == 0;
     if (!endpoint_matches) {
         return;
     }
@@ -4556,10 +4556,10 @@ void OnForwardRequestPreprocess(
     const u16 original_port = ReadBe16(sockaddr_bytes + 2);
     u16 effective_port = original_port;
     if (mutation_mode == cfg::BsdSendToMutationMode::RewriteIpv4) {
-        std::memcpy(out_replacement->data + 4, cfg::RequesterUdpEchoRewriteIpv4, sizeof(cfg::RequesterUdpEchoRewriteIpv4));
+        std::memcpy(out_replacement->data + 4, cfg::ToolboxUdpEchoRewriteIpv4, sizeof(cfg::ToolboxUdpEchoRewriteIpv4));
     }
     if (mutation_mode == cfg::BsdSendToMutationMode::RewritePort || mutation_mode == cfg::BsdSendToMutationMode::RewriteIpv4) {
-        effective_port = cfg::RequesterUdpEchoRewritePort;
+        effective_port = cfg::ToolboxUdpEchoRewritePort;
         out_replacement->data[2] = static_cast<u8>(effective_port >> 8);
         out_replacement->data[3] = static_cast<u8>(effective_port & 0xFF);
     }
@@ -4761,7 +4761,7 @@ void OnForwardRequestTrace(const ams::sf::hipc::mitm_monitor::ForwardRequestTrac
             object_path,
             static_cast<unsigned long long>(request_id),
             request_info.command_id,
-            GetBsdSendToMutationModeName(build_config::RequesterBsdSendToMutation),
+            GetBsdSendToMutationModeName(build_config::ToolboxBsdSendToMutation),
             descriptor_kind,
             ctx.request_buffer_replacement_direction,
             ctx.request_buffer_replacement_index,
