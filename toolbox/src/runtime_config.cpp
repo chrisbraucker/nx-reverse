@@ -109,6 +109,10 @@ bool ParseRuntimeScenario(std::string_view value, RuntimeScenario* scenario) {
         *scenario = RuntimeScenario::BsdSystemUdp;
         return true;
     }
+    if (value == "bsd_system_tcp") {
+        *scenario = RuntimeScenario::BsdSystemTcp;
+        return true;
+    }
     if (value == "tunnel_contract_validation") {
         *scenario = RuntimeScenario::TunnelContractValidation;
         return true;
@@ -238,7 +242,8 @@ bool ApplySetting(RuntimeConfig* config, std::string_view key, std::string_view 
         if (!ParseUnsigned(value, &count) || count == 0 || count > MaximumProfiles) {
             return invalid();
         }
-        config->profiles.resize(count);
+        const RuntimeProfile default_profile = config->profiles.front();
+        config->profiles.resize(count, default_profile);
         return true;
     }
     std::size_t profile_index{};
@@ -272,6 +277,9 @@ bool ApplySetting(RuntimeConfig* config, std::string_view key, std::string_view 
         if (profile_field == "udp_destination_port") {
             return (ParseUnsigned(value, &profile.udp_destination_port) && profile.udp_destination_port != 0) || invalid();
         }
+        if (profile_field == "tcp_destination_port") {
+            return (ParseUnsigned(value, &profile.tcp_destination_port) && profile.tcp_destination_port != 0) || invalid();
+        }
         *error = "unrecognized profile setting " + std::string(key);
         return false;
     }
@@ -295,6 +303,9 @@ bool ApplySetting(RuntimeConfig* config, std::string_view key, std::string_view 
     }
     if (key == "udp.echo_replies") {
         return ParseBool(value, &config->udp.echo_replies) || invalid();
+    }
+    if (key == "tcp.receive_deadline_ms") {
+        return ParseUnsigned(value, &config->tcp.receive_deadline_ms) || invalid();
     }
     if (key == "tunnel_contract.verify_cloned_session_lifetime") {
         return ParseBool(value, &config->tunnel_contract.verify_cloned_session_lifetime) || invalid();
@@ -339,6 +350,7 @@ RuntimeConfig CompiledRuntimeDefaults() {
             .tunnel_destination_ipv4 = config::WgnxTunnelDestinationIpv4,
             .bsd_destination_ipv4 = config::WgnxTunnelDestinationIpv4,
             .udp_destination_port = config::WgnxTunnelDestinationPort,
+            .tcp_destination_port = config::BsdSystemTcpDestinationPort,
         }},
         .udp =
             {
@@ -350,6 +362,7 @@ RuntimeConfig CompiledRuntimeDefaults() {
                 .payload_seed = config::WgnxTunnelPayloadSeed,
                 .echo_replies = config::WgnxTunnelEchoReplies,
             },
+        .tcp = {.receive_deadline_ms = config::BsdSystemTcpReceiveDeadlineMs},
         .tunnel_contract =
             {
                 .verify_cloned_session_lifetime = config::WgnxTunnelContractVerifyClonedSessionLifetime,
@@ -431,6 +444,9 @@ bool ValidateRuntimeConfig(const RuntimeConfig& config, std::string* error) {
         if (profile.udp_destination_port == 0) {
             return fail("profile UDP destination ports must be non-zero");
         }
+        if (profile.tcp_destination_port == 0) {
+            return fail("profile TCP destination ports must be non-zero");
+        }
     }
     const UdpScenarioConfig& udp = config.udp;
     if (udp.payload_bytes < MinimumPayloadBytes || udp.payload_bytes > wgnx::tunnel::MaximumUdpPayloadStorageBytes) {
@@ -444,6 +460,9 @@ bool ValidateRuntimeConfig(const RuntimeConfig& config, std::string* error) {
     }
     if (udp.concurrent_flows == 0 || udp.concurrent_flows > wgnx::tunnel::MaximumFlowsPerClient) {
         return fail("udp.concurrent_flows is outside the supported range");
+    }
+    if (config.tcp.receive_deadline_ms == 0 || config.tcp.receive_deadline_ms > MaximumDurationMs) {
+        return fail("tcp.receive_deadline_ms is outside the supported range");
     }
     if (config.scenario == RuntimeScenario::BsdSystemUdp) {
         if (config.bsd_system_udp.expected_outcome == BsdSystemUdpExpectedOutcome::NoReplyTimeout &&
@@ -485,6 +504,8 @@ const char* RuntimeScenarioName(RuntimeScenario scenario) {
         return "Direct tunnel UDP";
     case RuntimeScenario::BsdSystemUdp:
         return "BSD system UDP";
+    case RuntimeScenario::BsdSystemTcp:
+        return "BSD system TCP exchange";
     case RuntimeScenario::TunnelContractValidation:
         return "Tunnel contract validation";
     }
@@ -543,7 +564,9 @@ bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const ch
         "profiles.count=%zu\n",
         config.scenario == RuntimeScenario::DirectTunnelUdp
             ? "direct_tunnel_udp"
-            : (config.scenario == RuntimeScenario::BsdSystemUdp ? "bsd_system_udp" : "tunnel_contract_validation"),
+            : (config.scenario == RuntimeScenario::BsdSystemUdp
+                   ? "bsd_system_udp"
+                   : (config.scenario == RuntimeScenario::BsdSystemTcp ? "bsd_system_tcp" : "tunnel_contract_validation")),
         config.next_workload_id,
         config.active_profile,
         config.profiles.size()
@@ -555,7 +578,8 @@ bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const ch
             "profile.%zu.name=%s\n"
             "profile.%zu.tunnel_destination_ipv4=%s\n"
             "profile.%zu.bsd_destination_ipv4=%s\n"
-            "profile.%zu.udp_destination_port=%u\n",
+            "profile.%zu.udp_destination_port=%u\n"
+            "profile.%zu.tcp_destination_port=%u\n",
             index,
             profile.name.c_str(),
             index,
@@ -563,7 +587,9 @@ bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const ch
             index,
             profile.bsd_destination_ipv4.c_str(),
             index,
-            profile.udp_destination_port
+            profile.udp_destination_port,
+            index,
+            profile.tcp_destination_port
         );
     }
     std::fprintf(
@@ -575,6 +601,7 @@ bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const ch
         "udp.receive_deadline_ms=%u\n"
         "udp.payload_seed=%u\n"
         "udp.echo_replies=%s\n"
+        "tcp.receive_deadline_ms=%u\n"
         "tunnel_contract.verify_cloned_session_lifetime=%s\n"
         "tunnel_contract.verify_mixed_batch=%s\n"
         "bsd_system_udp.verify_post_route_rejection=%s\n"
@@ -587,6 +614,7 @@ bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const ch
         config.udp.receive_deadline_ms,
         config.udp.payload_seed,
         config.udp.echo_replies ? "true" : "false",
+        config.tcp.receive_deadline_ms,
         config.tunnel_contract.verify_cloned_session_lifetime ? "true" : "false",
         config.tunnel_contract.verify_mixed_batch ? "true" : "false",
         config.bsd_system_udp.verify_post_route_rejection ? "true" : "false",

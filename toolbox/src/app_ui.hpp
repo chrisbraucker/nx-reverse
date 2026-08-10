@@ -5,6 +5,6 @@
 
 namespace toolbox {
 
-int RunAppUi(AppContext& context, RuntimeConfig defaults, ConfigLoadReport loaded_config);
+int RunAppUi(AppContext& context, const RuntimeConfig& defaults, const ConfigLoadReport& loaded_config);
 
 } // namespace toolbox

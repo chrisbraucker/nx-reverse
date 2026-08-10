@@ -92,9 +92,9 @@ The application starts on a run page and does not create network traffic until `
 
 The Main page selects one runtime scenario and one target profile for each run.
 
-Profiles own the name, tunnel destination, BSD destination, and UDP destination port.
+Profiles own the name, tunnel destination, BSD destination, UDP destination port, and TCP destination port.
 
-The Settings page owns scenario behavior such as UDP traffic shape, BSD system checks, and tunnel contract checks.
+The Settings page owns scenario behavior such as UDP traffic shape, TCP deadline, BSD system checks, and tunnel contract checks.
 
 The legacy Scenarios page remains available for compiled diagnostics that are not yet runtime scenarios.
 
@@ -177,9 +177,10 @@ profile.0.name=Default
 profile.0.tunnel_destination_ipv4=10.1.0.2
 profile.0.bsd_destination_ipv4=10.1.0.2
 profile.0.udp_destination_port=29000
+profile.0.tcp_destination_port=28080
 ```
 
-Use `run.scenario=bsd_system_udp` for the BSD scenario or `run.scenario=tunnel_contract_validation` for the contract scenario.
+Use `run.scenario=bsd_system_udp` for the BSD UDP scenario, `run.scenario=bsd_system_tcp` for the BSD TCP exchange, or `run.scenario=tunnel_contract_validation` for the contract scenario.
 
 The active profile determines the destination used by the selected scenario.
 
@@ -195,6 +196,12 @@ udp.payload_seed=1314417238
 udp.echo_replies=true
 ```
 
+The TCP exchange uses the profile TCP destination port and a separate bounded receive deadline.
+
+```ini
+tcp.receive_deadline_ms=5000
+```
+
 The persisted BSD:S-specific settings are:
 
 ```ini
@@ -208,6 +215,20 @@ For the new timing records, it displays toolbox `submission_rate_mb_s` and harne
 `adapter_queued` records a successful BSD-to-MITM local FIFO admission, while `adapter_queue_full` records a BSD-visible `EAGAIN` before that admission.
 `queue_full` and WireGuard `send_queue_full` record later downstream staging pressure, which can occur after the BSD send has succeeded and is therefore not expected to equal toolbox retry count.
 The tool does not parse per-packet output and leaves raw logs authoritative.
+
+### BSD:S TCP Exchange
+
+Select `BSD system TCP exchange` on the Main page to connect to the active profile's BSD IPv4 address and TCP destination port.
+
+The scenario sends `NXRV TCP <workload-id>\r\n`, waits for readable input, validates the controlled harness reply `NXRV TCP ACK\r\n`, records both endpoint tuples, and closes the socket.
+
+It uses `BsdServiceType_System`, literal IPv4 addressing, complete-send handling, socket timeouts, and an explicit `poll(POLLIN)` wait.
+
+The controlled `requester_harness.py` already listens on TCP port `28080` and supplies the expected reply.
+
+Run a native BSD baseline before enabling the MITM path.
+
+The tunneled result only becomes meaningful once the MITM and WireGuard userspace IP adapter implement the TCP socket lifecycle.
 
 ### Contract Validation
 

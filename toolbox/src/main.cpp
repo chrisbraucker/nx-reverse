@@ -19,8 +19,8 @@ void LogDiagnostics(toolbox::AppContext& context, const toolbox::RuntimeConfig& 
     toolbox::logger::Log(
         context,
         "runtime_config source=%s path=%s scenario=%s profile=%s next_workload=%u "
-        "tunnel_destination=%s bsd_destination=%s udp_port=%u payload=%zu datagrams=%u pacing_ms=%u flows=%u deadline_ms=%u seed=%u "
-        "echo=%u",
+        "tunnel_destination=%s bsd_destination=%s udp_port=%u tcp_port=%u payload=%zu datagrams=%u pacing_ms=%u flows=%u "
+        "udp_deadline_ms=%u tcp_deadline_ms=%u seed=%u echo=%u",
         report.loaded_from_file ? "file" : "compiled_defaults",
         toolbox::RuntimeConfigPath,
         toolbox::RuntimeScenarioName(config.scenario),
@@ -29,11 +29,13 @@ void LogDiagnostics(toolbox::AppContext& context, const toolbox::RuntimeConfig& 
         profile == nullptr ? "" : profile->tunnel_destination_ipv4.c_str(),
         profile == nullptr ? "" : profile->bsd_destination_ipv4.c_str(),
         profile == nullptr ? 0 : profile->udp_destination_port,
+        profile == nullptr ? 0 : profile->tcp_destination_port,
         config.udp.payload_bytes,
         config.udp.datagram_count,
         config.udp.pacing_ms,
         config.udp.concurrent_flows,
         config.udp.receive_deadline_ms,
+        config.tcp.receive_deadline_ms,
         config.udp.payload_seed,
         static_cast<unsigned>(config.udp.echo_replies)
     );
@@ -64,7 +66,7 @@ int main(int argc, char** argv) {
     toolbox::ConfigLoadReport loaded_config = toolbox::LoadRuntimeConfig(defaults);
     LogDiagnostics(context, loaded_config.config, loaded_config);
 
-    const int rc = toolbox::RunAppUi(context, defaults, std::move(loaded_config));
+    const int rc = toolbox::RunAppUi(context, defaults, loaded_config);
     toolbox::logger::Log(context, "toolbox exit rc=%d", rc);
     toolbox::logger::CloseLog(context);
     toolbox::logger::Bootstrap("main: exit rc=%d", rc);

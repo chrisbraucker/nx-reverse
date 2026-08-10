@@ -62,6 +62,8 @@ constexpr bool EnableScenarioBsdSystemUdpWorkload = false;
 constexpr bool BsdSystemUdpVerifyPostRouteRejection = false;
 constexpr char BsdSystemUdpExpectedOutcome[] = "echo";
 constexpr bool BsdSystemUdpRequireWritableRecovery = false;
+constexpr std::uint16_t BsdSystemTcpDestinationPort = 28080;
+constexpr std::uint32_t BsdSystemTcpReceiveDeadlineMs = 5000;
 
 /* Direct inner-packet test through the experimental wgnx:ctl API. */
 constexpr char WgnxTunnelSourceIpv4[] = "10.0.0.2";

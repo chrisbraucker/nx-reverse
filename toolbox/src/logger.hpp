@@ -24,7 +24,5 @@ std::vector<std::string> RecentLines(std::size_t maximum_line_count = 0);
 #if TOOLBOX_PACKET_DIAGNOSTICS
 #define TOOLBOX_LOG_PACKET(context, ...) ::toolbox::logger::Log((context), __VA_ARGS__)
 #else
-#define TOOLBOX_LOG_PACKET(context, ...)                                                                                                      \
-    do {                                                                                                                                      \
-    } while (false)
+#define TOOLBOX_LOG_PACKET(context, ...) static_cast<void>(0)
 #endif

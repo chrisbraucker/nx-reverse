@@ -14,6 +14,7 @@
 #include <borealis/core/touch/scroll_gesture.hpp>
 
 #include "bsd_system_udp_scenario.hpp"
+#include "bsd_system_tcp_scenario.hpp"
 #include "logger.hpp"
 #include "nxrv/build_info.hpp"
 #include "runtime_config.hpp"
@@ -89,17 +90,20 @@ std::string FormatRuntimeConfig(const RuntimeConfig& config) {
     if (profile == nullptr) {
         return "No active profile";
     }
-    const std::string destination =
-        config.scenario == RuntimeScenario::BsdSystemUdp ? profile->bsd_destination_ipv4 : profile->tunnel_destination_ipv4;
-    return "dest " + destination + ":" + std::to_string(profile->udp_destination_port) + " | payload " +
-           std::to_string(config.udp.payload_bytes) + " B | datagrams " + std::to_string(config.udp.datagram_count) + " | flows " +
-           std::to_string(config.udp.concurrent_flows) + " | next ID " + std::to_string(config.next_workload_id);
+    const bool bsd_scenario = config.scenario == RuntimeScenario::BsdSystemUdp || config.scenario == RuntimeScenario::BsdSystemTcp;
+    const std::string destination = bsd_scenario ? profile->bsd_destination_ipv4 : profile->tunnel_destination_ipv4;
+    const std::uint16_t port =
+        config.scenario == RuntimeScenario::BsdSystemTcp ? profile->tcp_destination_port : profile->udp_destination_port;
+    return "dest " + destination + ":" + std::to_string(port) + " | payload " + std::to_string(config.udp.payload_bytes) +
+           " B | datagrams " + std::to_string(config.udp.datagram_count) + " | flows " + std::to_string(config.udp.concurrent_flows) +
+           " | next ID " + std::to_string(config.next_workload_id);
 }
 
 std::vector<std::string> RuntimeScenarioNames() {
     return {
         RuntimeScenarioName(RuntimeScenario::DirectTunnelUdp),
         RuntimeScenarioName(RuntimeScenario::BsdSystemUdp),
+        RuntimeScenarioName(RuntimeScenario::BsdSystemTcp),
         RuntimeScenarioName(RuntimeScenario::TunnelContractValidation),
     };
 }
@@ -110,8 +114,10 @@ int RuntimeScenarioIndex(RuntimeScenario scenario) {
         return 0;
     case RuntimeScenario::BsdSystemUdp:
         return 1;
-    case RuntimeScenario::TunnelContractValidation:
+    case RuntimeScenario::BsdSystemTcp:
         return 2;
+    case RuntimeScenario::TunnelContractValidation:
+        return 3;
     }
     return 0;
 }
@@ -121,6 +127,8 @@ RuntimeScenario RuntimeScenarioAt(int index) {
     case 1:
         return RuntimeScenario::BsdSystemUdp;
     case 2:
+        return RuntimeScenario::BsdSystemTcp;
+    case 3:
         return RuntimeScenario::TunnelContractValidation;
     default:
         return RuntimeScenario::DirectTunnelUdp;
@@ -359,6 +367,10 @@ class SettingsPage final : public brls::ScrollingFrame {
         );
         echo_replies_ = AddBoolean(content, "Echo replies", &model_->config.udp.echo_replies);
 
+        AddHeader(content, "TCP Behavior", "Configure the bounded receive wait for the TCP exchange scenario.", SettingsSectionGap);
+        tcp_receive_deadline_ms_ =
+            AddU32(content, "Receive deadline milliseconds", &model_->config.tcp.receive_deadline_ms, 60000, "tcp.receive_deadline_ms");
+
         AddHeader(content, "BSD System Behavior", "Checks used by the BSD system scenario.", SettingsSectionGap);
         verify_bsd_post_route_rejection_ =
             AddBoolean(content, "Verify tunneled socket option rejection", &model_->config.bsd_system_udp.verify_post_route_rejection);
@@ -464,6 +476,7 @@ class SettingsPage final : public brls::ScrollingFrame {
         receive_deadline_ms_->setValue(static_cast<long>(model_->config.udp.receive_deadline_ms));
         payload_seed_->setValue(static_cast<long>(model_->config.udp.payload_seed));
         echo_replies_->setOn(model_->config.udp.echo_replies, false);
+        tcp_receive_deadline_ms_->setValue(static_cast<long>(model_->config.tcp.receive_deadline_ms));
         verify_bsd_post_route_rejection_->setOn(model_->config.bsd_system_udp.verify_post_route_rejection, false);
         expected_bsd_outcome_->setSelection(BsdExpectedOutcomeIndex(model_->config.bsd_system_udp.expected_outcome), true);
         require_bsd_writable_recovery_->setOn(model_->config.bsd_system_udp.require_writable_recovery, false);
@@ -480,6 +493,7 @@ class SettingsPage final : public brls::ScrollingFrame {
     brls::InputNumericCell* receive_deadline_ms_{};
     brls::InputNumericCell* payload_seed_{};
     brls::BooleanCell* echo_replies_{};
+    brls::InputNumericCell* tcp_receive_deadline_ms_{};
     brls::BooleanCell* verify_bsd_post_route_rejection_{};
     brls::SelectorCell* expected_bsd_outcome_{};
     brls::BooleanCell* require_bsd_writable_recovery_{};
@@ -512,27 +526,27 @@ class ProfilesPage final : public brls::ScrollingFrame {
             }
         );
         content->addView(selector_);
-        name_ = AddText(content, "Profile name", "Profile name", 32, [this](std::string next) {
+        name_ = AddText(content, "Profile name", "Profile name", 32, [this](const std::string& next) {
             if (RuntimeProfile* profile = ActiveRuntimeProfile(&model_->config)) {
-                profile->name = std::move(next);
+                profile->name = next;
                 selector_->setData(RuntimeProfileNames(model_->config));
                 RefreshMainPage(model_);
             }
         });
-        tunnel_destination_ = AddText(content, "Tunnel destination IPv4", "IPv4 address", 15, [this](std::string next) {
+        tunnel_destination_ = AddText(content, "Tunnel destination IPv4", "IPv4 address", 15, [this](const std::string& next) {
             if (RuntimeProfile* profile = ActiveRuntimeProfile(&model_->config)) {
-                profile->tunnel_destination_ipv4 = std::move(next);
+                profile->tunnel_destination_ipv4 = next;
                 RefreshMainPage(model_);
             }
         });
-        bsd_destination_ = AddText(content, "BSD destination IPv4", "IPv4 address", 15, [this](std::string next) {
+        bsd_destination_ = AddText(content, "BSD destination IPv4", "IPv4 address", 15, [this](const std::string& next) {
             if (RuntimeProfile* profile = ActiveRuntimeProfile(&model_->config)) {
-                profile->bsd_destination_ipv4 = std::move(next);
+                profile->bsd_destination_ipv4 = next;
                 RefreshMainPage(model_);
             }
         });
-        port_ = new brls::InputNumericCell();
-        port_->init(
+        udp_port_ = new brls::InputNumericCell();
+        udp_port_->init(
             "UDP destination port",
             0,
             [this](long next) {
@@ -550,7 +564,27 @@ class ProfilesPage final : public brls::ScrollingFrame {
             "Unsigned integer",
             5
         );
-        content->addView(port_);
+        content->addView(udp_port_);
+        tcp_port_ = new brls::InputNumericCell();
+        tcp_port_->init(
+            "TCP destination port",
+            0,
+            [this](long next) {
+                if (RuntimeProfile* profile = ActiveRuntimeProfile(&model_->config)) {
+                    AssignUnsigned(
+                        next,
+                        &profile->tcp_destination_port,
+                        std::numeric_limits<std::uint16_t>::max(),
+                        "profile.tcp_destination_port",
+                        *model_->context
+                    );
+                    RefreshMainPage(model_);
+                }
+            },
+            "Unsigned integer",
+            5
+        );
+        content->addView(tcp_port_);
 
         auto* actions = new brls::Box(brls::Axis::ROW);
         actions->setWidthPercentage(100.0F);
@@ -601,7 +635,8 @@ class ProfilesPage final : public brls::ScrollingFrame {
         name_->setValue(profile->name);
         tunnel_destination_->setValue(profile->tunnel_destination_ipv4);
         bsd_destination_->setValue(profile->bsd_destination_ipv4);
-        port_->setValue(profile->udp_destination_port);
+        udp_port_->setValue(profile->udp_destination_port);
+        tcp_port_->setValue(profile->tcp_destination_port);
     }
 
     std::shared_ptr<UiModel> model_;
@@ -609,7 +644,8 @@ class ProfilesPage final : public brls::ScrollingFrame {
     brls::InputCell* name_{};
     brls::InputCell* tunnel_destination_{};
     brls::InputCell* bsd_destination_{};
-    brls::InputNumericCell* port_{};
+    brls::InputNumericCell* udp_port_{};
+    brls::InputNumericCell* tcp_port_{};
 };
 
 class MainPage final : public brls::Box {
@@ -770,6 +806,13 @@ class MainPage final : public brls::Box {
             case RuntimeScenario::BsdSystemUdp:
                 result = RunBsdSystemUdpWorkload(*context, workload, runtime_config.bsd_system_udp);
                 break;
+            case RuntimeScenario::BsdSystemTcp: {
+                const RuntimeProfile* const active_profile = ActiveRuntimeProfile(runtime_config);
+                result = active_profile == nullptr
+                             ? ScenarioResult{.name = "bsd_system_tcp_exchange", .detail = "active profile disappeared"}
+                             : RunBsdSystemTcpExchange(*context, *active_profile, workload.workload_id, runtime_config.tcp);
+                break;
+            }
             case RuntimeScenario::TunnelContractValidation:
                 result = RunWgnxTunnelContractValidation(*context, workload, runtime_config.tunnel_contract);
                 break;
@@ -1066,12 +1109,12 @@ class AppActivity final : public brls::Activity {
 
 } // namespace
 
-int RunAppUi(AppContext& context, RuntimeConfig defaults, ConfigLoadReport loaded_config) {
+int RunAppUi(AppContext& context, const RuntimeConfig& defaults, const ConfigLoadReport& loaded_config) {
     auto model = std::make_shared<UiModel>();
     model->context = &context;
-    model->defaults = std::move(defaults);
+    model->defaults = defaults;
     model->configuration_source = loaded_config.loaded_from_file ? "sdmc config" : "compiled defaults";
-    model->config = std::move(loaded_config.config);
+    model->config = loaded_config.config;
 
     logger::SetUiSink([model](const std::string&) { brls::sync([model] { RefreshLogViews(model); }); });
 

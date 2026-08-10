@@ -36,6 +36,7 @@ struct BsdSystemUdpWorkloadConfig {
 enum class RuntimeScenario : std::uint8_t {
     DirectTunnelUdp,
     BsdSystemUdp,
+    BsdSystemTcp,
     TunnelContractValidation,
 };
 
@@ -44,6 +45,7 @@ struct RuntimeProfile {
     std::string tunnel_destination_ipv4;
     std::string bsd_destination_ipv4;
     std::uint16_t udp_destination_port{};
+    std::uint16_t tcp_destination_port{};
 };
 
 struct UdpScenarioConfig {
@@ -56,12 +58,17 @@ struct UdpScenarioConfig {
     bool echo_replies{true};
 };
 
+struct TcpScenarioConfig {
+    std::uint32_t receive_deadline_ms{};
+};
+
 struct RuntimeConfig {
     RuntimeScenario scenario{RuntimeScenario::DirectTunnelUdp};
     std::uint32_t next_workload_id{};
     std::size_t active_profile{};
     std::vector<RuntimeProfile> profiles;
     UdpScenarioConfig udp;
+    TcpScenarioConfig tcp;
     TunnelContractValidationConfig tunnel_contract;
     BsdSystemUdpWorkloadConfig bsd_system_udp;
 };
