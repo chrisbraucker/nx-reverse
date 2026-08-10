@@ -20,6 +20,8 @@ namespace toolbox {
 namespace {
 
 constexpr std::size_t MinimumPayloadBytes = 24;
+constexpr std::size_t MaximumProfiles = 8;
+constexpr std::size_t MaximumProfileNameLength = 32;
 constexpr std::uint32_t MaximumDatagramCount = 4096;
 constexpr std::uint32_t MaximumDurationMs = 60000;
 
@@ -78,20 +80,11 @@ bool IsValidIpv4(std::string_view text) {
     return offset == text.size() + 1;
 }
 
-bool HasSingleUdpDataPath(const RuntimeConfig& config) {
-    return config.tunnel_udp.enabled != config.bsd_system_udp.enabled;
-}
-
-void RestoreDefaultUdpDataPath(const RuntimeConfig& defaults, RuntimeConfig* config) {
-    config->tunnel_udp.enabled = defaults.tunnel_udp.enabled;
-    config->bsd_system_udp.enabled = defaults.bsd_system_udp.enabled;
-}
-
 bool EnsureDirectory(const char* path) {
     return mkdir(path, 0777) == 0 || errno == EEXIST;
 }
 
-bool ParseBsdSystemUdpExpectedOutcome(const std::string_view value, BsdSystemUdpExpectedOutcome* const expected_outcome) {
+bool ParseBsdSystemUdpExpectedOutcome(std::string_view value, BsdSystemUdpExpectedOutcome* expected_outcome) {
     if (value == "echo") {
         *expected_outcome = BsdSystemUdpExpectedOutcome::EchoReply;
         return true;
@@ -107,131 +100,207 @@ bool ParseBsdSystemUdpExpectedOutcome(const std::string_view value, BsdSystemUdp
     return false;
 }
 
-void ResetToDefault(const RuntimeConfig& defaults, RuntimeConfig* config, std::string_view key) {
-    if (key == "tunnel_udp.enabled") {
-        config->tunnel_udp.enabled = defaults.tunnel_udp.enabled;
-    } else if (key == "tunnel_udp.destination_ipv4") {
-        config->tunnel_udp.destination_ipv4 = defaults.tunnel_udp.destination_ipv4;
-    } else if (key == "tunnel_udp.destination_port") {
-        config->tunnel_udp.destination_port = defaults.tunnel_udp.destination_port;
-    } else if (key == "tunnel_udp.workload_id") {
-        config->tunnel_udp.workload_id = defaults.tunnel_udp.workload_id;
-    } else if (key == "tunnel_udp.payload_bytes") {
-        config->tunnel_udp.payload_bytes = defaults.tunnel_udp.payload_bytes;
-    } else if (key == "tunnel_udp.datagram_count") {
-        config->tunnel_udp.datagram_count = defaults.tunnel_udp.datagram_count;
-    } else if (key == "tunnel_udp.pacing_ms") {
-        config->tunnel_udp.pacing_ms = defaults.tunnel_udp.pacing_ms;
-    } else if (key == "tunnel_udp.concurrent_flows") {
-        config->tunnel_udp.concurrent_flows = defaults.tunnel_udp.concurrent_flows;
-    } else if (key == "tunnel_udp.receive_deadline_ms") {
-        config->tunnel_udp.receive_deadline_ms = defaults.tunnel_udp.receive_deadline_ms;
-    } else if (key == "tunnel_udp.payload_seed") {
-        config->tunnel_udp.payload_seed = defaults.tunnel_udp.payload_seed;
-    } else if (key == "tunnel_udp.echo_replies") {
-        config->tunnel_udp.echo_replies = defaults.tunnel_udp.echo_replies;
-    } else if (key == "tunnel_contract.enabled") {
-        config->tunnel_contract.enabled = defaults.tunnel_contract.enabled;
-    } else if (key == "tunnel_contract.verify_cloned_session_lifetime") {
-        config->tunnel_contract.verify_cloned_session_lifetime = defaults.tunnel_contract.verify_cloned_session_lifetime;
-    } else if (key == "tunnel_contract.verify_mixed_batch") {
-        config->tunnel_contract.verify_mixed_batch = defaults.tunnel_contract.verify_mixed_batch;
-    } else if (key == "bsd_system_udp.enabled") {
-        config->bsd_system_udp.enabled = defaults.bsd_system_udp.enabled;
-    } else if (key == "bsd_system_udp.verify_post_route_rejection") {
-        config->bsd_system_udp.verify_post_route_rejection = defaults.bsd_system_udp.verify_post_route_rejection;
-    } else if (key == "bsd_system_udp.expected_outcome") {
-        config->bsd_system_udp.expected_outcome = defaults.bsd_system_udp.expected_outcome;
-    } else if (key == "bsd_system_udp.require_writable_recovery") {
-        config->bsd_system_udp.require_writable_recovery = defaults.bsd_system_udp.require_writable_recovery;
+bool ParseRuntimeScenario(std::string_view value, RuntimeScenario* scenario) {
+    if (value == "direct_tunnel_udp") {
+        *scenario = RuntimeScenario::DirectTunnelUdp;
+        return true;
     }
+    if (value == "bsd_system_udp") {
+        *scenario = RuntimeScenario::BsdSystemUdp;
+        return true;
+    }
+    if (value == "tunnel_contract_validation") {
+        *scenario = RuntimeScenario::TunnelContractValidation;
+        return true;
+    }
+    return false;
 }
 
-bool ApplySetting(const RuntimeConfig& defaults, RuntimeConfig* config, std::string_view key, std::string_view value, std::string* error) {
-    auto invalid = [&] {
-        ResetToDefault(defaults, config, key);
-        *error = "invalid value for " + std::string(key) + "; using compiled default";
+bool ParseProfileKey(std::string_view key, std::size_t* index, std::string_view* field) {
+    constexpr std::string_view Prefix = "profile.";
+    if (!key.starts_with(Prefix)) {
         return false;
-    };
+    }
+    const std::string_view remainder = key.substr(Prefix.size());
+    const std::size_t separator = remainder.find('.');
+    if (separator == std::string_view::npos || !ParseUnsigned(remainder.substr(0, separator), index)) {
+        return false;
+    }
+    *field = remainder.substr(separator + 1);
+    return true;
+}
 
+bool ApplyLegacySetting(RuntimeConfig* config, std::string_view key, std::string_view value) {
+    RuntimeProfile* profile = ActiveRuntimeProfile(config);
+    if (profile == nullptr) {
+        return false;
+    }
     if (key == "tunnel_udp.enabled") {
-        return ParseBool(value, &config->tunnel_udp.enabled) || invalid();
+        bool enabled{};
+        if (!ParseBool(value, &enabled)) {
+            return false;
+        }
+        if (enabled) {
+            config->scenario = RuntimeScenario::DirectTunnelUdp;
+        }
+        return true;
+    }
+    if (key == "bsd_system_udp.enabled") {
+        bool enabled{};
+        if (!ParseBool(value, &enabled)) {
+            return false;
+        }
+        if (enabled) {
+            config->scenario = RuntimeScenario::BsdSystemUdp;
+        }
+        return true;
+    }
+    if (key == "tunnel_contract.enabled") {
+        bool enabled{};
+        if (!ParseBool(value, &enabled)) {
+            return false;
+        }
+        if (enabled) {
+            config->scenario = RuntimeScenario::TunnelContractValidation;
+        }
+        return true;
     }
     if (key == "tunnel_udp.destination_ipv4") {
         if (!IsValidIpv4(value)) {
-            return invalid();
+            return false;
         }
-        config->tunnel_udp.destination_ipv4 = value;
+        profile->tunnel_destination_ipv4 = value;
+        profile->bsd_destination_ipv4 = value;
         return true;
     }
     if (key == "tunnel_udp.destination_port") {
-        std::uint16_t parsed{};
-        if (!ParseUnsigned(value, &parsed) || parsed == 0) {
-            return invalid();
-        }
-        config->tunnel_udp.destination_port = parsed;
-        return true;
+        return ParseUnsigned(value, &profile->udp_destination_port) && profile->udp_destination_port != 0;
     }
     if (key == "tunnel_udp.workload_id") {
-        return ParseUnsigned(value, &config->tunnel_udp.workload_id) || invalid();
+        return ParseUnsigned(value, &config->next_workload_id);
     }
     if (key == "tunnel_udp.payload_bytes") {
-        std::size_t parsed{};
-        if (!ParseUnsigned(value, &parsed) || parsed < MinimumPayloadBytes || parsed > wgnx::tunnel::MaximumUdpPayloadStorageBytes) {
-            return invalid();
-        }
-        config->tunnel_udp.payload_bytes = parsed;
-        return true;
+        return ParseUnsigned(value, &config->udp.payload_bytes);
     }
     if (key == "tunnel_udp.datagram_count") {
-        std::uint32_t parsed{};
-        if (!ParseUnsigned(value, &parsed) || parsed == 0 || parsed > MaximumDatagramCount) {
-            return invalid();
-        }
-        config->tunnel_udp.datagram_count = parsed;
-        return true;
+        return ParseUnsigned(value, &config->udp.datagram_count);
     }
     if (key == "tunnel_udp.pacing_ms") {
-        std::uint32_t parsed{};
-        if (!ParseUnsigned(value, &parsed) || parsed > MaximumDurationMs) {
-            return invalid();
-        }
-        config->tunnel_udp.pacing_ms = parsed;
-        return true;
+        return ParseUnsigned(value, &config->udp.pacing_ms);
     }
     if (key == "tunnel_udp.concurrent_flows") {
-        std::uint32_t parsed{};
-        if (!ParseUnsigned(value, &parsed) || parsed == 0 || parsed > wgnx::tunnel::MaximumFlowsPerClient) {
-            return invalid();
-        }
-        config->tunnel_udp.concurrent_flows = parsed;
-        return true;
+        return ParseUnsigned(value, &config->udp.concurrent_flows);
     }
     if (key == "tunnel_udp.receive_deadline_ms") {
-        std::uint32_t parsed{};
-        if (!ParseUnsigned(value, &parsed) || parsed == 0 || parsed > MaximumDurationMs) {
-            return invalid();
-        }
-        config->tunnel_udp.receive_deadline_ms = parsed;
-        return true;
+        return ParseUnsigned(value, &config->udp.receive_deadline_ms);
     }
     if (key == "tunnel_udp.payload_seed") {
-        return ParseUnsigned(value, &config->tunnel_udp.payload_seed) || invalid();
+        return ParseUnsigned(value, &config->udp.payload_seed);
     }
     if (key == "tunnel_udp.echo_replies") {
-        return ParseBool(value, &config->tunnel_udp.echo_replies) || invalid();
+        return ParseBool(value, &config->udp.echo_replies);
     }
-    if (key == "tunnel_contract.enabled") {
-        return ParseBool(value, &config->tunnel_contract.enabled) || invalid();
+    if (key == "tunnel_contract.verify_cloned_session_lifetime") {
+        return ParseBool(value, &config->tunnel_contract.verify_cloned_session_lifetime);
+    }
+    if (key == "tunnel_contract.verify_mixed_batch") {
+        return ParseBool(value, &config->tunnel_contract.verify_mixed_batch);
+    }
+    if (key == "bsd_system_udp.verify_post_route_rejection") {
+        return ParseBool(value, &config->bsd_system_udp.verify_post_route_rejection);
+    }
+    if (key == "bsd_system_udp.expected_outcome") {
+        return ParseBsdSystemUdpExpectedOutcome(value, &config->bsd_system_udp.expected_outcome);
+    }
+    if (key == "bsd_system_udp.require_writable_recovery") {
+        return ParseBool(value, &config->bsd_system_udp.require_writable_recovery);
+    }
+    return false;
+}
+
+bool ApplySetting(RuntimeConfig* config, std::string_view key, std::string_view value, bool* migrated_legacy, std::string* error) {
+    auto invalid = [&] {
+        *error = "invalid value for " + std::string(key);
+        return false;
+    };
+
+    if (key == "run.scenario") {
+        return ParseRuntimeScenario(value, &config->scenario) || invalid();
+    }
+    if (key == "run.next_workload_id") {
+        return ParseUnsigned(value, &config->next_workload_id) || invalid();
+    }
+    if (key == "run.active_profile") {
+        return ParseUnsigned(value, &config->active_profile) || invalid();
+    }
+    if (key == "profiles.count") {
+        std::size_t count{};
+        if (!ParseUnsigned(value, &count) || count == 0 || count > MaximumProfiles) {
+            return invalid();
+        }
+        config->profiles.resize(count);
+        return true;
+    }
+    std::size_t profile_index{};
+    std::string_view profile_field;
+    if (ParseProfileKey(key, &profile_index, &profile_field)) {
+        if (profile_index >= config->profiles.size()) {
+            return invalid();
+        }
+        RuntimeProfile& profile = config->profiles[profile_index];
+        if (profile_field == "name") {
+            if (value.size() > MaximumProfileNameLength) {
+                return invalid();
+            }
+            profile.name = value;
+            return true;
+        }
+        if (profile_field == "tunnel_destination_ipv4") {
+            if (!IsValidIpv4(value)) {
+                return invalid();
+            }
+            profile.tunnel_destination_ipv4 = value;
+            return true;
+        }
+        if (profile_field == "bsd_destination_ipv4") {
+            if (!IsValidIpv4(value)) {
+                return invalid();
+            }
+            profile.bsd_destination_ipv4 = value;
+            return true;
+        }
+        if (profile_field == "udp_destination_port") {
+            return (ParseUnsigned(value, &profile.udp_destination_port) && profile.udp_destination_port != 0) || invalid();
+        }
+        *error = "unrecognized profile setting " + std::string(key);
+        return false;
+    }
+    if (key == "udp.payload_bytes") {
+        return ParseUnsigned(value, &config->udp.payload_bytes) || invalid();
+    }
+    if (key == "udp.datagram_count") {
+        return ParseUnsigned(value, &config->udp.datagram_count) || invalid();
+    }
+    if (key == "udp.pacing_ms") {
+        return ParseUnsigned(value, &config->udp.pacing_ms) || invalid();
+    }
+    if (key == "udp.concurrent_flows") {
+        return ParseUnsigned(value, &config->udp.concurrent_flows) || invalid();
+    }
+    if (key == "udp.receive_deadline_ms") {
+        return ParseUnsigned(value, &config->udp.receive_deadline_ms) || invalid();
+    }
+    if (key == "udp.payload_seed") {
+        return ParseUnsigned(value, &config->udp.payload_seed) || invalid();
+    }
+    if (key == "udp.echo_replies") {
+        return ParseBool(value, &config->udp.echo_replies) || invalid();
     }
     if (key == "tunnel_contract.verify_cloned_session_lifetime") {
         return ParseBool(value, &config->tunnel_contract.verify_cloned_session_lifetime) || invalid();
     }
     if (key == "tunnel_contract.verify_mixed_batch") {
         return ParseBool(value, &config->tunnel_contract.verify_mixed_batch) || invalid();
-    }
-    if (key == "bsd_system_udp.enabled") {
-        return ParseBool(value, &config->bsd_system_udp.enabled) || invalid();
     }
     if (key == "bsd_system_udp.verify_post_route_rejection") {
         return ParseBool(value, &config->bsd_system_udp.verify_post_route_rejection) || invalid();
@@ -242,6 +311,10 @@ bool ApplySetting(const RuntimeConfig& defaults, RuntimeConfig* config, std::str
     if (key == "bsd_system_udp.require_writable_recovery") {
         return ParseBool(value, &config->bsd_system_udp.require_writable_recovery) || invalid();
     }
+    if (ApplyLegacySetting(config, key, value)) {
+        *migrated_legacy = true;
+        return true;
+    }
     *error = "unrecognized configuration key " + std::string(key);
     return false;
 }
@@ -251,13 +324,24 @@ bool ApplySetting(const RuntimeConfig& defaults, RuntimeConfig* config, std::str
 RuntimeConfig CompiledRuntimeDefaults() {
     BsdSystemUdpExpectedOutcome bsd_expected_outcome{};
     static_cast<void>(ParseBsdSystemUdpExpectedOutcome(config::BsdSystemUdpExpectedOutcome, &bsd_expected_outcome));
+    RuntimeScenario scenario = RuntimeScenario::DirectTunnelUdp;
+    if (config::EnableScenarioBsdSystemUdpWorkload) {
+        scenario = RuntimeScenario::BsdSystemUdp;
+    } else if (config::EnableScenarioWgnxTunnelContractValidation) {
+        scenario = RuntimeScenario::TunnelContractValidation;
+    }
     return {
-        .tunnel_udp =
+        .scenario = scenario,
+        .next_workload_id = config::WgnxTunnelWorkloadId,
+        .active_profile = 0,
+        .profiles = {{
+            .name = "Default",
+            .tunnel_destination_ipv4 = config::WgnxTunnelDestinationIpv4,
+            .bsd_destination_ipv4 = config::WgnxTunnelDestinationIpv4,
+            .udp_destination_port = config::WgnxTunnelDestinationPort,
+        }},
+        .udp =
             {
-                .enabled = config::EnableScenarioWgnxTunnelUdpWorkload,
-                .destination_ipv4 = config::WgnxTunnelDestinationIpv4,
-                .destination_port = config::WgnxTunnelDestinationPort,
-                .workload_id = config::WgnxTunnelWorkloadId,
                 .payload_bytes = config::WgnxTunnelPayloadBytes,
                 .datagram_count = config::WgnxTunnelDatagramCount,
                 .pacing_ms = config::WgnxTunnelPacingMs,
@@ -268,12 +352,10 @@ RuntimeConfig CompiledRuntimeDefaults() {
             },
         .tunnel_contract =
             {
-                .enabled = config::EnableScenarioWgnxTunnelContractValidation,
                 .verify_cloned_session_lifetime = config::WgnxTunnelContractVerifyClonedSessionLifetime,
                 .verify_mixed_batch = config::WgnxTunnelContractVerifyMixedBatch,
             },
         .bsd_system_udp = {
-            .enabled = config::EnableScenarioBsdSystemUdpWorkload,
             .verify_post_route_rejection = config::BsdSystemUdpVerifyPostRouteRejection,
             .expected_outcome = bsd_expected_outcome,
             .require_writable_recovery = config::BsdSystemUdpRequireWritableRecovery,
@@ -292,6 +374,7 @@ ConfigLoadReport LoadRuntimeConfig(const RuntimeConfig& defaults, const char* pa
     }
 
     report.loaded_from_file = true;
+    bool migrated_legacy = false;
     char line[512];
     std::size_t line_number = 0;
     while (std::fgets(line, sizeof(line), file) != nullptr) {
@@ -312,14 +395,18 @@ ConfigLoadReport LoadRuntimeConfig(const RuntimeConfig& defaults, const char* pa
             continue;
         }
         std::string error;
-        if (!ApplySetting(defaults, &report.config, key, value, &error)) {
+        if (!ApplySetting(&report.config, key, value, &migrated_legacy, &error)) {
             report.diagnostics.push_back("configuration line " + std::to_string(line_number) + ": " + error);
         }
     }
     std::fclose(file);
-    if (!HasSingleUdpDataPath(report.config)) {
-        RestoreDefaultUdpDataPath(defaults, &report.config);
-        report.diagnostics.push_back("UDP data path is ambiguous; using compiled defaults");
+    if (migrated_legacy) {
+        report.diagnostics.push_back("legacy runtime configuration loaded; save to rewrite it as profiles and scenario settings");
+    }
+    std::string validation_error;
+    if (!ValidateRuntimeConfig(report.config, &validation_error)) {
+        report.config = defaults;
+        report.diagnostics.push_back("configuration is invalid; using compiled defaults: " + validation_error);
     }
     return report;
 }
@@ -331,52 +418,47 @@ bool ValidateRuntimeConfig(const RuntimeConfig& config, std::string* error) {
         }
         return false;
     };
-    const auto& tunnel = config.tunnel_udp;
-    if (!HasSingleUdpDataPath(config)) {
-        return fail("exactly one UDP data path must be selected");
+    if (config.profiles.empty() || config.profiles.size() > MaximumProfiles || config.active_profile >= config.profiles.size()) {
+        return fail("an active profile must be selected");
     }
-    if (config.bsd_system_udp.verify_post_route_rejection && !config.bsd_system_udp.enabled) {
-        return fail("bsd_system_udp rejection validation requires the bsd:s path");
+    for (const RuntimeProfile& profile : config.profiles) {
+        if (profile.name.empty() || profile.name.size() > MaximumProfileNameLength) {
+            return fail("profile names must be between one and 32 characters");
+        }
+        if (!IsValidIpv4(profile.tunnel_destination_ipv4) || !IsValidIpv4(profile.bsd_destination_ipv4)) {
+            return fail("profile destinations must be IPv4 addresses");
+        }
+        if (profile.udp_destination_port == 0) {
+            return fail("profile UDP destination ports must be non-zero");
+        }
     }
-    if (config.bsd_system_udp.require_writable_recovery && !config.bsd_system_udp.enabled) {
-        return fail("bsd_system_udp writable recovery requires the bsd:s path");
+    const UdpScenarioConfig& udp = config.udp;
+    if (udp.payload_bytes < MinimumPayloadBytes || udp.payload_bytes > wgnx::tunnel::MaximumUdpPayloadStorageBytes) {
+        return fail("udp.payload_bytes is outside the supported range");
     }
-    if (config.bsd_system_udp.expected_outcome != BsdSystemUdpExpectedOutcome::EchoReply && !config.bsd_system_udp.enabled) {
-        return fail("bsd_system_udp expected outcome requires the bsd:s path");
+    if (udp.datagram_count == 0 || udp.datagram_count > MaximumDatagramCount) {
+        return fail("udp.datagram_count is outside the supported range");
     }
-    if (!IsValidIpv4(tunnel.destination_ipv4)) {
-        return fail("tunnel_udp.destination_ipv4 must be an IPv4 address");
+    if (udp.pacing_ms > MaximumDurationMs || udp.receive_deadline_ms == 0 || udp.receive_deadline_ms > MaximumDurationMs) {
+        return fail("udp timeout is outside the supported range");
     }
-    if (tunnel.destination_port == 0) {
-        return fail("tunnel_udp.destination_port must be non-zero");
+    if (udp.concurrent_flows == 0 || udp.concurrent_flows > wgnx::tunnel::MaximumFlowsPerClient) {
+        return fail("udp.concurrent_flows is outside the supported range");
     }
-    if (tunnel.payload_bytes < MinimumPayloadBytes || tunnel.payload_bytes > wgnx::tunnel::MaximumUdpPayloadStorageBytes) {
-        return fail("tunnel_udp.payload_bytes is outside the supported range");
+    if (config.scenario == RuntimeScenario::BsdSystemUdp) {
+        if (config.bsd_system_udp.expected_outcome == BsdSystemUdpExpectedOutcome::NoReplyTimeout &&
+            (udp.echo_replies || udp.datagram_count != 1 || udp.concurrent_flows != 1)) {
+            return fail("BSD no-reply timeout requires no echo, one datagram, and one flow");
+        }
+        if (config.bsd_system_udp.expected_outcome == BsdSystemUdpExpectedOutcome::TerminalClosure &&
+            (config.bsd_system_udp.require_writable_recovery || !udp.echo_replies || udp.datagram_count != 1 ||
+             udp.concurrent_flows != 1)) {
+            return fail("BSD terminal closure requires echo, one datagram, one flow, and no writable recovery");
+        }
     }
-    if (tunnel.datagram_count == 0 || tunnel.datagram_count > MaximumDatagramCount) {
-        return fail("tunnel_udp.datagram_count is outside the supported range");
-    }
-    if (tunnel.pacing_ms > MaximumDurationMs || tunnel.receive_deadline_ms == 0 || tunnel.receive_deadline_ms > MaximumDurationMs) {
-        return fail("tunnel_udp timeout is outside the supported range");
-    }
-    if (tunnel.concurrent_flows == 0 || tunnel.concurrent_flows > wgnx::tunnel::MaximumFlowsPerClient) {
-        return fail("tunnel_udp.concurrent_flows is outside the supported range");
-    }
-    if (config.bsd_system_udp.expected_outcome == BsdSystemUdpExpectedOutcome::NoReplyTimeout &&
-        (tunnel.echo_replies || tunnel.datagram_count != 1 || tunnel.concurrent_flows != 1)) {
-        return fail("BSD no-reply timeout requires no echo, one datagram, and one flow");
-    }
-    if (config.bsd_system_udp.expected_outcome == BsdSystemUdpExpectedOutcome::TerminalClosure &&
-        (config.bsd_system_udp.require_writable_recovery || !tunnel.echo_replies || tunnel.datagram_count != 1 ||
-         tunnel.concurrent_flows != 1)) {
-        return fail(
-            "BSD terminal closure requires echo, one datagram, one flow, "
-            "and no writable recovery"
-        );
-    }
-    if (config.tunnel_contract.enabled && !config.tunnel_contract.verify_cloned_session_lifetime &&
+    if (config.scenario == RuntimeScenario::TunnelContractValidation && !config.tunnel_contract.verify_cloned_session_lifetime &&
         !config.tunnel_contract.verify_mixed_batch) {
-        return fail("tunnel_contract must enable at least one validation");
+        return fail("tunnel contract validation must enable at least one check");
     }
     return true;
 }
@@ -385,7 +467,7 @@ bool EnsureRuntimeConfigDirectories() {
     return EnsureDirectory("sdmc:/config") && EnsureDirectory("sdmc:/config/nxrv-toolbox");
 }
 
-const char* BsdSystemUdpExpectedOutcomeName(const BsdSystemUdpExpectedOutcome expected_outcome) {
+const char* BsdSystemUdpExpectedOutcomeName(BsdSystemUdpExpectedOutcome expected_outcome) {
     switch (expected_outcome) {
     case BsdSystemUdpExpectedOutcome::EchoReply:
         return "echo";
@@ -395,6 +477,42 @@ const char* BsdSystemUdpExpectedOutcomeName(const BsdSystemUdpExpectedOutcome ex
         return "terminal_closure";
     }
     return "invalid";
+}
+
+const char* RuntimeScenarioName(RuntimeScenario scenario) {
+    switch (scenario) {
+    case RuntimeScenario::DirectTunnelUdp:
+        return "Direct tunnel UDP";
+    case RuntimeScenario::BsdSystemUdp:
+        return "BSD system UDP";
+    case RuntimeScenario::TunnelContractValidation:
+        return "Tunnel contract validation";
+    }
+    return "Unknown scenario";
+}
+
+const RuntimeProfile* ActiveRuntimeProfile(const RuntimeConfig& config) {
+    return config.active_profile < config.profiles.size() ? &config.profiles[config.active_profile] : nullptr;
+}
+
+RuntimeProfile* ActiveRuntimeProfile(RuntimeConfig* config) {
+    return config != nullptr && config->active_profile < config->profiles.size() ? &config->profiles[config->active_profile] : nullptr;
+}
+
+TunnelUdpWorkloadConfig BuildTunnelUdpWorkload(const RuntimeConfig& config, const RuntimeProfile& profile, std::uint32_t workload_id) {
+    return {
+        .destination_ipv4 =
+            config.scenario == RuntimeScenario::BsdSystemUdp ? profile.bsd_destination_ipv4 : profile.tunnel_destination_ipv4,
+        .destination_port = profile.udp_destination_port,
+        .workload_id = workload_id,
+        .payload_bytes = config.udp.payload_bytes,
+        .datagram_count = config.udp.datagram_count,
+        .pacing_ms = config.udp.pacing_ms,
+        .concurrent_flows = config.udp.concurrent_flows,
+        .receive_deadline_ms = config.udp.receive_deadline_ms,
+        .payload_seed = config.udp.payload_seed,
+        .echo_replies = config.udp.echo_replies,
+    };
 }
 
 bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const char* path) {
@@ -416,51 +534,68 @@ bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const ch
         }
         return false;
     }
-    const auto& tunnel = config.tunnel_udp;
     std::fprintf(
         file,
         "# NX Reversing Toolbox runtime configuration\n"
-        "tunnel_udp.enabled=%s\n"
-        "tunnel_udp.destination_ipv4=%s\n"
-        "tunnel_udp.destination_port=%u\n"
-        "tunnel_udp.workload_id=%u\n"
-        "tunnel_udp.payload_bytes=%zu\n"
-        "tunnel_udp.datagram_count=%u\n"
-        "tunnel_udp.pacing_ms=%u\n"
-        "tunnel_udp.concurrent_flows=%u\n"
-        "tunnel_udp.receive_deadline_ms=%u\n"
-        "tunnel_udp.payload_seed=%u\n"
-        "tunnel_udp.echo_replies=%s\n"
-        "tunnel_contract.enabled=%s\n"
+        "run.scenario=%s\n"
+        "run.next_workload_id=%u\n"
+        "run.active_profile=%zu\n"
+        "profiles.count=%zu\n",
+        config.scenario == RuntimeScenario::DirectTunnelUdp
+            ? "direct_tunnel_udp"
+            : (config.scenario == RuntimeScenario::BsdSystemUdp ? "bsd_system_udp" : "tunnel_contract_validation"),
+        config.next_workload_id,
+        config.active_profile,
+        config.profiles.size()
+    );
+    for (std::size_t index = 0; index < config.profiles.size(); ++index) {
+        const RuntimeProfile& profile = config.profiles[index];
+        std::fprintf(
+            file,
+            "profile.%zu.name=%s\n"
+            "profile.%zu.tunnel_destination_ipv4=%s\n"
+            "profile.%zu.bsd_destination_ipv4=%s\n"
+            "profile.%zu.udp_destination_port=%u\n",
+            index,
+            profile.name.c_str(),
+            index,
+            profile.tunnel_destination_ipv4.c_str(),
+            index,
+            profile.bsd_destination_ipv4.c_str(),
+            index,
+            profile.udp_destination_port
+        );
+    }
+    std::fprintf(
+        file,
+        "udp.payload_bytes=%zu\n"
+        "udp.datagram_count=%u\n"
+        "udp.pacing_ms=%u\n"
+        "udp.concurrent_flows=%u\n"
+        "udp.receive_deadline_ms=%u\n"
+        "udp.payload_seed=%u\n"
+        "udp.echo_replies=%s\n"
         "tunnel_contract.verify_cloned_session_lifetime=%s\n"
         "tunnel_contract.verify_mixed_batch=%s\n"
-        "bsd_system_udp.enabled=%s\n"
         "bsd_system_udp.verify_post_route_rejection=%s\n"
         "bsd_system_udp.expected_outcome=%s\n"
         "bsd_system_udp.require_writable_recovery=%s\n",
-        tunnel.enabled ? "true" : "false",
-        tunnel.destination_ipv4.c_str(),
-        tunnel.destination_port,
-        tunnel.workload_id,
-        tunnel.payload_bytes,
-        tunnel.datagram_count,
-        tunnel.pacing_ms,
-        tunnel.concurrent_flows,
-        tunnel.receive_deadline_ms,
-        tunnel.payload_seed,
-        tunnel.echo_replies ? "true" : "false",
-        config.tunnel_contract.enabled ? "true" : "false",
+        config.udp.payload_bytes,
+        config.udp.datagram_count,
+        config.udp.pacing_ms,
+        config.udp.concurrent_flows,
+        config.udp.receive_deadline_ms,
+        config.udp.payload_seed,
+        config.udp.echo_replies ? "true" : "false",
         config.tunnel_contract.verify_cloned_session_lifetime ? "true" : "false",
         config.tunnel_contract.verify_mixed_batch ? "true" : "false",
-        config.bsd_system_udp.enabled ? "true" : "false",
         config.bsd_system_udp.verify_post_route_rejection ? "true" : "false",
         BsdSystemUdpExpectedOutcomeName(config.bsd_system_udp.expected_outcome),
         config.bsd_system_udp.require_writable_recovery ? "true" : "false"
     );
     const bool flush_failed = std::fflush(file) != 0;
     const bool close_failed = std::fclose(file) != 0;
-    const bool write_failed = flush_failed || close_failed;
-    if (write_failed) {
+    if (flush_failed || close_failed) {
         std::remove(temporary_path.c_str());
         if (error != nullptr) {
             *error = "unable to write configuration";
@@ -475,7 +610,6 @@ bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const ch
         }
         return false;
     }
-
     bool moved_previous_configuration = false;
     if (std::rename(path, backup_path.c_str()) == 0) {
         moved_previous_configuration = true;
@@ -486,7 +620,6 @@ bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const ch
         }
         return false;
     }
-
     if (std::rename(temporary_path.c_str(), path) != 0) {
         const int replace_error = errno;
         const bool restored_previous_configuration = !moved_previous_configuration || std::rename(backup_path.c_str(), path) == 0;
@@ -499,7 +632,6 @@ bool SaveRuntimeConfig(const RuntimeConfig& config, std::string* error, const ch
         }
         return false;
     }
-
     if (moved_previous_configuration) {
         std::remove(backup_path.c_str());
     }

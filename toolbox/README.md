@@ -90,7 +90,13 @@ rm -rf toolbox/build toolbox/out
 
 The application starts on a run page and does not create network traffic until `Run` is selected.
 
-The configuration page exposes one shared UDP workload with a mutually exclusive `Tunnel` or `bsd:s` data path selector and an opt-in contract-validation scenario.
+The Main page selects one runtime scenario and one target profile for each run.
+
+Profiles own the name, tunnel destination, BSD destination, and UDP destination port.
+
+The Settings page owns scenario behavior such as UDP traffic shape, BSD system checks, and tunnel contract checks.
+
+The legacy Scenarios page remains available for compiled diagnostics that are not yet runtime scenarios.
 
 Compiled values in [src/config.hpp](src/config.hpp) are the canonical defaults.
 
@@ -98,14 +104,21 @@ At startup, the toolbox overlays recognized settings from `sdmc:/config/nxrv-too
 
 Unknown keys and invalid values are logged and that individual setting falls back to its compiled default.
 
-The Settings page initializes and resets every control from the loaded runtime configuration.
-In particular, `Expected BSD:S outcome` reflects a persisted no-reply or terminal-closure selection rather than always displaying the normal workload.
+The Main page displays both the active configuration and the compiled defaults at a glance.
 
-The configuration page writes the same file only after an explicit `Save configuration` action.
+The Profiles page can select the active profile, edit it, and add a copy as the next target profile.
+
+`Expected outcome` reflects a persisted no-reply or terminal-closure selection rather than always displaying the normal workload.
+
+The Settings and Profiles pages write the configuration after an explicit `Save configuration` action.
+
+Starting a Main-page scenario reserves the current `run.next_workload_id`, increments it, and persists the increment before the worker starts.
+
+If that persistence fails, the run does not start and the ID remains available.
 
 The workload runs on Borealis' worker queue so the UI remains responsive while waiting for a completion event.
 
-Press `ZR` on any toolbox page to request a generation-safe UDP binding bump through `wgnx:ctl`.
+Press `ZR` on any toolbox page to request a generation-safe tunnel binding bump through `wgnx:ctl`.
 The toolbox keeps its existing `wgnx:tun` client and flow handles open, so this can exercise live-flow behavior across a local transport rebind without launching the manager.
 The command is issued on the UI thread because Borealis provides one worker queue and an asynchronous request would otherwise wait behind an active workload.
 The sysmodule operation itself only queues the rebind work.
@@ -128,7 +141,7 @@ An unrelated later tunnel CMIF failure is also terminal for that workload becaus
 
 ### BSD:S UDP Data Path
 
-Select `bsd:s` as the UDP workload `Data path` to run the normal Horizon BSD scenario.
+Select `BSD system UDP` on the Main page to run the normal Horizon BSD scenario.
 
 It initializes libnx sockets with `BsdServiceType_System` and uses ordinary `socket`, `connect`, `getsockname`, `fcntl`, `send`, `poll`, and `recvfrom` calls.
 
@@ -153,16 +166,34 @@ With the MITM module disabled, the scenario establishes a direct BSD baseline.
 
 With the toolbox-only MITM module active and a connected peer that covers the destination, the same scenario should reach the harness through the WireGuard exit path.
 
-The persisted path selection uses complementary flags:
+The runtime configuration stores the selected scenario, next workload ID, active profile, and profile entries explicitly.
 
 ```ini
-tunnel_udp.enabled=true
-bsd_system_udp.enabled=false
+run.scenario=direct_tunnel_udp
+run.next_workload_id=1
+run.active_profile=0
+profiles.count=1
+profile.0.name=Default
+profile.0.tunnel_destination_ipv4=10.1.0.2
+profile.0.bsd_destination_ipv4=10.1.0.2
+profile.0.udp_destination_port=29000
 ```
 
-Set `tunnel_udp.enabled=false` and `bsd_system_udp.enabled=true` for the `bsd:s` path.
+Use `run.scenario=bsd_system_udp` for the BSD scenario or `run.scenario=tunnel_contract_validation` for the contract scenario.
 
-The destination, port, payload size, count, pacing, receive deadline, seed, and echo setting are shared with the direct tunnel workload.
+The active profile determines the destination used by the selected scenario.
+
+UDP behavior is stored separately from the profile.
+
+```ini
+udp.payload_bytes=48
+udp.datagram_count=1
+udp.pacing_ms=0
+udp.concurrent_flows=1
+udp.receive_deadline_ms=5000
+udp.payload_seed=1314417238
+udp.echo_replies=true
+```
 
 The persisted BSD:S-specific settings are:
 
@@ -180,7 +211,7 @@ The tool does not parse per-packet output and leaves raw logs authoritative.
 
 ### Contract Validation
 
-The `Tunnel Contract Validation` settings section is disabled by default.
+Select `Tunnel contract validation` on the Main page to run the contract scenario.
 
 It reuses the configured tunnel UDP destination, payload size, and receive deadline.
 
@@ -194,10 +225,9 @@ The toolbox requires the ordered dispositions `Success`, `MalformedInput`, `Data
 
 Both contract checks require an echo reply regardless of the normal workload's `Echo replies` setting.
 
-The persisted settings are:
+The persisted contract settings are:
 
 ```ini
-tunnel_contract.enabled=false
 tunnel_contract.verify_cloned_session_lifetime=true
 tunnel_contract.verify_mixed_batch=true
 ```

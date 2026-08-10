@@ -539,11 +539,6 @@ ScenarioResult RunWgnxTunnelContractValidation(
     using namespace wgnx::tunnel;
 
     ScenarioResult result{.name = "wgnx_tunnel_contract_validation"};
-    if (!config.enabled) {
-        result.skipped = true;
-        result.detail = "disabled by runtime configuration";
-        return result;
-    }
     if (!config.verify_cloned_session_lifetime && !config.verify_mixed_batch) {
         result.detail = "no contract validations are enabled";
         return result;
@@ -829,7 +824,8 @@ ScenarioResult RunWgnxTunnelContractValidation(
 }
 
 ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx) {
-    return RunWgnxTunnelUdpWorkload(ctx, CompiledRuntimeDefaults().tunnel_udp);
+    const RuntimeConfig defaults = CompiledRuntimeDefaults();
+    return RunWgnxTunnelUdpWorkload(ctx, BuildTunnelUdpWorkload(defaults, *ActiveRuntimeProfile(defaults), defaults.next_workload_id));
 }
 
 } // namespace toolbox

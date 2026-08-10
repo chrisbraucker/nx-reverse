@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
@@ -27,17 +28,15 @@ namespace toolbox {
 namespace {
 
 constexpr float PagePadding = 24.0F;
-constexpr float MainLogPanelHeight = 220.0F;
+constexpr float MainLogPanelHeight = 160.0F;
 constexpr float ScenarioLogPanelHeight = 170.0F;
 constexpr std::size_t MainLogPanelLines = 12;
 constexpr float OffsetTolerance = 1.0F;
 constexpr float SettingsActionGap = 18.0F;
-constexpr float SettingsSectionGap = 24.0F;
+constexpr float SettingsSectionGap = 20.0F;
 constexpr float ToolboxSidebarWidth = 250.0F;
 constexpr float LogFontSize = 14.0F;
 constexpr char ProjectUrl[] = APP_PROJECT_URL;
-constexpr int TunnelDataPathIndex = 0;
-constexpr int BsdSystemDataPathIndex = 1;
 constexpr int BsdExpectedNormalIndex = 0;
 constexpr int BsdExpectedNoReplyTimeoutIndex = 1;
 constexpr int BsdExpectedTerminalClosureIndex = 2;
@@ -57,11 +56,11 @@ int BsdExpectedOutcomeIndex(const BsdSystemUdpExpectedOutcome expected_outcome) 
 class LogPanel;
 
 struct MainPageBindings {
-    brls::Label* scenario_label{};
+    brls::SelectorCell* scenario_selector{};
+    brls::SelectorCell* profile_selector{};
+    brls::Label* active_cfg_label{};
+    brls::Label* default_cfg_label{};
     brls::Label* status_label{};
-    brls::Label* workload_id_label{};
-    brls::Button* increment_workload_id_button{};
-    brls::Button* decrement_workload_id_button{};
     brls::Button* run_button{};
     LogPanel* log_panel{};
 };
@@ -86,15 +85,55 @@ struct UiModel {
 };
 
 std::string FormatRuntimeConfig(const RuntimeConfig& config) {
-    const auto& tunnel = config.tunnel_udp;
-    const char* const data_path = config.bsd_system_udp.enabled ? "bsd:s" : "Tunnel";
-    return "destination " + tunnel.destination_ipv4 + ":" + std::to_string(tunnel.destination_port) + " | payload " +
-           std::to_string(tunnel.payload_bytes) + " B | datagrams " + std::to_string(tunnel.datagram_count) + " | flows " +
-           std::to_string(tunnel.concurrent_flows) + " | data path " + data_path +
-           (config.bsd_system_udp.enabled
-                ? " | BSD outcome " + std::string(BsdSystemUdpExpectedOutcomeName(config.bsd_system_udp.expected_outcome))
-                : "") +
-           " | contract " + (config.tunnel_contract.enabled ? "enabled" : "disabled");
+    const RuntimeProfile* const profile = ActiveRuntimeProfile(config);
+    if (profile == nullptr) {
+        return "No active profile";
+    }
+    const std::string destination =
+        config.scenario == RuntimeScenario::BsdSystemUdp ? profile->bsd_destination_ipv4 : profile->tunnel_destination_ipv4;
+    return "dest " + destination + ":" + std::to_string(profile->udp_destination_port) + " | payload " +
+           std::to_string(config.udp.payload_bytes) + " B | datagrams " + std::to_string(config.udp.datagram_count) + " | flows " +
+           std::to_string(config.udp.concurrent_flows) + " | next ID " + std::to_string(config.next_workload_id);
+}
+
+std::vector<std::string> RuntimeScenarioNames() {
+    return {
+        RuntimeScenarioName(RuntimeScenario::DirectTunnelUdp),
+        RuntimeScenarioName(RuntimeScenario::BsdSystemUdp),
+        RuntimeScenarioName(RuntimeScenario::TunnelContractValidation),
+    };
+}
+
+int RuntimeScenarioIndex(RuntimeScenario scenario) {
+    switch (scenario) {
+    case RuntimeScenario::DirectTunnelUdp:
+        return 0;
+    case RuntimeScenario::BsdSystemUdp:
+        return 1;
+    case RuntimeScenario::TunnelContractValidation:
+        return 2;
+    }
+    return 0;
+}
+
+RuntimeScenario RuntimeScenarioAt(int index) {
+    switch (index) {
+    case 1:
+        return RuntimeScenario::BsdSystemUdp;
+    case 2:
+        return RuntimeScenario::TunnelContractValidation;
+    default:
+        return RuntimeScenario::DirectTunnelUdp;
+    }
+}
+
+std::vector<std::string> RuntimeProfileNames(const RuntimeConfig& config) {
+    std::vector<std::string> names;
+    names.reserve(config.profiles.size());
+    for (const RuntimeProfile& profile : config.profiles) {
+        names.push_back(profile.name.empty() ? "Unnamed profile" : profile.name);
+    }
+    return names;
 }
 
 std::string FormatRecentLines(std::size_t maximum_line_count = 0) {
@@ -210,20 +249,21 @@ void RefreshMainPage(const std::shared_ptr<UiModel>& model) {
     if (!model->active) {
         return;
     }
-    if (model->main.scenario_label != nullptr) {
-        model->main.scenario_label->setText(FormatRuntimeConfig(model->config));
+    if (model->main.scenario_selector != nullptr) {
+        model->main.scenario_selector->setSelection(RuntimeScenarioIndex(model->config.scenario), true);
+    }
+    if (model->main.profile_selector != nullptr) {
+        model->main.profile_selector->setData(RuntimeProfileNames(model->config));
+        model->main.profile_selector->setSelection(static_cast<int>(model->config.active_profile), true);
+    }
+    if (model->main.active_cfg_label != nullptr) {
+        model->main.active_cfg_label->setText(FormatRuntimeConfig(model->config));
+    }
+    if (model->main.default_cfg_label != nullptr) {
+        model->main.default_cfg_label->setText(FormatRuntimeConfig(model->defaults));
     }
     if (model->main.status_label != nullptr) {
         model->main.status_label->setText(model->run_status);
-    }
-    if (model->main.workload_id_label != nullptr) {
-        model->main.workload_id_label->setText("wID: " + std::to_string(model->config.tunnel_udp.workload_id));
-    }
-    if (model->main.increment_workload_id_button != nullptr) {
-        model->main.increment_workload_id_button->setState(model->run_active ? brls::ButtonState::DISABLED : brls::ButtonState::ENABLED);
-    }
-    if (model->main.decrement_workload_id_button != nullptr) {
-        model->main.decrement_workload_id_button->setState(model->run_active ? brls::ButtonState::DISABLED : brls::ButtonState::ENABLED);
     }
     if (model->main.run_button != nullptr) {
         model->main.run_button->setState(model->run_active ? brls::ButtonState::DISABLED : brls::ButtonState::ENABLED);
@@ -261,6 +301,19 @@ template <typename T> bool AssignUnsigned(long input, T* target, T maximum, cons
     return true;
 }
 
+bool SaveConfiguration(const std::shared_ptr<UiModel>& model) {
+    std::string error;
+    if (!SaveRuntimeConfig(model->config, &error)) {
+        logger::Status(*model->context, "configuration save failed: %s", error.c_str());
+        brls::Application::notify("Configuration was not saved");
+        return false;
+    }
+    logger::Status(*model->context, "configuration saved path=%s", RuntimeConfigPath);
+    brls::Application::notify("Configuration saved");
+    RefreshMainPage(model);
+    return true;
+}
+
 class SettingsPage final : public brls::ScrollingFrame {
   public:
     explicit SettingsPage(std::shared_ptr<UiModel> model) : model_(std::move(model)) {
@@ -269,39 +322,57 @@ class SettingsPage final : public brls::ScrollingFrame {
         content->setWidthPercentage(100.0F);
         setContentView(content);
 
-        AddHeader(content, "UDP Workload", "Configure shared traffic and choose the data path.");
-        data_path_ = AddDataPathSelector(content);
-        datagram_count_ = AddU32(content, "Datagram count", &model_->config.tunnel_udp.datagram_count, 4096, "tunnel_udp.datagram_count");
-        pacing_ms_ = AddU32(content, "Pacing milliseconds", &model_->config.tunnel_udp.pacing_ms, 60000, "tunnel_udp.pacing_ms");
+        AddHeader(content, "Run Behavior", "The next ID is reserved and advanced when a run starts.");
+        next_workload_id_ = AddU32(
+            content,
+            "Next run ID",
+            &model_->config.next_workload_id,
+            std::numeric_limits<std::uint32_t>::max() - 1,
+            "run.next_workload_id"
+        );
+
+        AddHeader(content, "UDP Behavior", "Configure the UDP scenarios shared by the selected profile.", SettingsSectionGap);
+        payload_bytes_ = AddSize(
+            content,
+            "Payload bytes",
+            &model_->config.udp.payload_bytes,
+            wgnx::tunnel::MaximumUdpPayloadStorageBytes,
+            "udp.payload_bytes"
+        );
+        datagram_count_ = AddU32(content, "Datagram count", &model_->config.udp.datagram_count, 4096, "udp.datagram_count");
+        pacing_ms_ = AddU32(content, "Pacing milliseconds", &model_->config.udp.pacing_ms, 60000, "udp.pacing_ms");
         concurrent_flows_ = AddU32(
             content,
             "Concurrent flows",
-            &model_->config.tunnel_udp.concurrent_flows,
+            &model_->config.udp.concurrent_flows,
             wgnx::tunnel::MaximumFlowsPerClient,
-            "tunnel_udp.concurrent_flows"
+            "udp.concurrent_flows"
         );
-        echo_replies_ = AddBoolean(content, "Echo replies", &model_->config.tunnel_udp.echo_replies);
+        receive_deadline_ms_ =
+            AddU32(content, "Receive deadline milliseconds", &model_->config.udp.receive_deadline_ms, 60000, "udp.receive_deadline_ms");
+        payload_seed_ = AddU32(
+            content,
+            "Payload seed",
+            &model_->config.udp.payload_seed,
+            std::numeric_limits<std::uint32_t>::max(),
+            "udp.payload_seed"
+        );
+        echo_replies_ = AddBoolean(content, "Echo replies", &model_->config.udp.echo_replies);
 
-        AddHeader(content, "BSD:S Contract Validation", "Extra checks for the toolbox-only transparent UDP path.", SettingsSectionGap);
+        AddHeader(content, "BSD System Behavior", "Checks used by the BSD system scenario.", SettingsSectionGap);
         verify_bsd_post_route_rejection_ =
             AddBoolean(content, "Verify tunneled socket option rejection", &model_->config.bsd_system_udp.verify_post_route_rejection);
         expected_bsd_outcome_ = new brls::SelectorCell();
         expected_bsd_outcome_->init(
-            "Expected BSD:S outcome",
+            "Expected outcome",
             {"Normal workload", "No-reply timeout", "Terminal closure"},
             BsdExpectedOutcomeIndex(model_->config.bsd_system_udp.expected_outcome),
             [model = model_](int next) {
-                switch (next) {
-                case BsdExpectedNoReplyTimeoutIndex:
-                    model->config.bsd_system_udp.expected_outcome = BsdSystemUdpExpectedOutcome::NoReplyTimeout;
-                    break;
-                case BsdExpectedTerminalClosureIndex:
-                    model->config.bsd_system_udp.expected_outcome = BsdSystemUdpExpectedOutcome::TerminalClosure;
-                    break;
-                default:
-                    model->config.bsd_system_udp.expected_outcome = BsdSystemUdpExpectedOutcome::EchoReply;
-                    break;
-                }
+                model->config.bsd_system_udp.expected_outcome =
+                    next == BsdExpectedNoReplyTimeoutIndex
+                        ? BsdSystemUdpExpectedOutcome::NoReplyTimeout
+                        : (next == BsdExpectedTerminalClosureIndex ? BsdSystemUdpExpectedOutcome::TerminalClosure
+                                                                   : BsdSystemUdpExpectedOutcome::EchoReply);
             }
         );
         content->addView(expected_bsd_outcome_);
@@ -309,100 +380,18 @@ class SettingsPage final : public brls::ScrollingFrame {
             AddBoolean(content, "Require writable recovery after queue pressure", &model_->config.bsd_system_udp.require_writable_recovery);
 
         AddHeader(content, "Tunnel Contract Validation", "Clone lifetime and mixed-batch API coverage.", SettingsSectionGap);
-        contract_enabled_ = new brls::BooleanCell();
-        contract_enabled_->init("Run contract validation", model_->config.tunnel_contract.enabled, [this](bool next) {
-            model_->config.tunnel_contract.enabled = next;
-            UpdateContractValidationAppearance();
-        });
-        content->addView(contract_enabled_);
         verify_cloned_session_lifetime_ =
             AddBoolean(content, "Verify cloned session lifetime", &model_->config.tunnel_contract.verify_cloned_session_lifetime);
         verify_mixed_batch_ = AddBoolean(content, "Verify mixed batch dispositions", &model_->config.tunnel_contract.verify_mixed_batch);
-        UpdateContractValidationAppearance();
 
-        AddHeader(content, "Common Options", "", SettingsSectionGap);
-
-        auto* shared_settings = new brls::Box(brls::Axis::COLUMN);
-        shared_settings->setWidthPercentage(100.0F);
-        content->addView(shared_settings);
-        destination_ipv4_ = AddText(shared_settings, "Shared destination IPv4", &model_->config.tunnel_udp.destination_ipv4);
-        destination_port_ =
-            AddU16(shared_settings, "Shared destination port", &model_->config.tunnel_udp.destination_port, "tunnel_udp.destination_port");
-        workload_id_ = AddU32(
-            shared_settings,
-            "Shared workload ID",
-            &model_->config.tunnel_udp.workload_id,
-            std::numeric_limits<std::uint32_t>::max(),
-            "tunnel_udp.workload_id"
-        );
-        payload_bytes_ = AddSize(
-            shared_settings,
-            "Shared payload bytes",
-            &model_->config.tunnel_udp.payload_bytes,
-            wgnx::tunnel::MaximumUdpPayloadStorageBytes,
-            "tunnel_udp.payload_bytes"
-        );
-        receive_deadline_ms_ = AddU32(
-            shared_settings,
-            "Shared receive deadline milliseconds",
-            &model_->config.tunnel_udp.receive_deadline_ms,
-            60000,
-            "tunnel_udp.receive_deadline_ms"
-        );
-        payload_seed_ = AddU32(
-            shared_settings,
-            "Shared payload seed",
-            &model_->config.tunnel_udp.payload_seed,
-            std::numeric_limits<std::uint32_t>::max(),
-            "tunnel_udp.payload_seed"
-        );
-
-        auto* save = new brls::Button();
-        save->setStyle(&brls::BUTTONSTYLE_PRIMARY);
-        save->setText("Save configuration");
-        save->registerClickAction([model = model_](brls::View*) {
-            std::string error;
-            if (!SaveRuntimeConfig(model->config, &error)) {
-                logger::Status(*model->context, "configuration save failed: %s", error.c_str());
-                brls::Application::notify("Configuration was not saved");
-                return true;
-            }
-            logger::Status(*model->context, "configuration saved path=%s", RuntimeConfigPath);
-            brls::Application::notify("Configuration saved");
-            RefreshMainPage(model);
-            return true;
-        });
-        auto* reset = new brls::Button();
-        reset->setText("Reset to compiled defaults");
-        reset->registerClickAction([this](brls::View*) {
-            model_->config = model_->defaults;
-            RefreshFields();
-            RefreshMainPage(model_);
-            logger::Status(*model_->context, "configuration reset to compiled defaults");
-            brls::Application::notify("Compiled defaults restored");
-            return true;
-        });
-
-        auto* actions = new brls::Box(brls::Axis::ROW);
-        actions->setWidthPercentage(100.0F);
-        actions->setMarginTop(18.0F);
-        save->setGrow(1.0F);
-        save->setShrink(1.0F);
-        reset->setGrow(1.0F);
-        reset->setShrink(1.0F);
-        reset->setMarginLeft(SettingsActionGap);
-        actions->addView(save);
-        actions->addView(reset);
-        content->addView(actions);
+        AddActions(content);
     }
 
   private:
     void AddHeader(brls::Box* content, const char* title, const char* subtitle, float margin_top = 0.0F) {
         auto* header = new brls::Header();
         header->setTitle(title);
-        if (subtitle[0] != '\0') {
-            header->setSubtitle(subtitle);
-        }
+        header->setSubtitle(subtitle);
         header->setMarginTop(margin_top);
         content->addView(header);
     }
@@ -410,39 +399,6 @@ class SettingsPage final : public brls::ScrollingFrame {
     brls::BooleanCell* AddBoolean(brls::Box* content, const char* title, bool* value) {
         auto* cell = new brls::BooleanCell();
         cell->init(title, *value, [value](bool next) { *value = next; });
-        content->addView(cell);
-        return cell;
-    }
-
-    brls::SelectorCell* AddDataPathSelector(brls::Box* content) {
-        auto* cell = new brls::SelectorCell();
-        const int selected = model_->config.bsd_system_udp.enabled ? BsdSystemDataPathIndex : TunnelDataPathIndex;
-        cell->init("Data path", {"Tunnel", "bsd:s"}, selected, [model = model_](int next) {
-            model->config.tunnel_udp.enabled = next == TunnelDataPathIndex;
-            model->config.bsd_system_udp.enabled = next == BsdSystemDataPathIndex;
-        });
-        content->addView(cell);
-        return cell;
-    }
-
-    brls::InputCell* AddText(brls::Box* content, const char* title, std::string* value) {
-        auto* cell = new brls::InputCell();
-        cell->init(title, *value, [value](std::string next) { *value = std::move(next); }, "IPv4 address", "IPv4 dotted-quad address", 15);
-        content->addView(cell);
-        return cell;
-    }
-
-    brls::InputNumericCell* AddU16(brls::Box* content, const char* title, std::uint16_t* value, const char* name) {
-        auto* cell = new brls::InputNumericCell();
-        cell->init(
-            title,
-            *value,
-            [this, value, name](long next) {
-                AssignUnsigned(next, value, std::numeric_limits<std::uint16_t>::max(), name, *model_->context);
-            },
-            "Unsigned integer",
-            5
-        );
         content->addView(cell);
         return cell;
     }
@@ -473,41 +429,50 @@ class SettingsPage final : public brls::ScrollingFrame {
         return cell;
     }
 
-    void UpdateContractValidationAppearance() {
-        brls::Theme theme = brls::Application::getTheme();
-        const auto color = model_->config.tunnel_contract.enabled ? theme["brls/text"] : theme["brls/text_disabled"];
-        verify_cloned_session_lifetime_->setTextColor(color);
-        verify_mixed_batch_->setTextColor(color);
+    void AddActions(brls::Box* content) {
+        auto* save = new brls::Button();
+        save->setStyle(&brls::BUTTONSTYLE_PRIMARY);
+        save->setText("Save configuration");
+        save->registerClickAction([model = model_](brls::View*) { return SaveConfiguration(model); });
+        auto* reset = new brls::Button();
+        reset->setText("Reset to compiled defaults");
+        reset->registerClickAction([this](brls::View*) {
+            model_->config = model_->defaults;
+            RefreshFields();
+            RefreshMainPage(model_);
+            logger::Status(*model_->context, "configuration reset to compiled defaults");
+            brls::Application::notify("Compiled defaults restored");
+            return true;
+        });
+        auto* actions = new brls::Box(brls::Axis::ROW);
+        actions->setWidthPercentage(100.0F);
+        actions->setMarginTop(18.0F);
+        save->setGrow(1.0F);
+        reset->setGrow(1.0F);
+        reset->setMarginLeft(SettingsActionGap);
+        actions->addView(save);
+        actions->addView(reset);
+        content->addView(actions);
     }
 
     void RefreshFields() {
-        const auto& tunnel = model_->config.tunnel_udp;
-        data_path_->setSelection(model_->config.bsd_system_udp.enabled ? BsdSystemDataPathIndex : TunnelDataPathIndex, true);
-        destination_ipv4_->setValue(tunnel.destination_ipv4);
-        destination_port_->setValue(tunnel.destination_port);
-        workload_id_->setValue(static_cast<long>(tunnel.workload_id));
-        payload_bytes_->setValue(static_cast<long>(tunnel.payload_bytes));
-        datagram_count_->setValue(static_cast<long>(tunnel.datagram_count));
-        pacing_ms_->setValue(static_cast<long>(tunnel.pacing_ms));
-        concurrent_flows_->setValue(static_cast<long>(tunnel.concurrent_flows));
-        receive_deadline_ms_->setValue(static_cast<long>(tunnel.receive_deadline_ms));
-        payload_seed_->setValue(static_cast<long>(tunnel.payload_seed));
-        echo_replies_->setOn(tunnel.echo_replies, false);
+        next_workload_id_->setValue(static_cast<long>(model_->config.next_workload_id));
+        payload_bytes_->setValue(static_cast<long>(model_->config.udp.payload_bytes));
+        datagram_count_->setValue(static_cast<long>(model_->config.udp.datagram_count));
+        pacing_ms_->setValue(static_cast<long>(model_->config.udp.pacing_ms));
+        concurrent_flows_->setValue(static_cast<long>(model_->config.udp.concurrent_flows));
+        receive_deadline_ms_->setValue(static_cast<long>(model_->config.udp.receive_deadline_ms));
+        payload_seed_->setValue(static_cast<long>(model_->config.udp.payload_seed));
+        echo_replies_->setOn(model_->config.udp.echo_replies, false);
         verify_bsd_post_route_rejection_->setOn(model_->config.bsd_system_udp.verify_post_route_rejection, false);
         expected_bsd_outcome_->setSelection(BsdExpectedOutcomeIndex(model_->config.bsd_system_udp.expected_outcome), true);
         require_bsd_writable_recovery_->setOn(model_->config.bsd_system_udp.require_writable_recovery, false);
-        const auto& contract = model_->config.tunnel_contract;
-        contract_enabled_->setOn(contract.enabled, false);
-        verify_cloned_session_lifetime_->setOn(contract.verify_cloned_session_lifetime, false);
-        verify_mixed_batch_->setOn(contract.verify_mixed_batch, false);
-        UpdateContractValidationAppearance();
+        verify_cloned_session_lifetime_->setOn(model_->config.tunnel_contract.verify_cloned_session_lifetime, false);
+        verify_mixed_batch_->setOn(model_->config.tunnel_contract.verify_mixed_batch, false);
     }
 
     std::shared_ptr<UiModel> model_;
-    brls::SelectorCell* data_path_{};
-    brls::InputCell* destination_ipv4_{};
-    brls::InputNumericCell* destination_port_{};
-    brls::InputNumericCell* workload_id_{};
+    brls::InputNumericCell* next_workload_id_{};
     brls::InputNumericCell* payload_bytes_{};
     brls::InputNumericCell* datagram_count_{};
     brls::InputNumericCell* pacing_ms_{};
@@ -518,9 +483,133 @@ class SettingsPage final : public brls::ScrollingFrame {
     brls::BooleanCell* verify_bsd_post_route_rejection_{};
     brls::SelectorCell* expected_bsd_outcome_{};
     brls::BooleanCell* require_bsd_writable_recovery_{};
-    brls::BooleanCell* contract_enabled_{};
     brls::BooleanCell* verify_cloned_session_lifetime_{};
     brls::BooleanCell* verify_mixed_batch_{};
+};
+
+class ProfilesPage final : public brls::ScrollingFrame {
+  public:
+    explicit ProfilesPage(std::shared_ptr<UiModel> model) : model_(std::move(model)) {
+        auto* content = new brls::Box(brls::Axis::COLUMN);
+        content->setPadding(PagePadding);
+        content->setWidthPercentage(100.0F);
+        setContentView(content);
+
+        auto* header = new brls::Header();
+        header->setTitle("Profiles");
+        header->setSubtitle("Select a target profile and configure its destinations.");
+        content->addView(header);
+
+        selector_ = new brls::SelectorCell();
+        selector_->init(
+            "Active profile",
+            RuntimeProfileNames(model_->config),
+            static_cast<int>(model_->config.active_profile),
+            [this](int next) {
+                model_->config.active_profile = static_cast<std::size_t>(next);
+                RefreshFields();
+                RefreshMainPage(model_);
+            }
+        );
+        content->addView(selector_);
+        name_ = AddText(content, "Profile name", "Profile name", 32, [this](std::string next) {
+            if (RuntimeProfile* profile = ActiveRuntimeProfile(&model_->config)) {
+                profile->name = std::move(next);
+                selector_->setData(RuntimeProfileNames(model_->config));
+                RefreshMainPage(model_);
+            }
+        });
+        tunnel_destination_ = AddText(content, "Tunnel destination IPv4", "IPv4 address", 15, [this](std::string next) {
+            if (RuntimeProfile* profile = ActiveRuntimeProfile(&model_->config)) {
+                profile->tunnel_destination_ipv4 = std::move(next);
+                RefreshMainPage(model_);
+            }
+        });
+        bsd_destination_ = AddText(content, "BSD destination IPv4", "IPv4 address", 15, [this](std::string next) {
+            if (RuntimeProfile* profile = ActiveRuntimeProfile(&model_->config)) {
+                profile->bsd_destination_ipv4 = std::move(next);
+                RefreshMainPage(model_);
+            }
+        });
+        port_ = new brls::InputNumericCell();
+        port_->init(
+            "UDP destination port",
+            0,
+            [this](long next) {
+                if (RuntimeProfile* profile = ActiveRuntimeProfile(&model_->config)) {
+                    AssignUnsigned(
+                        next,
+                        &profile->udp_destination_port,
+                        std::numeric_limits<std::uint16_t>::max(),
+                        "profile.udp_destination_port",
+                        *model_->context
+                    );
+                    RefreshMainPage(model_);
+                }
+            },
+            "Unsigned integer",
+            5
+        );
+        content->addView(port_);
+
+        auto* actions = new brls::Box(brls::Axis::ROW);
+        actions->setWidthPercentage(100.0F);
+        actions->setMarginTop(18.0F);
+        auto* add = new brls::Button();
+        add->setText("Add profile");
+        add->registerClickAction([this](brls::View*) {
+            if (model_->config.profiles.size() == 8) {
+                brls::Application::notify("Profile limit reached");
+                return true;
+            }
+            RuntimeProfile profile = *ActiveRuntimeProfile(model_->config);
+            profile.name = "Profile " + std::to_string(model_->config.profiles.size() + 1);
+            model_->config.profiles.push_back(std::move(profile));
+            model_->config.active_profile = model_->config.profiles.size() - 1;
+            RefreshFields();
+            RefreshMainPage(model_);
+            return true;
+        });
+        auto* save = new brls::Button();
+        save->setStyle(&brls::BUTTONSTYLE_PRIMARY);
+        save->setText("Save configuration");
+        save->setMarginLeft(SettingsActionGap);
+        save->registerClickAction([model = model_](brls::View*) { return SaveConfiguration(model); });
+        actions->addView(add);
+        actions->addView(save);
+        content->addView(actions);
+        RefreshFields();
+    }
+
+  private:
+    brls::InputCell* AddText(
+        brls::Box* content, const char* title, const char* hint, std::size_t maximum_length, std::function<void(std::string)> on_change
+    ) {
+        auto* cell = new brls::InputCell();
+        cell->init(title, "", std::move(on_change), hint, hint, maximum_length);
+        content->addView(cell);
+        return cell;
+    }
+
+    void RefreshFields() {
+        const RuntimeProfile* const profile = ActiveRuntimeProfile(model_->config);
+        if (profile == nullptr) {
+            return;
+        }
+        selector_->setData(RuntimeProfileNames(model_->config));
+        selector_->setSelection(static_cast<int>(model_->config.active_profile), true);
+        name_->setValue(profile->name);
+        tunnel_destination_->setValue(profile->tunnel_destination_ipv4);
+        bsd_destination_->setValue(profile->bsd_destination_ipv4);
+        port_->setValue(profile->udp_destination_port);
+    }
+
+    std::shared_ptr<UiModel> model_;
+    brls::SelectorCell* selector_{};
+    brls::InputCell* name_{};
+    brls::InputCell* tunnel_destination_{};
+    brls::InputCell* bsd_destination_{};
+    brls::InputNumericCell* port_{};
 };
 
 class MainPage final : public brls::Box {
@@ -528,73 +617,94 @@ class MainPage final : public brls::Box {
     explicit MainPage(std::shared_ptr<UiModel> model) : brls::Box(brls::Axis::COLUMN), model_(std::move(model)) {
         setPadding(PagePadding);
         setShrink(1.0F);
+        auto* header = new brls::Header();
+        header->setTitle("Run");
+        header->setSubtitle("Select a scenario and target profile.");
+        addView(header);
+        auto* selectors = new brls::Box(brls::Axis::ROW);
+        selectors->setWidthPercentage(100.0F);
+        model_->main.scenario_selector = new brls::SelectorCell();
+        model_->main.scenario_selector
+            ->init("Scenario", RuntimeScenarioNames(), RuntimeScenarioIndex(model_->config.scenario), [model = model_](int next) {
+                model->config.scenario = RuntimeScenarioAt(next);
+                RefreshMainPage(model);
+            });
+        model_->main.scenario_selector->setGrow(1.0F);
+        model_->main.scenario_selector->setShrink(1.0F);
+        model_->main.profile_selector = new brls::SelectorCell();
+        model_->main.profile_selector->init(
+            "Profile",
+            RuntimeProfileNames(model_->config),
+            static_cast<int>(model_->config.active_profile),
+            [model = model_](int next) {
+                model->config.active_profile = static_cast<std::size_t>(next);
+                RefreshMainPage(model);
+            }
+        );
+        model_->main.profile_selector->setGrow(1.0F);
+        model_->main.profile_selector->setShrink(1.0F);
+        model_->main.profile_selector->setMarginLeft(SettingsActionGap);
+        selectors->addView(model_->main.scenario_selector);
+        selectors->addView(model_->main.profile_selector);
+        addView(selectors);
 
-        auto* scenario_header = new brls::Header();
-        scenario_header->setTitle("Current Scenario");
-        scenario_header->setSubtitle("Configured UDP workload.");
-        addView(scenario_header);
+        auto* active_cfg_header = new brls::Header();
+        active_cfg_header->setTitle("Active Configuration");
+        active_cfg_header->setSubtitle("Values used by the next run.");
+        active_cfg_header->setMarginTop(SettingsSectionGap);
+        addView(active_cfg_header);
 
-        model_->main.scenario_label = new brls::Label();
-        model_->main.scenario_label->setHeight(42.0F);
-        addView(model_->main.scenario_label);
-
-        model_->main.status_label = new brls::Label();
-        model_->main.status_label->setHeight(46.0F);
-        addView(model_->main.status_label);
+        model_->main.active_cfg_label = new brls::Label();
+        model_->main.active_cfg_label->setSingleLine(false);
+        model_->main.active_cfg_label->setAutoAnimate(false);
+        model_->main.active_cfg_label->setMarginTop(12.0F);
+        model_->main.active_cfg_label->setFontSize(16.0F);
+        addView(model_->main.active_cfg_label);
 
         auto* log_header = new brls::Header();
         log_header->setTitle("Recent Activity");
-        log_header->setSubtitle("Latest toolbox events for the selected run.");
+        log_header->setSubtitle("Latest toolbox events.");
+        log_header->setMarginTop(SettingsSectionGap);
         addView(log_header);
 
         model_->main.log_panel = new LogPanel(MainLogPanelLines);
         model_->main.log_panel->setWidthPercentage(100.0F);
+        model_->main.log_panel->setMarginTop(8.0F);
         model_->main.log_panel->setHeight(MainLogPanelHeight);
         addView(model_->main.log_panel);
 
+        auto* footer = new brls::Box(brls::Axis::ROW);
+        footer->setWidthPercentage(100.0F);
+        footer->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
+        footer->setMarginTop(SettingsSectionGap);
+        footer->setHeight(40.0F);
+
+        model_->main.status_label = new brls::Label();
+        model_->main.status_label->setHeight(40.0F);
+
         auto* commands = new brls::Box(brls::Axis::ROW);
 
-        auto* workload_control = new brls::Box(brls::Axis::ROW);
-
-        commands->setWidthPercentage(100.0F);
-        commands->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
-        commands->setMarginTop(18.0F);
-        model_->main.decrement_workload_id_button = new brls::Button();
-        model_->main.decrement_workload_id_button->setText("-");
-        model_->main.decrement_workload_id_button->setMarginRight(SettingsActionGap);
-        model_->main.decrement_workload_id_button->registerClickAction([model = model_](brls::View*) {
-            --model->config.tunnel_udp.workload_id;
-            RefreshMainPage(model);
-            return true;
-        });
-        model_->main.workload_id_label = new brls::Label();
-        model_->main.workload_id_label->setWidth(100.0F);
-        model_->main.increment_workload_id_button = new brls::Button();
-        model_->main.increment_workload_id_button->setText("+");
-        //model_->main.increment_workload_id_button->setWidth(190.0F);
-        model_->main.increment_workload_id_button->setMarginLeft(SettingsActionGap);
-        model_->main.increment_workload_id_button->registerClickAction([model = model_](brls::View*) {
-            ++model->config.tunnel_udp.workload_id;
-            RefreshMainPage(model);
+        auto* clear = new brls::Button();
+        clear->setText("Clear log");
+        clear->setWidth(190.0F);
+        clear->registerClickAction([model = model_](brls::View*) {
+            model->main.log_panel->Clear();
             return true;
         });
         model_->main.run_button = new brls::Button();
         model_->main.run_button->setStyle(&brls::BUTTONSTYLE_PRIMARY);
-        model_->main.run_button->setText("Run");
+        model_->main.run_button->setText("Run scenario");
         model_->main.run_button->setWidth(190.0F);
+        model_->main.run_button->setMarginLeft(SettingsActionGap);
         model_->main.run_button->registerClickAction([model = model_](brls::View*) {
             StartRun(model);
             return true;
         });
-
-        workload_control->addView(model_->main.decrement_workload_id_button);
-        workload_control->addView(model_->main.workload_id_label);
-        workload_control->addView(model_->main.increment_workload_id_button);
-        
-        commands->addView(workload_control);
+        commands->addView(clear);
         commands->addView(model_->main.run_button);
-        addView(commands);
-
+        footer->addView(model_->main.status_label);
+        footer->addView(commands);
+        addView(footer);
         RefreshMainPage(model_);
     }
 
@@ -617,53 +727,69 @@ class MainPage final : public brls::Box {
             brls::Application::notify("Fix the configuration before running");
             return;
         }
-
-        model->run_active = true;
-        model->run_status = "Running " + FormatRuntimeConfig(model->config);
-        RefreshMainPage(model);
+        if (model->config.next_workload_id == std::numeric_limits<std::uint32_t>::max()) {
+            logger::Status(*model->context, "run rejected: workload ID space is exhausted");
+            model->run_status = "Configuration error: workload ID space is exhausted";
+            RefreshMainPage(model);
+            brls::Application::notify("Choose a new workload ID before running");
+            return;
+        }
+        const std::uint32_t workload_id = model->config.next_workload_id;
+        const RuntimeConfig previous_config = model->config;
+        ++model->config.next_workload_id;
+        if (!SaveConfiguration(model)) {
+            model->config = previous_config;
+            RefreshMainPage(model);
+            return;
+        }
         const RuntimeConfig runtime_config = model->config;
+        const RuntimeProfile* const profile = ActiveRuntimeProfile(runtime_config);
+        if (profile == nullptr) {
+            return;
+        }
+        const TunnelUdpWorkloadConfig workload = BuildTunnelUdpWorkload(runtime_config, *profile, workload_id);
+        model->run_active = true;
+        model->run_status = "Running " + std::string(RuntimeScenarioName(runtime_config.scenario)) + " with " + profile->name + " (ID " +
+                            std::to_string(workload_id) + ")";
+        model->main.log_panel->ShowRecent();
+        RefreshMainPage(model);
         AppContext* const context = model->context;
-        logger::Status(*context, "toolbox workload requested: %s", FormatRuntimeConfig(model->config).c_str());
-
-        brls::async([model, context, runtime_config] {
-            std::vector<ScenarioResult> results;
-            if (runtime_config.tunnel_udp.enabled) {
-                results.push_back(RunWgnxTunnelUdpWorkload(*context, runtime_config.tunnel_udp));
+        logger::Status(
+            *context,
+            "runtime scenario requested scenario=%s profile=%s workload=%u",
+            RuntimeScenarioName(runtime_config.scenario),
+            profile->name.c_str(),
+            workload_id
+        );
+        brls::async([model, context, runtime_config, workload] {
+            ScenarioResult result;
+            switch (runtime_config.scenario) {
+            case RuntimeScenario::DirectTunnelUdp:
+                result = RunWgnxTunnelUdpWorkload(*context, workload);
+                break;
+            case RuntimeScenario::BsdSystemUdp:
+                result = RunBsdSystemUdpWorkload(*context, workload, runtime_config.bsd_system_udp);
+                break;
+            case RuntimeScenario::TunnelContractValidation:
+                result = RunWgnxTunnelContractValidation(*context, workload, runtime_config.tunnel_contract);
+                break;
             }
-            if (runtime_config.bsd_system_udp.enabled) {
-                results.push_back(RunBsdSystemUdpWorkload(*context, runtime_config.tunnel_udp, runtime_config.bsd_system_udp));
-            }
-            if (runtime_config.tunnel_contract.enabled) {
-                results.push_back(RunWgnxTunnelContractValidation(*context, runtime_config.tunnel_udp, runtime_config.tunnel_contract));
-            }
-            if (results.empty()) {
-                results.push_back({.name = "toolbox", .skipped = true, .detail = "no runtime scenario is enabled"});
-            }
-            bool all_success = true;
-            std::string summary;
-            for (const ScenarioResult& result : results) {
-                const char* state = result.skipped ? "SKIP" : (result.success ? "OK" : "FAIL");
-                logger::Status(
-                    *context,
-                    "[%s] %s | sent=%zu recv=%zu | %s",
-                    state,
-                    result.name.c_str(),
-                    result.bytes_sent,
-                    result.bytes_received,
-                    result.detail.c_str()
-                );
-                all_success = all_success && (result.success || result.skipped);
-                if (!summary.empty()) {
-                    summary += " | ";
-                }
-                summary += result.name + ": " + (result.skipped ? "skipped" : (result.success ? "completed" : "failed"));
-            }
-            brls::sync([model, all_success, summary = std::move(summary)] {
+            const char* const state = result.skipped ? "SKIP" : (result.success ? "OK" : "FAIL");
+            logger::Status(
+                *context,
+                "[%s] %s | sent=%zu recv=%zu | %s",
+                state,
+                result.name.c_str(),
+                result.bytes_sent,
+                result.bytes_received,
+                result.detail.c_str()
+            );
+            brls::sync([model, result = std::move(result)] {
                 if (!model->active) {
                     return;
                 }
                 model->run_active = false;
-                model->run_status = std::string(all_success ? "Completed: " : "Failed: ") + summary;
+                model->run_status = result.name + ": " + (result.skipped ? "skipped" : (result.success ? "completed" : "failed"));
                 RefreshMainPage(model);
                 RefreshLogViews(model);
             });
@@ -728,11 +854,11 @@ class ScenariosPage final : public brls::Box {
         description_->setMarginTop(12.0F);
         addView(description_);
 
-        auto* defaults_header = new brls::Header();
-        defaults_header->setTitle("Compiled Defaults");
-        defaults_header->setSubtitle("Read from config.hpp");
-        defaults_header->setMarginTop(12.0F);
-        addView(defaults_header);
+        auto* default_cfg_header = new brls::Header();
+        default_cfg_header->setTitle("Compiled Defaults");
+        default_cfg_header->setSubtitle("Read from config.hpp");
+        default_cfg_header->setMarginTop(12.0F);
+        addView(default_cfg_header);
 
         defaults_ = new brls::Label();
         defaults_->setMarginTop(8.0F);
@@ -740,9 +866,6 @@ class ScenariosPage final : public brls::Box {
         defaults_->setSingleLine(false);
         defaults_->setAutoAnimate(false);
         addView(defaults_);
-
-        model_->scenario.status_label = new brls::Label();
-        model_->scenario.status_label->setHeight(40.0F);
 
         auto* log_header = new brls::Header();
         log_header->setTitle("Scenario Log");
@@ -758,8 +881,11 @@ class ScenariosPage final : public brls::Box {
         auto* footer = new brls::Box(brls::Axis::ROW);
         footer->setWidthPercentage(100.0F);
         footer->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
-        footer->setMarginTop(20.0F);
+        footer->setMarginTop(SettingsSectionGap);
         footer->setHeight(40.0F);
+
+        model_->scenario.status_label = new brls::Label();
+        model_->scenario.status_label->setHeight(40.0F);
 
         auto* commands = new brls::Box(brls::Axis::ROW);
 
@@ -902,6 +1028,7 @@ class AppTabs final : public brls::TabFrame {
         addTab("Main", [model = model_] { return new MainPage(model); });
         addTab("Logs", [model = model_] { return new LogsPage(model); });
         addTab("Settings", [model = model_] { return new SettingsPage(model); });
+        addTab("Profiles", [model = model_] { return new ProfilesPage(model); });
         addSeparator();
         addTab("Scenarios", [model = model_] { return new ScenariosPage(model); });
         addSeparator();
@@ -927,7 +1054,7 @@ class AppActivity final : public brls::Activity {
     }
 
     void onContentAvailable() override {
-        registerAction("Bump UDP bind", brls::BUTTON_RT, [model = model_](brls::View*) {
+        registerAction("Bump tunnel binding", brls::BUTTON_RT, [model = model_](brls::View*) {
             RequestUdpBindBump(model);
             return true;
         });
