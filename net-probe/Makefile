@@ -126,7 +126,7 @@ main.o mitm_trace.o: force-build-info
 
 force-build-info:
 
-$(OFILES)	: $(ATMOSPHERE_LIBRARIES_DIR)/libstratosphere/$(ATMOSPHERE_LIBRARY_DIR)/libstratosphere.a
+$(OFILES)	: $(ATMOSPHERE_LIBRARIES_DIR)/libstratosphere/$(ATMOSPHERE_LIBRARY_DIR)/libstratosphere.a $(wildcard $(LOCAL_MK))
 
 %.npdm  :   %.npdm.json
 	@echo built ... $< $@
