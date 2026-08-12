@@ -38,6 +38,9 @@ This directory is now split by topic so the `eth` and `anif` work stays readable
   - first-pass `wlan_main` and `usb_main` triage
   - why `wlan_main` is the best next static target
   - why `usb_main` likely feeds physical interface inventory into `eth_main`
+- [nifm.md](/workspaces/switch-workspace/nx-reversing.git/docs/20.5.0/notes/nifm.md:1)
+  - NIFM interface-manager triage
+  - no current evidence for arbitrary custom-interface registration through NIM or NIFM
 - [module-triage.md](/workspaces/switch-workspace/nx-reversing.git/docs/20.5.0/notes/module-triage.md:1)
   - extraction/mapping notes
 
@@ -56,6 +59,8 @@ This directory is now split by topic so the `eth` and `anif` work stays readable
   The best current runtime target is `sfdnsres`.
 - `pkg2` inventory does not reveal any hidden network sysmodule in the boot package, which pushes the kernel hypothesis toward generic IPC/memory/object primitives rather than a buried netstack.
 - `sm.kip1` now gives us a concrete service-manager angle on the probe instability: `0x815` is part of the real registration logic, so the `RegisterMitmServer(nifm:u)` failures are grounded in `sm` service-table state, not just wrapper behavior.
+- The NIFM interface-manager path currently has fixed two-kind source selection, and the suspected private manager service was a compressed-image false positive rather than a third-interface registration surface.
+  The traced manager wrappers only mediate existing native-interface and BSD user sessions.
 
 ## Current Priority
 

@@ -19,6 +19,7 @@ Determine the lowest practical interception layer for WireGuard-backed traffic s
 - passive MITM for `nifm:u`, `nifm:s`, and `wlan:nd` now compiles in the main `sysmodule`; first on-device traces are still pending.
 - `wlan:nd` connected-state probing has already shown that unsafe calls can crash the server process, so future runtime work must stay narrow and staged.
 - `pkg2` is available, so kernel and core-KIP reversing can begin without additional firmware extraction.
+- The current NIFM interface-manager path is limited to two native source kinds, and its traced manager wrappers only mediate existing sessions, so NIM and NIFM do not presently offer a credible arbitrary-interface insertion point.
 
 Constraint:
 
@@ -201,3 +202,4 @@ Decision gate: If a reusable lower-level queue, object, or memory contract is vi
 2. Collect and classify traces for the three known Wi-Fi states.
 3. Continue the `pkg2/kernel.bin` checklist in parallel.
 4. Fold trace results back into the next narrow probe changes.
+5. Treat the NIM/NIFM manager-service lead as closed because it was a compressed-image false positive, and keep native-path work at the established driver-interface and BSD assignment boundary.
