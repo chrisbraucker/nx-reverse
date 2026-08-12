@@ -37,7 +37,8 @@
         "toolbox_bsd_outcome_tests",
         "toolbox_udp_workload_metrics_tests",
         "toolbox_runtime_scenario_tests",
-        "toolbox_runtime_config_tests"
+        "toolbox_runtime_config_tests",
+        "toolbox_https_scenario_parsing_tests"
       ]
     },
     {

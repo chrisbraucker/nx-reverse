@@ -10,7 +10,6 @@ constexpr char LogDirectory[] = "sdmc:/nxrv/toolbox";
 constexpr bool EnableAppletExitLock = false;
 constexpr bool EnableSocketInitialize = false;
 constexpr bool EnableNifmInitialize = false;
-constexpr bool EnableSslInitialize = false;
 constexpr bool EnableCurlInitialize = false;
 constexpr bool EnableCurlShare = false;
 
@@ -37,7 +36,8 @@ constexpr bool EnableScenarioDnsResolve = false;
 constexpr bool EnableScenarioPlainTcpConnect = false;
 constexpr bool EnableScenarioIdleTcpHold = false;
 constexpr bool EnableScenarioHttpGet = false;
-constexpr bool EnableScenarioHttpsGet = false;
+constexpr bool EnableScenarioHttpsGet = true;
+constexpr bool EnableScenarioConnectionTestGlobalIp = true;
 constexpr bool EnableScenarioCurlHttpGet = false;
 constexpr bool EnableScenarioCurlHttpsGet = false;
 constexpr bool EnableScenarioConnectionTestDownload30M = false;
@@ -109,6 +109,7 @@ constexpr char HttpsHost[] = "example.com";
 constexpr std::uint16_t HttpsPort = 443;
 constexpr char HttpsPath[] = "/";
 
+constexpr char ConnectionTestGlobalIpUri[] = "https://api.hac.lp1.ctest.srv.nintendo.net/v1/ip";
 constexpr char ConnectionTestDownloadHost[] = "ctest-dl-lp1.cdn.nintendo.net";
 constexpr char ConnectionTestUploadHost[] = "ctest-ul-lp1.cdn.nintendo.net";
 constexpr std::uint16_t ConnectionTestPort = 80;

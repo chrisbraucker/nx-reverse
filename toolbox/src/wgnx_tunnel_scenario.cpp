@@ -209,7 +209,7 @@ CompletionWaitResult WaitForEcho(
                 &status
             );
             if (R_FAILED(rc)) {
-                // API v4 permits this exact wake-without-record sequence while the
+                // API v5 permits this exact wake-without-record sequence while the
                 // sysmodule performs an orderly shutdown and closes this session.
                 result.terminal = true;
                 result.service_lost = true;
@@ -283,7 +283,7 @@ CompletionWaitResult WaitForWritable(
                 &status
             );
             if (R_FAILED(rc)) {
-                // API v4 permits this exact wake-without-record sequence while the
+                // API v5 permits this exact wake-without-record sequence while the
                 // sysmodule performs an orderly shutdown and closes this session.
                 result.terminal = true;
                 result.service_lost = true;
@@ -497,15 +497,18 @@ ScenarioResult RunWgnxTunnelTcpExchange(
             {.address = {destination[0], destination[1], destination[2], destination[3]},
              .port = profile.tcp_destination_port,
              .reserved = 0},
+        .kind = FlowKind::Tcp,
+        .reserved = 0,
         .diagnostic_tag = workload_id,
     };
     OpenConnectedFlowResult opened{};
-    rc = client::OpenConnectedTcpFlow(tunnel_client, request, &opened);
-    if (R_FAILED(rc) || opened.status != ProtocolStatus::Success) {
+    rc = client::OpenConnectedFlow(tunnel_client, request, &opened);
+    if (R_FAILED(rc) || opened.status != ProtocolStatus::Success || opened.advertised_local.port == 0) {
         eventClose(&completion_event);
         result.rc = rc;
-        result.detail =
-            R_FAILED(rc) ? "OpenConnectedTcpFlow CMIF failure" : "OpenConnectedTcpFlow status=" + std::string(StatusName(opened.status));
+        result.detail = R_FAILED(rc)                               ? "OpenConnectedFlow CMIF failure"
+                        : opened.status != ProtocolStatus::Success ? "OpenConnectedFlow status=" + std::string(StatusName(opened.status))
+                                                                   : "OpenConnectedFlow did not publish a virtual local endpoint";
         return result;
     }
     const auto close_flow = [&] {
@@ -678,17 +681,21 @@ ScenarioResult RunWgnxTunnelUdpWorkload(AppContext& ctx, const TunnelUdpWorkload
                 {.address = {destination[0], destination[1], destination[2], destination[3]},
                  .port = config.destination_port,
                  .reserved = 0},
+            .kind = FlowKind::Udp,
+            .reserved = 0,
             .diagnostic_tag = (static_cast<std::uint64_t>(config.workload_id) << 32U) | opened_flows,
         };
         const auto opened = [&] {
             OpenConnectedFlowResult value{};
-            rc = client::OpenConnectedUdpFlow(tunnel_client, request, &value);
+            rc = client::OpenConnectedFlow(tunnel_client, request, &value);
             return value;
         }();
-        if (R_FAILED(rc) || opened.status != ProtocolStatus::Success) {
+        if (R_FAILED(rc) || opened.status != ProtocolStatus::Success || opened.advertised_local.port == 0) {
             result.rc = rc;
-            result.detail = R_FAILED(rc) ? "OpenConnectedUdpFlow CMIF failure"
-                                         : "OpenConnectedUdpFlow status=" + std::string(StatusName(opened.status));
+            result.detail = R_FAILED(rc) ? "OpenConnectedFlow CMIF failure"
+                            : opened.status != ProtocolStatus::Success
+                                ? "OpenConnectedFlow status=" + std::string(StatusName(opened.status))
+                                : "OpenConnectedFlow did not publish a virtual local endpoint";
             break;
         }
         flows[opened_flows] = opened.flow;
@@ -912,15 +919,19 @@ ScenarioResult RunWgnxTunnelContractValidation(
     const OpenConnectedFlowRequest request{
         .remote =
             {.address = {destination[0], destination[1], destination[2], destination[3]}, .port = workload.destination_port, .reserved = 0},
+        .kind = FlowKind::Udp,
+        .reserved = 0,
         .diagnostic_tag = (static_cast<std::uint64_t>(workload.workload_id) << 32U) | 0x434F4E54U,
     };
     const auto open_flow = [&](client::ScopedClient& tunnel_client, FlowHandle* out_flow) -> bool {
         OpenConnectedFlowResult opened{};
-        rc = client::OpenConnectedUdpFlow(tunnel_client, request, &opened);
-        if (R_FAILED(rc) || opened.status != ProtocolStatus::Success) {
+        rc = client::OpenConnectedFlow(tunnel_client, request, &opened);
+        if (R_FAILED(rc) || opened.status != ProtocolStatus::Success || opened.advertised_local.port == 0) {
             result.rc = rc;
-            result.detail = R_FAILED(rc) ? "OpenConnectedUdpFlow CMIF failure"
-                                         : "OpenConnectedUdpFlow status=" + std::string(StatusName(opened.status));
+            result.detail = R_FAILED(rc) ? "OpenConnectedFlow CMIF failure"
+                            : opened.status != ProtocolStatus::Success
+                                ? "OpenConnectedFlow status=" + std::string(StatusName(opened.status))
+                                : "OpenConnectedFlow did not publish a virtual local endpoint";
             return false;
         }
         *out_flow = opened.flow;

@@ -100,6 +100,12 @@ The legacy Scenarios page remains available for compiled diagnostics that are no
 
 Compiled values in [src/config.hpp](src/config.hpp) are the canonical defaults.
 
+The legacy `https_get` and `connection_test_global_ip` scenarios initialize their own BSD socket and `ssl:*` sessions, then verify the platform peer CA, hostname, and certificate date.
+
+`ConnectionTestGlobalIpUri` configures the latter target as an `https://host[:port]/path` URI.
+
+It reports the resolved peer, negotiated cipher, bounded response preview, and validated `global_ip` value.
+
 At startup, the toolbox overlays recognized settings from `sdmc:/config/nxrv-toolbox/config.ini`.
 
 Unknown keys and invalid values are logged and that individual setting falls back to its compiled default.
@@ -129,11 +135,11 @@ The scenario result records total `queue_full_events` so a bounded-burst evaluat
 
 ### WireGuard Sysmodule Shutdown
 
-The toolbox consumes `wgnx:ctl` API v5 and `wgnx:tun` API v4 from the configured `WGNX_COMMON` headers.
+The toolbox consumes `wgnx:ctl` API v5 and `wgnx:tun` API v5 from the configured `WGNX_COMMON` headers.
 
 Before opening `wgnx:tun`, toolbox uses Atmosphere's read-only SM `HasService` extension so an absent sysmodule reports a scenario error without blocking the worker or mutating SM registration state.
 
-`wgnx:tun` API v4 signals every client completion event during orderly sysmodule shutdown without enqueuing a synthetic completion record.
+`wgnx:tun` API v5 signals every client completion event during orderly sysmodule shutdown without enqueuing a synthetic completion record.
 
 When a running workload wakes and its following `ReceiveCompletions` call fails, toolbox records terminal `wgnx:tun service closed` state, stops the workload, and releases its local event, flow, and CMIF session state without retrying the closed service.
 

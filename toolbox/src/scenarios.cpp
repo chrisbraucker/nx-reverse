@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "config.hpp"
+#include "https_scenario_parsing.hpp"
 #include "logger.hpp"
 #include "manual_bsd_lifecycle.hpp"
 #include "socket_config.hpp"
@@ -53,7 +54,7 @@ struct ConnectionTestSpec {
     bool upload;
 };
 
-class ConnectionTestSocketScope {
+class SocketScope {
   public:
     Result Initialize() {
         m_rc = socketInitialize(&config::SocketConfigApplication);
@@ -61,9 +62,28 @@ class ConnectionTestSocketScope {
         return m_rc;
     }
 
-    ~ConnectionTestSocketScope() {
+    ~SocketScope() {
         if (m_initialized) {
             socketExit();
+        }
+    }
+
+  private:
+    Result m_rc{};
+    bool m_initialized{};
+};
+
+class SslServiceScope {
+  public:
+    Result Initialize() {
+        m_rc = sslInitialize(1);
+        m_initialized = R_SUCCEEDED(m_rc);
+        return m_rc;
+    }
+
+    ~SslServiceScope() {
+        if (m_initialized) {
+            sslExit();
         }
     }
 
@@ -600,22 +620,28 @@ ScenarioResult RunHttpGet(AppContext& ctx) {
     return result;
 }
 
-ScenarioResult RunHttpsGet(AppContext& ctx) {
-    ScenarioResult result{.name = "https_get"};
+ScenarioResult RunVerifiedHttpsGet(AppContext& ctx, const char* name, const HttpsTarget& target, const bool require_global_ip) {
+    ScenarioResult result{.name = name};
+    logger::Status(ctx, "Running HTTPS GET for https://%s:%u%s", target.host.c_str(), target.port, target.path.c_str());
 
-    if (!ctx.ssl_initialized) {
-        result.skipped = true;
-        result.rc = ctx.ssl_initialize_rc;
-        result.detail = "ssl unavailable: " + FormatResult(ctx.ssl_initialize_rc);
-        logger::Status(ctx, "Running HTTPS GET for https://%s%s", config::HttpsHost, config::HttpsPath);
-        logger::Log(ctx, "scenario=%s skipped: %s", result.name.c_str(), result.detail.c_str());
+    SocketScope socket_scope;
+    const Result socket_rc = socket_scope.Initialize();
+    if (R_FAILED(socket_rc)) {
+        result.rc = socket_rc;
+        result.detail = "socketInitialize failed: " + FormatResult(socket_rc);
         return result;
     }
 
-    logger::Status(ctx, "Running HTTPS GET for https://%s%s", config::HttpsHost, config::HttpsPath);
+    SslServiceScope ssl_scope;
+    const Result ssl_rc = ssl_scope.Initialize();
+    if (R_FAILED(ssl_rc)) {
+        result.rc = ssl_rc;
+        result.detail = "sslInitialize failed: " + FormatResult(ssl_rc);
+        return result;
+    }
 
     ResolvedEndpoint endpoint{};
-    if (!ResolveIpv4(ctx, config::HttpsHost, config::HttpsPort, SOCK_STREAM, endpoint, result.detail)) {
+    if (!ResolveIpv4(ctx, target.host.c_str(), target.port, SOCK_STREAM, endpoint, result.detail)) {
         return result;
     }
 
@@ -667,7 +693,7 @@ ScenarioResult RunHttpsGet(AppContext& ctx) {
     }
     const int owned_sockfd = transferred_sockfd >= 0 ? transferred_sockfd : -1;
 
-    rc = sslConnectionSetHostName(&ssl_connection, config::HttpsHost, std::strlen(config::HttpsHost));
+    rc = sslConnectionSetHostName(&ssl_connection, target.host.c_str(), target.host.size());
     if (R_FAILED(rc)) {
         result.rc = rc;
         result.detail = "sslConnectionSetHostName failed: " + FormatResult(rc);
@@ -721,8 +747,8 @@ ScenarioResult RunHttpsGet(AppContext& ctx) {
         sizeof(request),
         "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: "
         "nxrv-toolbox/1\r\nConnection: close\r\n\r\n",
-        config::HttpsPath,
-        config::HttpsHost
+        target.path.c_str(),
+        target.host.c_str()
     );
     if (request_len <= 0 || static_cast<std::size_t>(request_len) >= sizeof(request)) {
         result.detail = "request formatting failed";
@@ -773,12 +799,38 @@ ScenarioResult RunHttpsGet(AppContext& ctx) {
                     " request_preview=" + EscapePreview(request, static_cast<std::size_t>(request_len), 96) +
                     " response_preview=" + EscapePreview(buffer.data(), result.bytes_received, 160);
 
+    if (result.success && require_global_ip) {
+        std::string global_ip;
+        std::string parse_detail;
+        result.success = ParseGlobalIpResponse(std::string_view(buffer.data(), result.bytes_received), global_ip, parse_detail);
+        if (result.success) {
+            result.detail += " global_ip=" + global_ip;
+        } else {
+            result.detail += " global_ip_parse_error=" + parse_detail;
+        }
+    }
+
     sslConnectionClose(&ssl_connection);
     if (owned_sockfd >= 0) {
         close(owned_sockfd);
     }
     sslContextClose(&ssl_context);
     return result;
+}
+
+ScenarioResult RunHttpsGet(AppContext& ctx) {
+    return RunVerifiedHttpsGet(ctx, "https_get", {.host = config::HttpsHost, .port = config::HttpsPort, .path = config::HttpsPath}, false);
+}
+
+ScenarioResult RunConnectionTestGlobalIp(AppContext& ctx) {
+    ScenarioResult result{.name = "connection_test_global_ip"};
+    HttpsTarget target{};
+    if (!ParseHttpsUri(config::ConnectionTestGlobalIpUri, target, result.detail)) {
+        return result;
+    }
+
+    logger::Status(ctx, "Running global IP check for %s", config::ConnectionTestGlobalIpUri);
+    return RunVerifiedHttpsGet(ctx, result.name.c_str(), target, true);
 }
 
 ScenarioResult RunCurlHttpGet(AppContext& ctx) {
@@ -918,7 +970,7 @@ ScenarioResult RunConnectionTest(AppContext& ctx, const ConnectionTestSpec& spec
     ScenarioResult result{.name = spec.name};
     logger::Status(ctx, "Running %s http://%s%s", spec.name, spec.host, spec.path);
 
-    ConnectionTestSocketScope socket_scope;
+    SocketScope socket_scope;
     const Result socket_rc = socket_scope.Initialize();
     if (R_FAILED(socket_rc)) {
         result.rc = socket_rc;
@@ -1409,8 +1461,8 @@ void LogScenarioResult(AppContext& ctx, const ScenarioResult& result) {
     );
 }
 
-const std::array<ScenarioStep, 23>& ScenarioSteps() {
-    static const std::array<ScenarioStep, 23> steps = {{
+const std::array<ScenarioStep, 24>& ScenarioSteps() {
+    static const std::array<ScenarioStep, 24> steps = {{
         {{"Download test 30M",
           "Fetches 30MiB from the official endpoint natively and reports end-to-end throughput.",
           "GET http://ctest-dl-lp1.cdn.nintendo.net/30m HTTP/1.0, User-Agent: Nintendo NX, Accept: */*"},
@@ -1467,9 +1519,14 @@ const std::array<ScenarioStep, 23>& ScenarioSteps() {
           "Makes one HTTPS GET through libnx ssl after resolving and opening the BSD socket itself. It verifies the peer CA, hostname, "
           "and "
           "date.",
-          "host=example.com port=443 path=/ timeout=5000 ms, SSL initialization required"},
+          "host=example.com port=443 path=/ timeout=5000 ms, scoped SSL initialization"},
          config::EnableScenarioHttpsGet,
          RunHttpsGet},
+        {{"connection_test_global_ip",
+          "Uses the platform trust store to fetch and validate the IPv4 global-IP connection-check response over HTTPS.",
+          "configured https://host[:port]/path URI, peer CA, hostname, and date verification required"},
+         config::EnableScenarioConnectionTestGlobalIp,
+         RunConnectionTestGlobalIp},
         {{"curl_http_get",
           "Makes one HTTP GET through libcurl. It is a higher-level comparison against the manual HTTP scenario.",
           "host=example.com port=80 path=/, curl initialization required"},
@@ -1570,8 +1627,8 @@ const char* FindNextEnabledScenarioName(const ScenarioStep* steps, std::size_t c
 } // namespace
 
 std::span<const ScenarioDescriptor> AvailableScenarios() {
-    static const std::array<ScenarioDescriptor, 23> descriptors = [] {
-        std::array<ScenarioDescriptor, 23> result{};
+    static const std::array<ScenarioDescriptor, 24> descriptors = [] {
+        std::array<ScenarioDescriptor, 24> result{};
         const auto& steps = ScenarioSteps();
         for (std::size_t index = 0; index < steps.size(); ++index) {
             result[index] = steps[index].descriptor;

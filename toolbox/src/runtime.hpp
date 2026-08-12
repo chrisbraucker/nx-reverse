@@ -35,8 +35,6 @@ struct AppContext {
     bool applet_exit_locked = false;
     Result nifm_initialize_rc = 0;
     bool nifm_initialized = false;
-    Result ssl_initialize_rc = 0;
-    bool ssl_initialized = false;
     CURLSH* curl_share = nullptr;
     CURLcode curl_global_rc = CURLE_OK;
     bool curl_initialized = false;

@@ -69,6 +69,14 @@ if(TOOLBOX_BUILD_HOST_TESTS)
     target_compile_features(toolbox_runtime_config_tests PRIVATE cxx_std_23)
     target_compile_options(toolbox_runtime_config_tests PRIVATE -Wall -Wextra -Werror)
     add_test(NAME toolbox_runtime_config_tests COMMAND toolbox_runtime_config_tests)
+    add_executable(toolbox_https_scenario_parsing_tests
+        src/https_scenario_parsing.cpp
+        test/https_scenario_parsing_tests.cpp)
+    target_include_directories(toolbox_https_scenario_parsing_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_features(toolbox_https_scenario_parsing_tests PRIVATE cxx_std_23)
+    target_compile_options(toolbox_https_scenario_parsing_tests PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME toolbox_https_scenario_parsing_tests COMMAND toolbox_https_scenario_parsing_tests)
     return()
 endif()
 
