@@ -15,6 +15,18 @@ GHIDRA_VERSION="12.1.2"
 GHIDRA_BUILD="20260605"
 GHIDRA_ZIP="ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_BUILD}.zip"
 GHIDRA_URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/${GHIDRA_ZIP}"
+GHIDRA_SHA256="b62e81a0390618466c019c60d8c2f796ced2509c4c1aea4a37644a77272cf99d"
+
+JDK_VERSION="21.0.12+8"
+JDK_ARCHIVE="OpenJDK21U-jdk_aarch64_linux_hotspot_21.0.12_8.tar.gz"
+JDK_URL="https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12%2B8/${JDK_ARCHIVE}"
+JDK_SHA256="eba38e871b02d407897bfe017ea35352dfc1420ef6d2112425b0c67325ca509d"
+
+RUSTUP_VERSION="1.29.0"
+RUSTUP_ARCHIVE="rustup-init-${RUSTUP_VERSION}-aarch64-unknown-linux-gnu"
+RUSTUP_URL="https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/aarch64-unknown-linux-gnu/rustup-init"
+RUSTUP_SHA256="9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792"
+RUST_VERSION="1.97.1"
 
 GHIDRA_DIR="${NX_REVERSE_GHIDRA_DIR:-${TOOLCHAIN_PREFIX}/ghidra}"
 JDK_DIR="${NX_REVERSE_JDK_DIR:-${TOOLCHAIN_PREFIX}/jdk}"
@@ -31,7 +43,7 @@ need_cmd() {
     }
 }
 
-for cmd in bash curl git python3 unzip tar; do
+for cmd in bash curl git python3 sha256sum unzip tar; do
     need_cmd "$cmd"
 done
 
@@ -62,12 +74,10 @@ EOF
 }
 
 download_jdk() {
-    local json url tgz extract_dir jdk_extract
-    json="$(curl -fsSL -H 'User-Agent: nx-reverse' \
-        'https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=aarch64&heap_size=normal&image_type=jdk&jvm_impl=hotspot&os=linux&vendor=eclipse')"
-    url="$(printf '%s' "$json" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["binary"]["package"]["link"])')"
-    tgz="${CACHE_DIR}/${url##*/}"
-    [[ -f "$tgz" ]] || curl -L --fail -o "$tgz" "$url"
+    local tgz extract_dir jdk_extract
+    tgz="${CACHE_DIR}/${JDK_ARCHIVE}"
+    [[ -f "$tgz" ]] || curl -L --fail -o "$tgz" "$JDK_URL"
+    printf '%s  %s\n' "$JDK_SHA256" "$tgz" | sha256sum --check --status
 
     extract_dir="${CACHE_DIR}/jdk-extract"
     rm -rf "${extract_dir}" "${JDK_DIR}"
@@ -82,6 +92,7 @@ install_ghidra() {
     local zip_path extract_dir extracted_root
     zip_path="${CACHE_DIR}/${GHIDRA_ZIP}"
     [[ -f "$zip_path" ]] || curl -L --fail -o "$zip_path" "$GHIDRA_URL"
+    printf '%s  %s\n' "$GHIDRA_SHA256" "$zip_path" | sha256sum --check --status
 
     extract_dir="${CACHE_DIR}/ghidra-extract"
     rm -rf "${extract_dir}" "${GHIDRA_DIR}"
@@ -106,14 +117,19 @@ apply_patch_if_needed() {
 }
 
 install_rustup() {
+    local rustup_init
     export CARGO_HOME RUSTUP_HOME
     if [[ ! -x "${CARGO_HOME}/bin/rustup" ]]; then
-        curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --no-modify-path
+        rustup_init="${CACHE_DIR}/${RUSTUP_ARCHIVE}"
+        [[ -f "$rustup_init" ]] || curl -L --fail -o "$rustup_init" "$RUSTUP_URL"
+        printf '%s  %s\n' "$RUSTUP_SHA256" "$rustup_init" | sha256sum --check --status
+        chmod +x "$rustup_init"
+        "$rustup_init" -y --profile minimal --no-modify-path --default-toolchain none
     fi
     # shellcheck disable=SC1090
     . "${CARGO_HOME}/env"
-    rustup toolchain install stable --profile minimal >/dev/null
-    rustup default stable >/dev/null
+    rustup toolchain install "$RUST_VERSION" --profile minimal >/dev/null
+    rustup default "$RUST_VERSION" >/dev/null
 }
 
 build_ghidra_cli() {
@@ -221,7 +237,8 @@ write_wrappers
 echo "Installed:"
 echo "  Prefix:       ${TOOLCHAIN_PREFIX}"
 echo "  Ghidra:       ${GHIDRA_DIR}"
-echo "  JDK:          ${JDK_DIR}"
+echo "  JDK:          ${JDK_DIR} (${JDK_VERSION})"
+echo "  Rust:         ${RUST_VERSION}"
 echo "  CARGO_HOME:   ${CARGO_HOME}"
 echo "  RUSTUP_HOME:  ${RUSTUP_HOME}"
 echo "  Cache:        ${CACHE_DIR}"

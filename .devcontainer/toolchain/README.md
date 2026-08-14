@@ -9,9 +9,10 @@ The repo now ships its own `.devcontainer/` based on the `wireguard-nx` baseline
 Included in the container image:
 
 - everything from the original `wireguard-nx` devcontainer baseline
+- Go `1.26.5`
 - `jq`
 - Ghidra `12.1.2`
-- JDK `21`
+- Temurin JDK `21.0.12+8`
 - `ghidra-cli` built from source
 - Adubbz Switch loader patched for Ghidra `12`
 - `linux_arm_64` decompiler natives
@@ -30,6 +31,8 @@ Do not rerun `.devcontainer/toolchain/install.sh` there unless you are intention
 Container layout:
 
 - tool binaries live under `/opt/toolchain`
+- Go lives at `/usr/local/go` and is available on `PATH`
+- devkitA64 tools, including `aarch64-none-elf-gdb`, are available on `PATH`
 - project-local persistent state lives under `workspace/`
 - Ghidra projects live under `workspace/ghidra/projects`
 - Ghidra and `ghidra-cli` config are persisted under `workspace/config/`
@@ -70,13 +73,21 @@ Persistent workspace state stays in-repo under `workspace/` and is initialized b
 
 Installed components:
 
+- Go `1.26.5`
 - Ghidra `12.1.2`
-- Temurin JDK `21`
+- Temurin JDK `21.0.12+8`
+- Rust `1.97.1`
 - `ghidra-cli` from source
 - Adubbz Switch loader, built against local Ghidra
 - `linux_arm_64` native `decompile` and `sleigh` binaries under Ghidra's `build/os/` tree
 
 It also applies the local compatibility patches in [ghidra-cli-g12.patch](/workspaces/nx-reversing.git/.devcontainer/toolchain/patches/ghidra-cli-g12.patch:1) and [ghidra-switch-loader-g12.patch](/workspaces/nx-reversing.git/.devcontainer/toolchain/patches/ghidra-switch-loader-g12.patch:1).
+
+The devkitA64 base image, Go archive, Temurin archive, Ghidra archive, Rust bootstrapper, Rust toolchain version, and source revisions are pinned by the container recipe.
+
+The image builds the Ghidra toolchain in a dedicated stage.
+Only changes to `toolchain/install.sh` or `toolchain/patches/` invalidate that expensive stage.
+Go is installed afterwards in the final development stage.
 
 ## Use
 
