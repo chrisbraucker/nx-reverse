@@ -92,6 +92,7 @@ All records must include `"event"` with one of the following values.
 - `nifm_semantic`
 - `bsd_semantic`
 - `ssl_semantic`
+- `notif_registration`
 
 ### Optional future correlation
 
@@ -99,6 +100,14 @@ All records must include `"event"` with one of the following values.
 - `debug_marker`
 
 These last two are reserved so later runtime debugging can insert matching timestamps or sequence IDs without changing the trace shape.
+
+### Notification registration records
+
+`notif_registration` is the narrow passive record for `notif:s` command `8000`.
+
+It includes the client PID and program ID, request and response monotonic timestamps, forwarded result, and duration.
+
+It intentionally excludes the request payload and all other notification-service commands.
 
 ## Common Fields
 

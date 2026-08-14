@@ -138,16 +138,7 @@ const char* GetToolboxForwarderBsdMitmModeName();
 const char* GetNifmSystemMitmTargetName();
 
 void LogBuildPolicy() {
-    wgnx::net_probe::logger::Log(
-        "MITM targets: nifm:u=%u nifm:s=%u bsd:u=%u bsd:s=%u bsd:a=%u ssl=%u ssl:s=%u",
-        static_cast<unsigned>(cfg::EnableMitmNifmUser),
-        static_cast<unsigned>(cfg::EnableMitmNifmSystem),
-        static_cast<unsigned>(cfg::EnableMitmBsdUser),
-        static_cast<unsigned>(cfg::EnableMitmBsdSystem),
-        static_cast<unsigned>(cfg::EnableMitmBsdAdmin),
-        static_cast<unsigned>(cfg::EnableMitmSslUser),
-        static_cast<unsigned>(cfg::EnableMitmSslSystem)
-    );
+    wgnx::net_probe::logger::Log("MITM target settings: section=net-probe snapshot=startup missing_key=disabled");
     wgnx::net_probe::logger::Log(
         "nifm:s trace target=%s (%u)",
         GetNifmSystemMitmTargetName(),
@@ -695,6 +686,10 @@ class PassiveMitmService : public ::ams::sf::MitmServiceImplBase {
 
         return ShouldMitmForService("ssl:s", client_info);
     }
+
+    static bool ShouldMitmNotificationSystem(const ::ams::sm::MitmProcessInfo& client_info) {
+        return ShouldMitmForService("notif:s", client_info);
+    }
 };
 
 class ProbeControlService {
@@ -729,26 +724,51 @@ enum PortIndex {
     PortIndex_BsdAdmin = 4,
     PortIndex_SslUser = 5,
     PortIndex_SslSystem = 6,
-    PortIndex_Count = 7,
+    PortIndex_NotificationSystem = 7,
+    PortIndex_Count = 8,
 };
 
 using ShouldMitmCallback = bool (*)(const ::ams::sm::MitmProcessInfo&);
 
 struct MitmTargetConfig {
     const char* service_name;
+    const char* setting_key;
     ShouldMitmCallback should_mitm;
-    bool enabled;
 };
 
 constexpr MitmTargetConfig g_mitm_target_configs[PortIndex_Count] = {
-    {"nifm:u", &PassiveMitmService::ShouldMitmNifmUser, cfg::EnableMitmNifmUser},
-    {"nifm:s", &PassiveMitmService::ShouldMitmNifmSystem, cfg::EnableMitmNifmSystem},
-    {"bsd:u", &PassiveMitmService::ShouldMitmBsdUser, cfg::EnableMitmBsdUser},
-    {"bsd:s", &PassiveMitmService::ShouldMitmBsdSystem, cfg::EnableMitmBsdSystem},
-    {"bsd:a", &PassiveMitmService::ShouldMitmBsdAdmin, cfg::EnableMitmBsdAdmin},
-    {"ssl", &PassiveMitmService::ShouldMitmSslUser, cfg::EnableMitmSslUser},
-    {"ssl:s", &PassiveMitmService::ShouldMitmSslSystem, cfg::EnableMitmSslSystem},
+    {"nifm:u", "enable_nifm_u", &PassiveMitmService::ShouldMitmNifmUser},
+    {"nifm:s", "enable_nifm_s", &PassiveMitmService::ShouldMitmNifmSystem},
+    {"bsd:u", "enable_bsd_u", &PassiveMitmService::ShouldMitmBsdUser},
+    {"bsd:s", "enable_bsd_s", &PassiveMitmService::ShouldMitmBsdSystem},
+    {"bsd:a", "enable_bsd_a", &PassiveMitmService::ShouldMitmBsdAdmin},
+    {"ssl", "enable_ssl", &PassiveMitmService::ShouldMitmSslUser},
+    {"ssl:s", "enable_ssl_s", &PassiveMitmService::ShouldMitmSslSystem},
+    {"notif:s", "enable_notif_s", &PassiveMitmService::ShouldMitmNotificationSystem},
 };
+
+constinit bool g_mitm_target_enabled[PortIndex_Count] = {};
+
+bool IsMitmTargetEnabled(size_t index) {
+    AMS_ABORT_UNLESS(index < PortIndex_Count);
+    return g_mitm_target_enabled[index];
+}
+
+void LoadMitmTargetSettings() {
+    for (size_t i = 0; i < std::size(g_mitm_target_configs); ++i) {
+        const auto& target = g_mitm_target_configs[i];
+        u8 value = 0;
+        const size_t size =
+            ::ams::settings::fwdbg::GetSettingsItemValue(std::addressof(value), sizeof(value), "net-probe", target.setting_key);
+        g_mitm_target_enabled[i] = size == sizeof(value) && value != 0;
+        wgnx::net_probe::logger::Log(
+            "MITM target config: service=%s key=%s enabled=%u",
+            target.service_name,
+            target.setting_key,
+            g_mitm_target_enabled[i] ? 1u : 0u
+        );
+    }
+}
 
 constexpr size_t NumSessions = 48;
 constexpr size_t ControlMaxSessions = 4;
@@ -1092,10 +1112,11 @@ void LogAllHasMitmStates(const char* phase) {
 }
 
 void LogEnabledTargetHasMitmStates(const char* phase) {
-    for (const auto& target : g_mitm_target_configs) {
-        if (!target.enabled) {
+    for (size_t i = 0; i < std::size(g_mitm_target_configs); ++i) {
+        if (!IsMitmTargetEnabled(i)) {
             continue;
         }
+        const auto& target = g_mitm_target_configs[i];
         LogHasMitmState(target.service_name, phase);
     }
 }
@@ -1340,10 +1361,11 @@ void ClearResidualMitmState(const char* service_name, const char* phase) {
 }
 
 void ClearAllResidualMitmStates(const char* phase) {
-    for (const auto& target : g_mitm_target_configs) {
-        if (!target.enabled) {
+    for (size_t i = 0; i < std::size(g_mitm_target_configs); ++i) {
+        if (!IsMitmTargetEnabled(i)) {
             continue;
         }
+        const auto& target = g_mitm_target_configs[i];
         ClearResidualMitmState(target.service_name, phase);
     }
 }
@@ -1494,6 +1516,7 @@ bool StartServers() {
     g_shutdown_requested = false;
 
     mitm_trace::Initialize();
+    LoadMitmTargetSettings();
     mitm_trace::RegisterMonitorHooks();
     LogBuildPolicy();
     LogResolverHasMitmStates("pre_register");
@@ -1545,8 +1568,8 @@ bool StartServers() {
     u32 failed_server_count = 0;
     for (size_t i = 0; i < std::size(g_mitm_target_configs); ++i) {
         const auto& target = g_mitm_target_configs[i];
-        if (!target.enabled) {
-            wgnx::net_probe::logger::Log("Skipping MITM server for %s: disabled by build config", target.service_name);
+        if (!IsMitmTargetEnabled(i)) {
+            wgnx::net_probe::logger::Log("Skipping MITM server for %s: disabled by system setting", target.service_name);
             continue;
         }
         ++requested_server_count;

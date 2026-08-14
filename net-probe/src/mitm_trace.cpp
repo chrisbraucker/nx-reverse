@@ -28,6 +28,9 @@ constexpr const char* BsdBinaryPath = "sdmc:/nxrv/probe/probe-mitm-bsd.bin";
 constexpr const char* SslTracePath = "sdmc:/nxrv/probe/probe-mitm-ssl.jsonl";
 constexpr const char* SslMetaPath = "sdmc:/nxrv/probe/probe-mitm-ssl-meta.json";
 constexpr const char* SslBinaryPath = "sdmc:/nxrv/probe/probe-mitm-ssl.bin";
+constexpr const char* NotifTracePath = "sdmc:/nxrv/probe/probe-mitm-notif.jsonl";
+constexpr const char* NotifMetaPath = "sdmc:/nxrv/probe/probe-mitm-notif-meta.json";
+constexpr const char* NotifBinaryPath = "sdmc:/nxrv/probe/probe-mitm-notif.bin";
 constexpr u32 InHeaderMagic = ::ams::util::FourCC<'S', 'F', 'C', 'I'>::Code;
 constexpr u32 OutHeaderMagic = ::ams::util::FourCC<'S', 'F', 'C', 'O'>::Code;
 constexpr u32 BinaryTraceMagic = ::ams::util::FourCC<'W', 'G', 'T', 'B'>::Code;
@@ -113,6 +116,7 @@ enum class TraceFamily : u8 {
     Nifm,
     Bsd,
     Ssl,
+    Notif,
 };
 
 TraceFamily GetTraceFamilyForServiceName(const char* service_name);
@@ -129,6 +133,7 @@ constexpr TraceSinkConfig g_trace_sinks[] = {
     {TraceFamily::Nifm, "nifm", NifmTracePath, NifmMetaPath, NifmBinaryPath},
     {TraceFamily::Bsd, "bsd", BsdTracePath, BsdMetaPath, BsdBinaryPath},
     {TraceFamily::Ssl, "ssl", SslTracePath, SslMetaPath, SslBinaryPath},
+    {TraceFamily::Notif, "notif", NotifTracePath, NotifMetaPath, NotifBinaryPath},
 };
 
 enum class TraceServiceCode : u16 {
@@ -140,6 +145,7 @@ enum class TraceServiceCode : u16 {
     BsdA = 0x203,
     Ssl = 0x301,
     SslS = 0x302,
+    NotifS = 0x401,
 };
 
 enum class BinaryCapturePhase : u8 {
@@ -239,6 +245,9 @@ TraceServiceCode GetTraceServiceCode(const char* service_name) {
     if (std::strcmp(service_name, "ssl:s") == 0) {
         return TraceServiceCode::SslS;
     }
+    if (std::strcmp(service_name, "notif:s") == 0) {
+        return TraceServiceCode::NotifS;
+    }
     return TraceServiceCode::Unknown;
 }
 
@@ -251,6 +260,9 @@ TraceFamily GetTraceFamilyForServiceName(const char* service_name) {
     }
     if (StartsWith(service_name, "ssl")) {
         return TraceFamily::Ssl;
+    }
+    if (std::strcmp(service_name, "notif:s") == 0) {
+        return TraceFamily::Notif;
     }
     return TraceFamily::Broadcast;
 }
@@ -266,6 +278,9 @@ void AppendLineToPath(const char* path, const char* line) {
 void AppendLine(TraceFamily family, const char* line) {
     if (family == TraceFamily::Broadcast) {
         for (const auto& sink : g_trace_sinks) {
+            if (sink.family == TraceFamily::Notif) {
+                continue;
+            }
             AppendLineToPath(sink.trace_path, line);
         }
         return;
@@ -3555,6 +3570,9 @@ void AppendJsonLine(TraceFamily family, const char* json) {
 }
 
 void AppendJsonLineForService(const char* service_name, const char* json) {
+    if (service_name != nullptr && std::strcmp(service_name, "notif:s") == 0) {
+        return;
+    }
     AppendJsonLine(GetTraceFamilyForServiceName(service_name), json);
 }
 
@@ -4631,6 +4649,42 @@ void OnForwardRequestTrace(const ams::sf::hipc::mitm_monitor::ForwardRequestTrac
     EncodeServiceName(service_name, sizeof(service_name), ctx.service_name);
     FormatProgramId(client_program_id, sizeof(client_program_id), ctx.client_info.program_id);
     std::snprintf(run_id, sizeof(run_id), "tick-%llu", static_cast<unsigned long long>(g_run_tick));
+
+    if (std::strcmp(service_name, "notif:s") == 0) {
+        constexpr u32 RegisterAppletResourceUserIdCommand = 8000;
+        const ParsedRequestInfo request_info = ParseRequestInfo(ctx.request_message);
+        if (!request_info.valid || request_info.is_close || request_info.command_id != RegisterAppletResourceUserIdCommand) {
+            return;
+        }
+
+        const u64 request_id = g_next_request_id.fetch_add(1);
+        const u64 request_ts_ns = static_cast<u64>(ams::os::ConvertToTimeSpan(ctx.start_tick).GetNanoSeconds());
+        const u64 response_ts_ns = static_cast<u64>(ams::os::ConvertToTimeSpan(ctx.end_tick).GetNanoSeconds());
+        char line[1024];
+        const int written = std::snprintf(
+            line,
+            sizeof(line),
+            "{\"schema_version\":1,\"run_id\":\"%s\",\"scenario\":\"unknown\",\"event\":\"notif_registration\","
+            "\"ts_monotonic_ns\":%llu,\"response_ts_monotonic_ns\":%llu,\"ts_utc\":\"unknown\",\"service\":\"notif:s\","
+            "\"client_pid\":%llu,\"client_program_id\":\"%s\",\"server_program_id\":\"0x010000000000EAD1\","
+            "\"thread_id\":0,\"session_id\":%llu,\"object_id\":%u,\"request_id\":%llu,\"command_id\":8000,"
+            "\"command_name\":\"RegisterAppletResourceUserId\",\"result\":\"0x%08X\",\"duration_ns\":%llu}\n",
+            run_id,
+            static_cast<unsigned long long>(request_ts_ns),
+            static_cast<unsigned long long>(response_ts_ns),
+            static_cast<unsigned long long>(ctx.client_info.process_id.value),
+            client_program_id,
+            static_cast<unsigned long long>(ctx.session_id),
+            request_info.object_id,
+            static_cast<unsigned long long>(request_id),
+            ctx.forward_result.GetValue(),
+            static_cast<unsigned long long>(GetDurationNs(ctx.start_tick, ctx.end_tick))
+        );
+        if (written > 0) {
+            AppendJsonLine(TraceFamily::Notif, line);
+        }
+        return;
+    }
 
     const char* scenario = "unknown";
     const u64 request_id = g_next_request_id.fetch_add(1);

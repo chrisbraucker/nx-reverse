@@ -13,19 +13,10 @@ namespace wgnx::net_probe::build_config {
 inline constexpr unsigned long long ToolboxForwarderProgramId = WGNX_NET_PROBE_TOOLBOX_FORWARDER_PROGRAM_ID;
 
 /*
- * Edit these booleans directly when assembling a probe build.
+ * The compiled target list is intentionally static.
  *
- * Keep the full policy in one place so the compiled binary's intended MITM
- * surface is obvious from source review alone.
+ * `system_settings.ini` selects which of those targets register at boot.
  */
-
-inline constexpr bool EnableMitmNifmUser = false;
-inline constexpr bool EnableMitmNifmSystem = false;
-inline constexpr bool EnableMitmBsdUser = false;
-inline constexpr bool EnableMitmBsdSystem = true;
-inline constexpr bool EnableMitmBsdAdmin = false;
-inline constexpr bool EnableMitmSslUser = false;
-inline constexpr bool EnableMitmSslSystem = false;
 
 /*
  * Run B: trace NIM's native nifm:s request lifecycle from early boot.

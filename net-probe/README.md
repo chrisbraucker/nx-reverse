@@ -1,5 +1,28 @@
 # Net Probe
 
+## Configuration
+
+The compiled MITM target set is selected at boot through Atmosphère's `system_settings.ini`.
+
+Use the `[net-probe]` section.
+
+Missing keys disable their target.
+
+For the Glue registration experiment, enable only `notif:s`:
+
+```ini
+[net-probe]
+enable_notif_s = u8!0x1
+```
+
+The currently compiled target keys are `enable_nifm_u`, `enable_nifm_s`, `enable_bsd_u`, `enable_bsd_s`, `enable_bsd_a`, `enable_ssl`, `enable_ssl_s`, and `enable_notif_s`.
+
+The setting is sampled once during net-probe startup.
+
+The `notif:s` trace records only command `8000`, `RegisterAppletResourceUserId`, plus its client identity, monotonic request and response timestamps, result, and duration.
+
+Logs use the existing fixed-capacity in-memory queue and dedicated flush thread.
+
 ## Verification
 
 Formatting and static-analysis checks remain enabled for first-party sources.
