@@ -43,6 +43,20 @@ This directory is now split by topic so the `eth` and `anif` work stays readable
   - no current evidence for arbitrary custom-interface registration through NIM or NIFM
 - [module-triage.md](/workspaces/switch-workspace/nx-reversing.git/docs/20.5.0/notes/module-triage.md:1)
   - extraction/mapping notes
+- [nim-tls-context.md](/workspaces/switch-workspace/nx-reversing.git/docs/20.5.0/notes/nim-tls-context.md:1)
+  - NIM controlled ctest TLS result
+  - ctest device-certificate context setup and the sys-patch crashfix interaction
+  - focused SSL-MITM A/B run needed to explain the failed device-certificate registration
+- [baas-account.md](/workspaces/switch-workspace/nx-reversing.git/docs/20.5.0/notes/baas-account.md:1)
+  - Account's initial BaaS user-creation request
+  - confirmed creation and login-response members
+  - local BaaS-user identity consistency requirement
+- [npns.md](/workspaces/switch-workspace/nx-reversing.git/docs/20.5.0/notes/npns.md:1)
+  - observed Penne push-service lookup
+  - Account and NPNS shared device-authentication boundary
+- [glue.md](/workspaces/switch-workspace/nx-reversing.git/docs/20.5.0/notes/glue.md:1)
+  - Glue notification-state persistence trigger
+  - controlled NIM connection-test response-timing result
 
 ## Current Summary
 
@@ -61,6 +75,13 @@ This directory is now split by topic so the `eth` and `anif` work stays readable
 - `sm.kip1` now gives us a concrete service-manager angle on the probe instability: `0x815` is part of the real registration logic, so the `RegisterMitmServer(nifm:u)` failures are grounded in `sm` service-table state, not just wrapper behavior.
 - The NIFM interface-manager path currently has fixed two-kind source selection, and the suspected private manager service was a compressed-image false positive rather than a third-interface registration surface.
   The traced manager wrappers only mediate existing native-interface and BSD user sessions.
+- NIM reaches its patched controlled ctest host on a clean boot but fails during TLS before HTTP.
+  NIM normally creates a special system TLS context and registers the built-in device client certificate for the ctest transfer.
+  The installed sys-patch NIM crashfix disables exactly that callback without skipping the curl request.
+  The passive observer does not log NIM's `DoHandshakeGetServerCert` operation and also omits the successful Account handshake, so its incomplete log cannot establish a NIM-specific tracing distinction.
+  With the crashfix disabled, NIM instead aborts on the failed device-certificate registration and resets the listener connection.
+  A distinct root store, certificate pin, or stock device-certificate failure is not yet established.
+  This ctest path is deferred because it does not presently affect the Horizon networking-integration decision.
 
 ## Current Priority
 
