@@ -19,17 +19,11 @@ namespace {
 
 constexpr const char* TraceRootDirectory = "/nxrv";
 constexpr const char* TraceDirectory = "/nxrv/probe";
-constexpr const char* NifmTracePath = "sdmc:/nxrv/probe/probe-mitm-nifm.jsonl";
-constexpr const char* NifmMetaPath = "sdmc:/nxrv/probe/probe-mitm-nifm-meta.json";
+constexpr const char* TracePath = "sdmc:/nxrv/probe/probe-mitm.jsonl";
+constexpr const char* MetaPath = "sdmc:/nxrv/probe/probe-mitm-meta.json";
 constexpr const char* NifmBinaryPath = "sdmc:/nxrv/probe/probe-mitm-nifm.bin";
-constexpr const char* BsdTracePath = "sdmc:/nxrv/probe/probe-mitm-bsd.jsonl";
-constexpr const char* BsdMetaPath = "sdmc:/nxrv/probe/probe-mitm-bsd-meta.json";
 constexpr const char* BsdBinaryPath = "sdmc:/nxrv/probe/probe-mitm-bsd.bin";
-constexpr const char* SslTracePath = "sdmc:/nxrv/probe/probe-mitm-ssl.jsonl";
-constexpr const char* SslMetaPath = "sdmc:/nxrv/probe/probe-mitm-ssl-meta.json";
 constexpr const char* SslBinaryPath = "sdmc:/nxrv/probe/probe-mitm-ssl.bin";
-constexpr const char* NotifTracePath = "sdmc:/nxrv/probe/probe-mitm-notif.jsonl";
-constexpr const char* NotifMetaPath = "sdmc:/nxrv/probe/probe-mitm-notif-meta.json";
 constexpr const char* NotifBinaryPath = "sdmc:/nxrv/probe/probe-mitm-notif.bin";
 constexpr u32 InHeaderMagic = ::ams::util::FourCC<'S', 'F', 'C', 'I'>::Code;
 constexpr u32 OutHeaderMagic = ::ams::util::FourCC<'S', 'F', 'C', 'O'>::Code;
@@ -123,17 +117,14 @@ TraceFamily GetTraceFamilyForServiceName(const char* service_name);
 
 struct TraceSinkConfig {
     TraceFamily family;
-    const char* family_name;
-    const char* trace_path;
-    const char* meta_path;
     const char* binary_path;
 };
 
 constexpr TraceSinkConfig g_trace_sinks[] = {
-    {TraceFamily::Nifm, "nifm", NifmTracePath, NifmMetaPath, NifmBinaryPath},
-    {TraceFamily::Bsd, "bsd", BsdTracePath, BsdMetaPath, BsdBinaryPath},
-    {TraceFamily::Ssl, "ssl", SslTracePath, SslMetaPath, SslBinaryPath},
-    {TraceFamily::Notif, "notif", NotifTracePath, NotifMetaPath, NotifBinaryPath},
+    {TraceFamily::Nifm, NifmBinaryPath},
+    {TraceFamily::Bsd, BsdBinaryPath},
+    {TraceFamily::Ssl, SslBinaryPath},
+    {TraceFamily::Notif, NotifBinaryPath},
 };
 
 enum class TraceServiceCode : u16 {
@@ -276,19 +267,8 @@ void AppendLineToPath(const char* path, const char* line) {
 }
 
 void AppendLine(TraceFamily family, const char* line) {
-    if (family == TraceFamily::Broadcast) {
-        for (const auto& sink : g_trace_sinks) {
-            if (sink.family == TraceFamily::Notif) {
-                continue;
-            }
-            AppendLineToPath(sink.trace_path, line);
-        }
-        return;
-    }
-
-    if (const auto* sink = GetTraceSinkConfig(family); sink != nullptr) {
-        AppendLineToPath(sink->trace_path, line);
-    }
+    AMS_UNUSED(family);
+    AppendLineToPath(TracePath, line);
 }
 
 void AppendBinaryRecord(const char* path, const void* data, size_t size) {
@@ -299,7 +279,7 @@ void AppendBinaryRecord(const char* path, const void* data, size_t size) {
     wgnx::net_probe::logger::AppendBytes(path, data, size);
 }
 
-void WriteMetaFile(const TraceSinkConfig& sink) {
+void WriteMetaFile() {
     char meta[512];
     const int written = std::snprintf(
         meta,
@@ -313,7 +293,7 @@ void WriteMetaFile(const TraceSinkConfig& sink) {
         "  \"build\":{\"module\":\"net-probe-mitm\",\"git_rev\":\"%s\"}\n"
         "}\n",
         static_cast<unsigned long long>(g_run_tick),
-        sink.family_name,
+        "all",
         nxrv::build_info::BuildId
     );
     if (written <= 0) {
@@ -321,7 +301,7 @@ void WriteMetaFile(const TraceSinkConfig& sink) {
     }
 
     static_cast<void>(wgnx::net_probe::fs_runtime::WriteTextFile(
-        sink.meta_path,
+        MetaPath,
         std::string_view(meta, static_cast<size_t>(ClampLength(written, sizeof(meta))))
     ));
 }
@@ -3570,9 +3550,6 @@ void AppendJsonLine(TraceFamily family, const char* json) {
 }
 
 void AppendJsonLineForService(const char* service_name, const char* json) {
-    if (service_name != nullptr && std::strcmp(service_name, "notif:s") == 0) {
-        return;
-    }
     AppendJsonLine(GetTraceFamilyForServiceName(service_name), json);
 }
 
@@ -5248,9 +5225,7 @@ void Initialize() {
     ResetSessionHandleState();
     ResetCloneHandleState();
     ResetSessionState();
-    for (const auto& sink : g_trace_sinks) {
-        WriteMetaFile(sink);
-    }
+    WriteMetaFile();
 
     char line[512];
     const int written = std::snprintf(

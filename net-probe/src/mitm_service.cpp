@@ -138,7 +138,7 @@ const char* GetToolboxForwarderBsdMitmModeName();
 const char* GetNifmSystemMitmTargetName();
 
 void LogBuildPolicy() {
-    wgnx::net_probe::logger::Log("MITM target settings: section=net-probe snapshot=startup missing_key=disabled");
+    wgnx::net_probe::logger::Log("MITM target settings: section=net_probe snapshot=startup missing_key=disabled");
     wgnx::net_probe::logger::Log(
         "nifm:s trace target=%s (%u)",
         GetNifmSystemMitmTargetName(),
@@ -748,6 +748,9 @@ constexpr MitmTargetConfig g_mitm_target_configs[PortIndex_Count] = {
 };
 
 constinit bool g_mitm_target_enabled[PortIndex_Count] = {};
+// A successful registration belongs to this process and must be explicitly
+// relinquished when the terminal server manager is retained for process exit.
+constinit bool g_mitm_target_registration_owned[PortIndex_Count] = {};
 
 bool IsMitmTargetEnabled(size_t index) {
     AMS_ABORT_UNLESS(index < PortIndex_Count);
@@ -759,7 +762,7 @@ void LoadMitmTargetSettings() {
         const auto& target = g_mitm_target_configs[i];
         u8 value = 0;
         const size_t size =
-            ::ams::settings::fwdbg::GetSettingsItemValue(std::addressof(value), sizeof(value), "net-probe", target.setting_key);
+            ::ams::settings::fwdbg::GetSettingsItemValue(std::addressof(value), sizeof(value), "net_probe", target.setting_key);
         g_mitm_target_enabled[i] = size == sizeof(value) && value != 0;
         wgnx::net_probe::logger::Log(
             "MITM target config: service=%s key=%s enabled=%u",
@@ -1312,16 +1315,24 @@ void WatchdogThreadMain(void*) {
     }
 }
 
-void ClearResidualMitmState(const char* service_name, const char* phase) {
+void UninstallOwnedMitmRegistration(size_t index, const char* phase) {
+    AMS_ABORT_UNLESS(index < std::size(g_mitm_target_configs));
+    const auto& target = g_mitm_target_configs[index];
+    if (!g_mitm_target_registration_owned[index]) {
+        wgnx::net_probe::logger::Log("MITM shutdown unregister skipped service=%s phase=%s state=not_owner", target.service_name, phase);
+        return;
+    }
+
+    const char* service_name = target.service_name;
     const auto encoded_service_name = ::ams::sm::ServiceName::Encode(service_name);
 
     bool has_mitm = false;
     ::ams::Result has_mitm_rc = ::ams::sm::mitm::HasMitm(std::addressof(has_mitm), encoded_service_name);
     if (R_SUCCEEDED(has_mitm_rc)) {
-        wgnx::net_probe::logger::Log("ClearResidualMitmState(%s) %s: has_mitm=%u", service_name, phase, has_mitm ? 1u : 0u);
+        wgnx::net_probe::logger::Log("MITM shutdown unregister service=%s phase=%s has_mitm=%u", service_name, phase, has_mitm ? 1u : 0u);
     } else {
         wgnx::net_probe::logger::Log(
-            "ClearResidualMitmState(%s) %s: HasMitm failed rc=0x%08X",
+            "MITM shutdown unregister service=%s phase=%s HasMitm failed rc=0x%08X",
             service_name,
             phase,
             has_mitm_rc.GetValue()
@@ -1331,42 +1342,37 @@ void ClearResidualMitmState(const char* service_name, const char* phase) {
     if (R_SUCCEEDED(has_mitm_rc) && has_mitm) {
         const ::ams::Result uninstall_rc = ::ams::sm::mitm::UninstallMitm(encoded_service_name);
         wgnx::net_probe::logger::Log(
-            "ClearResidualMitmState(%s) %s: UninstallMitm rc=0x%08X",
+            "MITM shutdown unregister service=%s phase=%s UninstallMitm rc=0x%08X",
             service_name,
             phase,
             uninstall_rc.GetValue()
         );
     }
 
-    const ::ams::Result clear_future_rc = ::ams::sm::mitm::ClearFutureMitm(encoded_service_name);
-    wgnx::net_probe::logger::Log(
-        "ClearResidualMitmState(%s) %s: ClearFutureMitm rc=0x%08X",
-        service_name,
-        phase,
-        clear_future_rc.GetValue()
-    );
-
     has_mitm = false;
     has_mitm_rc = ::ams::sm::mitm::HasMitm(std::addressof(has_mitm), encoded_service_name);
     if (R_SUCCEEDED(has_mitm_rc)) {
-        wgnx::net_probe::logger::Log("ClearResidualMitmState(%s) %s: final_has_mitm=%u", service_name, phase, has_mitm ? 1u : 0u);
+        wgnx::net_probe::logger::Log(
+            "MITM shutdown unregister service=%s phase=%s final_has_mitm=%u",
+            service_name,
+            phase,
+            has_mitm ? 1u : 0u
+        );
     } else {
         wgnx::net_probe::logger::Log(
-            "ClearResidualMitmState(%s) %s: final HasMitm failed rc=0x%08X",
+            "MITM shutdown unregister service=%s phase=%s final HasMitm failed rc=0x%08X",
             service_name,
             phase,
             has_mitm_rc.GetValue()
         );
     }
+
+    g_mitm_target_registration_owned[index] = false;
 }
 
-void ClearAllResidualMitmStates(const char* phase) {
+void UninstallOwnedMitmRegistrations(const char* phase) {
     for (size_t i = 0; i < std::size(g_mitm_target_configs); ++i) {
-        if (!IsMitmTargetEnabled(i)) {
-            continue;
-        }
-        const auto& target = g_mitm_target_configs[i];
-        ClearResidualMitmState(target.service_name, phase);
+        UninstallOwnedMitmRegistration(i, phase);
     }
 }
 
@@ -1408,24 +1414,25 @@ bool WaitForThreadReady(const char* thread_name, ::ams::os::EventType* event, ::
     return true;
 }
 
-void StopAndDestroyControlServerManager() {
+void StopAndRetainControlServerManager() {
     if (g_control_server_manager == nullptr) {
         return;
     }
 
-    wgnx::net_probe::logger::Log("StopAndDestroyControlServerManager: stopping control server");
+    wgnx::net_probe::logger::Log("StopAndRetainControlServerManager: stopping control server");
     g_control_server_manager->RequestStopProcessing();
     if (g_control_thread_started) {
-        wgnx::net_probe::logger::Log("StopAndDestroyControlServerManager: waiting for control thread");
+        wgnx::net_probe::logger::Log("StopAndRetainControlServerManager: waiting for control thread");
         ::ams::os::WaitThread(std::addressof(g_control_server_thread));
         ::ams::os::DestroyThread(std::addressof(g_control_server_thread));
         g_control_thread_started = false;
-        wgnx::net_probe::logger::Log("StopAndDestroyControlServerManager: control thread stopped");
+        wgnx::net_probe::logger::Log("StopAndRetainControlServerManager: control thread stopped");
     }
-    wgnx::net_probe::logger::Log("StopAndDestroyControlServerManager: destroying control server manager");
-    std::destroy_at(g_control_server_manager);
+
+    // Horizon aborts in ServerManager destruction after LoopProcess has exited.
+    // Main returns immediately after shutdown, so retain static service state.
+    wgnx::net_probe::logger::Log("StopAndRetainControlServerManager: retaining terminal control server manager for process exit");
     g_control_server_manager = nullptr;
-    wgnx::net_probe::logger::Log("StopAndDestroyControlServerManager: complete");
 }
 
 void StopBootWatchThread() {
@@ -1452,7 +1459,7 @@ void StopWatchdogThread() {
     wgnx::net_probe::logger::Log("StopWatchdogThread: watchdog thread stopped");
 }
 
-void StopAndDestroyMitmServerManager(bool log_snapshots, bool clear_residual_state = true) {
+void StopAndRetainMitmServerManager(bool log_snapshots) {
     if (g_mitm_server_manager == nullptr) {
         return;
     }
@@ -1462,36 +1469,30 @@ void StopAndDestroyMitmServerManager(bool log_snapshots, bool clear_residual_sta
         LogAllHasMitmStates("before_stop");
     }
 
-    wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: stopping MITM server");
+    wgnx::net_probe::logger::Log("StopAndRetainMitmServerManager: stopping MITM server");
     g_mitm_server_manager->RequestStopProcessing();
     if (g_mitm_thread_started) {
-        wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: waiting for MITM thread");
+        wgnx::net_probe::logger::Log("StopAndRetainMitmServerManager: waiting for MITM thread");
         ::ams::os::WaitThread(std::addressof(g_mitm_server_thread));
         ::ams::os::DestroyThread(std::addressof(g_mitm_server_thread));
         g_mitm_thread_started = false;
-        wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: MITM thread stopped");
+        wgnx::net_probe::logger::Log("StopAndRetainMitmServerManager: MITM thread stopped");
     }
 
     if (log_snapshots) {
         mitm_trace::LogSessionSnapshot("after_stop_wait");
     }
 
-    wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: destroying MITM server manager");
-    std::destroy_at(g_mitm_server_manager);
+    // The ServerManager destructor repeats MITM cleanup through a post-dispatch
+    // Horizon path that aborts after LoopProcess has stopped.
+    UninstallOwnedMitmRegistrations("after_stop_wait");
+    wgnx::net_probe::logger::Log("StopAndRetainMitmServerManager: retaining terminal MITM server manager for process exit");
     g_mitm_server_manager = nullptr;
-    wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: destroyed MITM server manager");
 
     if (log_snapshots) {
         LogAllHasMitmStates("after_stop");
         mitm_trace::LogSessionSnapshot("after_stop");
     }
-
-    if (clear_residual_state) {
-        ClearAllResidualMitmStates("after_destroy");
-    } else {
-        wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: residual MITM clear skipped");
-    }
-    wgnx::net_probe::logger::Log("StopAndDestroyMitmServerManager: complete");
 }
 
 } // namespace
@@ -1556,7 +1557,7 @@ bool StartServers() {
     ::ams::os::StartThread(std::addressof(g_control_server_thread));
     g_control_thread_started = true;
     if (!WaitForThreadReady("wgnx-ctl", std::addressof(g_control_thread_ready_event), ThreadReadyTimeout)) {
-        StopAndDestroyControlServerManager();
+        StopAndRetainControlServerManager();
         return false;
     }
 
@@ -1582,6 +1583,7 @@ bool StartServers() {
         );
         if (R_SUCCEEDED(rc)) {
             ++registered_server_count;
+            g_mitm_target_registration_owned[i] = true;
             wgnx::net_probe::logger::Log("Registered MITM server for %s", target.service_name);
             LogHasMitmState(target.service_name, "after_register_target_success");
         } else {
@@ -1601,8 +1603,8 @@ bool StartServers() {
     if (failed_server_count != 0) {
         wgnx::net_probe::logger::Log("StartServers: MITM registration failed; tearing down partial MITM state");
         LogEnabledTargetHasMitmStates("registration_failure_before_teardown");
-        StopAndDestroyMitmServerManager(false, false);
-        StopAndDestroyControlServerManager();
+        StopAndRetainMitmServerManager(false);
+        StopAndRetainControlServerManager();
         LogEnabledTargetHasMitmStates("registration_failure_after_teardown");
         return false;
     }
@@ -1624,8 +1626,8 @@ bool StartServers() {
     );
     if (R_FAILED(thread_rc)) {
         wgnx::net_probe::logger::Log("CreateThread(wgnx-mitm) failed rc=0x%08X", thread_rc.GetValue());
-        StopAndDestroyMitmServerManager(false);
-        StopAndDestroyControlServerManager();
+        StopAndRetainMitmServerManager(false);
+        StopAndRetainControlServerManager();
         return false;
     }
 
@@ -1633,8 +1635,8 @@ bool StartServers() {
     ::ams::os::StartThread(std::addressof(g_mitm_server_thread));
     g_mitm_thread_started = true;
     if (!WaitForThreadReady("wgnx-mitm", std::addressof(g_mitm_thread_ready_event), ThreadReadyTimeout)) {
-        StopAndDestroyMitmServerManager(false);
-        StopAndDestroyControlServerManager();
+        StopAndRetainMitmServerManager(false);
+        StopAndRetainControlServerManager();
         return false;
     }
 
@@ -1708,8 +1710,8 @@ void StopServers() {
     wgnx::net_probe::logger::Log("StopServers: begin");
     StopBootWatchThread();
     StopWatchdogThread();
-    StopAndDestroyMitmServerManager(true);
-    StopAndDestroyControlServerManager();
+    StopAndRetainMitmServerManager(true);
+    StopAndRetainControlServerManager();
 
     ::ams::os::ClearEvent(std::addressof(g_shutdown_requested_event));
     ::ams::os::ClearEvent(std::addressof(g_control_thread_ready_event));

@@ -19,7 +19,7 @@ inline constexpr unsigned long long ToolboxForwarderProgramId = WGNX_NET_PROBE_T
  */
 
 /*
- * Run B: trace NIM's native nifm:s request lifecycle from early boot.
+ * Run B: trace qLaunch's native nifm:s request lifecycle from early boot.
  * Keep this narrowed to one title; do not use All for this experiment.
  */
 enum class NifmSystemMitmTarget : unsigned int {
@@ -29,7 +29,7 @@ enum class NifmSystemMitmTarget : unsigned int {
     All = 3,
 };
 
-inline constexpr NifmSystemMitmTarget NifmSystemTraceTarget = NifmSystemMitmTarget::None;
+inline constexpr NifmSystemMitmTarget NifmSystemTraceTarget = NifmSystemMitmTarget::Qlaunch;
 
 /*
  * `bsd:s` is allowlisted by these per-program diagnostic switches.

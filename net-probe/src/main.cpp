@@ -9,6 +9,15 @@ namespace ams {
 
 void Main() {
     wgnx::net_probe::logger::Initialize();
+    R_ABORT_UNLESS(::ams::sm::Initialize());
+    ON_SCOPE_EXIT {
+        ::ams::sm::Finalize();
+    };
+    R_ABORT_UNLESS(::setsysInitialize());
+    ON_SCOPE_EXIT {
+        ::setsysExit();
+    };
+
     wgnx::net_probe::logger::Log("net-probe main entered");
     wgnx::net_probe::logger::Log("Build: %s", nxrv::build_info::VersionWithBuild);
     wgnx::net_probe::logger::Log(
