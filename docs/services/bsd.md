@@ -2,6 +2,7 @@
 
 The field-level contract is [`../contracts/services/bsd.json`](../contracts/services/bsd.json).
 Read [`../contracts/README.md`](../contracts/README.md) before using its workflows.
+Read the shared [`listener lifecycle`](listener-lifecycle.md) before changing MITM setup or teardown.
 
 ## Passive MITM
 
@@ -22,6 +23,19 @@ Close cloned sessions before their owning root sessions and preserve client PID 
 
 This is common observed libnx behavior on firmware `20.5.0`.
 It is not a claim that every BSD client always needs two sessions.
+
+## Listener Lifecycle
+
+Treat the data root, monitor root, and each data-root clone as separate listener resources.
+The data root owns `RegisterClient` and the transfer-memory lifecycle.
+The monitor root owns `StartMonitoring` and receives the client identifier returned by registration.
+
+Do not merge the monitor root into the data root or create either root on the client's behalf.
+Track a clone as a child of its data root until the clone closes, even when the client closes another handle first.
+Only release a BSD client lifetime after its roots, clones, and any associated domain objects have all closed.
+
+For a controlled listener change, verify two consecutive client launches with no growth in active listener resources.
+That check catches leaked clone, monitor, and domain ownership before packet traffic obscures the cause.
 
 ## Lifecycle Diagnosis
 

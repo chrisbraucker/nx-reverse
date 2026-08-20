@@ -2,6 +2,7 @@
 
 The field-level contract is [`../contracts/services/nifm.json`](../contracts/services/nifm.json).
 Read [`../contracts/README.md`](../contracts/README.md) before using its workflows.
+Read the shared [`listener lifecycle`](listener-lifecycle.md) before changing MITM setup or teardown.
 
 ## Passive MITM
 
@@ -10,6 +11,18 @@ Correlate `IRequest` state, result, event handles, and socket-descriptor operati
 
 NIFM exposes connectivity policy and lifecycle state.
 It is not a packet-routing interface.
+
+## Listener Lifecycle
+
+Treat the root service, returned general-service object, and each returned request object as one client-owned object graph.
+Record the exact path that produced an `IRequest` and keep it associated with the accepting root session until it closes.
+
+Do not create a replacement request after a request returns an error or closes.
+Do not carry a request object, event handle, or socket-descriptor association into another client session.
+When the client closes a child object, retain the root-session trace until its remaining child objects and handles have closed.
+
+The listener may observe a partial request graph when a client abandons setup.
+Forward and record that result without completing the graph or inferring an unobserved request state.
 
 ## Descriptor Lifecycle
 
