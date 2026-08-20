@@ -1,6 +1,7 @@
 # Passive MITM Trace Schema
 
 This document defines the logging schema for passive service MITM work, starting with `nifm` and `wlan`.
+Each JSONL record conforms to [`schema/trace-record.schema.json`](schema/trace-record.schema.json).
 The immediate goal is to capture enough structure to:
 
 - reconstruct call graphs and object lifetimes

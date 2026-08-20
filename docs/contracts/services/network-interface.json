@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/service-contract.schema.json",
+  "schema_version": 1,
+  "id": "network-interface",
+  "title": "Network-interface direct-probe contract",
+  "firmware": [{"version": "20.5.0", "confidence": "confirmed"}],
+  "targets": ["bsd:nu", "eth:nd", "wlan:nd"],
+  "access_modes": ["direct_probe"],
+  "objects": [
+    {"id": "driver-creator", "path": "eth:nd|wlan:nd.root", "name": "ISfDriverServiceCreator", "operations": [{"id": 0, "name": "CreateDriverService", "confidence": "confirmed"}]},
+    {"id": "driver", "path": "driver-creator.cmd0", "name": "ISfDriverService", "operations": [{"id": 0, "name": "OpenNetworkInterface", "request": {"buffers": [{"name": "interface_key", "type": "buffer"}]}, "confidence": "observed"}]},
+    {"id": "user-creator", "path": "bsd:nu.root", "name": "ISfUserServiceCreator", "operations": [{"id": 0, "name": "CreateUserService", "confidence": "confirmed"}]},
+    {"id": "user", "path": "user-creator.cmd0", "name": "ISfUserService", "operations": [{"id": 0, "name": "Assign", "request": {"handles": [{"name": "network_interface", "type": "handle"}]}, "confidence": "confirmed"}]},
+    {"id": "interface", "path": "driver.cmd0", "name": "ISfNetworkInterfaceService", "operations": [{"id": 128, "name": "GetDescriptor", "response": {"buffers": [{"name": "descriptor", "type": "buffer", "description": "176-byte descriptor."}]}, "confidence": "confirmed"}, {"id": 130, "name": "Preflight130", "confidence": "confirmed"}, {"id": 131, "name": "Preflight131", "confidence": "confirmed"}, {"id": 5, "name": "Preflight5", "confidence": "confirmed"}, {"id": 6, "name": "PreflightCleanup", "confidence": "confirmed"}]}
+  ],
+  "workflows": [{"id": "targeted-assign-preflight", "kind": "diagnostic", "purpose": "Determine whether a candidate interface meets the bsd:nu Assign admission condition.", "confidence": "confirmed", "sessions": [{"role": "candidate", "count": 1, "description": "Use a fresh interface session for each attempt."}, {"role": "user", "count": 1}], "steps": [{"id": "open-driver", "session": "candidate", "action": "Create a driver service and open a candidate interface from a returned interface record."}, {"id": "preflight-130", "session": "candidate", "action": "Call interface command 0x82.", "operation": "interface:130 Preflight130"}, {"id": "preflight-131", "session": "candidate", "action": "Call interface command 0x83.", "operation": "interface:131 Preflight131"}, {"id": "preflight-5", "session": "candidate", "action": "Call interface command 5.", "operation": "interface:5 Preflight5"}, {"id": "descriptor", "session": "candidate", "action": "Read the descriptor and require byte 0xa8 to equal 1 before Assign.", "operation": "interface:128 GetDescriptor"}, {"id": "assign", "session": "user", "action": "Create a bsd:nu user service and assign the candidate interface handle.", "operation": "user:0 Assign"}, {"id": "cleanup", "session": "candidate", "action": "Call command 6 on failed preflight paths.", "operation": "interface:6 PreflightCleanup"}]}],
+  "constraints": ["Run targeted interface experiments on fresh candidate sessions.", "Do not broaden WLAN calls while connected-state behavior is unproven.", "A failed Assign can indicate semantic interface state rather than an invalid handle."],
+  "provenance": [{"kind": "implemented_decoder", "reference": "net-probe/src/probe.cpp"}, {"kind": "static_analysis", "reference": "network-interface analysis on firmware 20.5.0"}]
+}

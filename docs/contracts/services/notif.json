@@ -1,0 +1,13 @@
+{
+  "$schema": "../schema/service-contract.schema.json",
+  "schema_version": 1,
+  "id": "notif",
+  "title": "Notification MITM contract",
+  "firmware": [{"version": "20.5.0", "confidence": "confirmed"}],
+  "targets": ["notif:s"],
+  "access_modes": ["passive_mitm"],
+  "objects": [{"id": "root", "path": "root", "name": "INotificationService", "operations": [{"id": 8000, "name": "RegisterAppletResourceUserId", "response": {"fields": [{"name": "result", "type": "u32"}, {"name": "duration_ns", "type": "u64"}]}, "confidence": "confirmed"}]}],
+  "workflows": [{"id": "narrow-registration-observation", "kind": "passive", "purpose": "Record notification registration without expanding the sensitive service surface.", "confidence": "confirmed", "sessions": [{"role": "client", "count": 1}], "steps": [{"id": "forward", "session": "client", "action": "Forward command 8000 unchanged."}, {"id": "record", "session": "client", "action": "Record caller identity, request and response timestamps, result, and duration."}]}],
+  "constraints": ["Do not record the request payload.", "Do not probe or synthesize any other notif:s command."],
+  "provenance": [{"kind": "implemented_decoder", "reference": "net-probe/src/mitm_trace.cpp"}]
+}

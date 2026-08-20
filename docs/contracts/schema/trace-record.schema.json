@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wgnx.dev/nx-reversing/trace-record.schema.json",
+  "title": "net-probe JSONL trace record",
+  "type": "object",
+  "required": ["schema_version", "run_id", "scenario", "event", "ts_monotonic_ns", "ts_utc", "service", "session_id"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "scenario": {"type": "string"},
+    "event": {"enum": ["trace_start", "trace_end", "mitm_registered", "client_connected", "client_disconnected", "object_created", "object_destroyed", "warning", "error", "ipc_request", "ipc_response", "ipc_decode_request", "ipc_decode_response", "ipc_buffer", "ipc_handle", "mitm_dispatch", "domain_trace", "sm_mitm", "nifm_semantic", "bsd_semantic", "ssl_semantic", "notif_registration", "bsd_sendto_mutation", "svc_marker", "debug_marker"]},
+    "ts_monotonic_ns": {"type": "integer", "minimum": 0},
+    "ts_utc": {"type": "string"},
+    "service": {"type": "string"},
+    "client_pid": {"type": "integer", "minimum": 0},
+    "client_program_id": {"type": "string"},
+    "server_program_id": {"type": "string"},
+    "thread_id": {"type": "integer", "minimum": 0},
+    "session_id": {"type": "integer", "minimum": 0},
+    "object_id": {"type": "integer", "minimum": 0},
+    "request_id": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": true
+}

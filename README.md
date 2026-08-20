@@ -1,22 +1,11 @@
-# nx-reverse
+# nx-reversing
 
-A reversing setup to improve understanding of the IPC and network stack of NX.
+`nx-reversing` contains the controlled Horizon networking probes used alongside `wireguard-nx`.
+It documents only the service contracts and observable flows required to reproduce or extend those probes.
 
-Workspace split out of `wireguard-nx` for NX reversing and probe development.
-The end goal is to add wireguard-backed VPN functionality to NX that is able to intercept as many traffic paths as possible.
-So far we have identified bsd:* for socket and unencrypted traffic like HTTP, and ssl:* for TLS-encrypted TCP traffic.
-The browser applet for some reason seems to not use that path, but this could be due to the denylist preventing some core services like qlaunch from being MITM'd.
+- `net-probe/` is the passive MITM and trace-capture sysmodule.
+- `toolbox/` is the controlled Switch workload client.
+- `tools/` contains the controlled host harness and report reconciliation utilities.
+- `docs/` contains the public MITM target registry, structured contracts, and concise service-flow guides.
 
-Current contents:
-
-- `docs/`: notes, plans, methods, and setup docs.
-- `net-probe/`: sysmodule-based probe and MITM tracer.
-- `tools/`: helper scripts for syncing logs and decoding crashes.
-- `traces/`: runtime-trace material.
-- `.devcontainer/`: build-time reversing environment, kept compatible with the original `wireguard-nx` libnx/devkitPro runtime, including the baked-in toolchain installer under `.devcontainer/toolchain/`.
-
-Notes:
-
-- `net-probe/lib/Atmosphere-libs` is intended to remain a submodule against `git@github.com:chrisbraucker/Atmosphere-libs.git`.
-- `workspace/` carries local-only firmware inputs, Ghidra projects, config, caches, and other persistent reversing state.
-- generated build artifacts and local firmware inputs are intentionally kept out of the publishable tree.
+Firmware-local analysis, raw reports, device setup, and research outside this probe surface live in `internal-nx.git` or `device-lab`.

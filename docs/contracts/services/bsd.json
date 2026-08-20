@@ -1,0 +1,33 @@
+{
+  "$schema": "../schema/service-contract.schema.json",
+  "schema_version": 1,
+  "id": "bsd",
+  "title": "BSD MITM contract",
+  "firmware": [{"version": "20.5.0", "confidence": "confirmed"}],
+  "targets": ["bsd:u", "bsd:s", "bsd:a"],
+  "access_modes": ["passive_mitm"],
+  "objects": [{
+    "id": "root",
+    "path": "root",
+    "name": "IBsdService",
+    "operations": [
+      {"id": 0, "name": "RegisterClient", "request": {"fields": [{"name": "version", "type": "u32"}, {"name": "tcp_tx", "type": "u32"}, {"name": "tcp_rx", "type": "u32"}, {"name": "tcp_tx_max", "type": "u32"}, {"name": "tcp_rx_max", "type": "u32"}, {"name": "udp_tx", "type": "u32"}, {"name": "udp_rx", "type": "u32"}, {"name": "socket_buffer_efficiency", "type": "u32"}, {"name": "transfer_memory_size", "type": "u64"}], "handles": [{"name": "transfer_memory", "type": "handle"}]}, "response": {"fields": [{"name": "client_id", "type": "u64", "description": "The tracer historically labels this field assigned_pid."}]}, "confidence": "observed"},
+      {"id": 1, "name": "StartMonitoring", "request": {"fields": [{"name": "client_id", "type": "u64"}]}, "confidence": "observed"},
+      {"id": 2, "name": "Socket", "request": {"fields": [{"name": "domain", "type": "s32"}, {"name": "type", "type": "s32"}, {"name": "protocol", "type": "s32"}]}, "confidence": "confirmed"},
+      {"id": 6, "name": "Poll", "request": {"fields": [{"name": "nfds", "type": "u32"}, {"name": "timeout_ms", "type": "s32"}]}, "confidence": "confirmed"},
+      {"id": 9, "name": "RecvFrom", "request": {"fields": [{"name": "sockfd", "type": "s32"}, {"name": "flags", "type": "s32"}]}, "response": {"fields": [{"name": "ret", "type": "s32"}, {"name": "errno", "type": "s32"}, {"name": "out_len", "type": "u32"}]}, "confidence": "confirmed"},
+      {"id": 11, "name": "SendTo", "request": {"fields": [{"name": "sockfd", "type": "s32"}, {"name": "flags", "type": "s32"}], "buffers": [{"name": "destination", "type": "sockaddr"}, {"name": "payload", "type": "buffer"}]}, "confidence": "confirmed"},
+      {"id": 14, "name": "Connect", "request": {"fields": [{"name": "sockfd", "type": "s32"}], "buffers": [{"name": "peer", "type": "sockaddr"}]}, "confidence": "confirmed"},
+      {"id": 20, "name": "Fcntl", "request": {"fields": [{"name": "fd", "type": "s32"}, {"name": "command", "type": "s32"}, {"name": "flags", "type": "s32"}]}, "confidence": "confirmed"},
+      {"id": 21, "name": "SetSockOpt", "request": {"fields": [{"name": "sockfd", "type": "s32"}, {"name": "level", "type": "s32"}, {"name": "optname", "type": "s32"}]}, "confidence": "confirmed"},
+      {"id": 26, "name": "Close", "request": {"fields": [{"name": "fd", "type": "s32"}]}, "confidence": "confirmed"}
+    ]
+  }],
+  "workflows": [
+    {"id": "passive-forwarding", "kind": "passive", "purpose": "Observe a BSD client without changing its lifecycle.", "confidence": "confirmed", "sessions": [], "steps": [{"id": "forward", "action": "Forward every call, handle, PID descriptor, clone, and close unchanged.", "notes": "Do not synthesize RegisterClient or StartMonitoring."}]},
+    {"id": "observed-libnx-client", "kind": "observed", "purpose": "Model the common libnx BSD client shape.", "confidence": "observed", "sessions": [{"role": "data", "count": 1, "description": "Root session that owns RegisterClient and socket traffic."}, {"role": "monitor", "count": 1, "description": "Separate short root session used for StartMonitoring."}, {"role": "clone", "count": 0, "description": "Additional data sessions cloned from the data root when configured."}], "steps": [{"id": "open-data", "session": "data", "action": "Open the BSD root service."}, {"id": "open-monitor", "session": "monitor", "action": "Open a separate BSD root service."}, {"id": "register", "session": "data", "action": "Register the client with its transfer memory and original PID semantics.", "operation": "root:0 RegisterClient", "bind": ["client_id"]}, {"id": "monitor", "session": "monitor", "action": "Start monitoring with the returned client identifier.", "operation": "root:1 StartMonitoring", "arguments": ["client_id"]}, {"id": "clone", "session": "data", "action": "Clone the data root only when more BSD sessions are configured."}, {"id": "socket-traffic", "session": "data|clone", "action": "Run ordinary BSD socket operations."}, {"id": "close", "action": "Close clones before their owning sessions and preserve the observed teardown order."}], "notes": "Two root sessions are common observed libnx behavior, not a proven universal BSD requirement."},
+    {"id": "raw-lifecycle-diagnosis", "kind": "diagnostic", "purpose": "Isolate the first lifecycle phase that prevents a clean relaunch.", "confidence": "observed", "sessions": [{"role": "data", "count": 1}], "steps": [{"id": "baseline", "session": "data", "action": "Open one root session, create transfer memory, and call RegisterClient."}, {"id": "relaunch", "action": "Close the visible session and transfer memory, then repeat the same launch."}, {"id": "add-monitor", "action": "Only after a stable baseline, add a separate monitor session and StartMonitoring."}, {"id": "add-clones", "action": "Only after monitoring is stable, add root clones."}, {"id": "add-traffic", "action": "Only after lifecycle phases are stable, add sockets and traffic."}]}
+  ],
+  "constraints": ["BSD descriptors belong to the client/session created by RegisterClient.", "Preserve original PID forwarding semantics for RegisterClient.", "A passive MITM must treat monitor sessions and root clones as independently owned objects.", "Do not infer bsd:u, bsd:s, or bsd:a from packets alone."],
+  "provenance": [{"kind": "implemented_decoder", "reference": "net-probe/src/mitm_trace.cpp"}, {"kind": "passive_trace", "reference": "controlled BSD client traces on firmware 20.5.0"}]
+}

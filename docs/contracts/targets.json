@@ -1,0 +1,19 @@
+{
+  "$schema": "schema/target-registry.schema.json",
+  "schema_version": 1,
+  "firmware": "20.5.0",
+  "owner": "net-probe",
+  "targets": [
+    {"service": "nifm:u", "mode": "passive_mitm", "contract": "services/nifm.json"},
+    {"service": "nifm:s", "mode": "passive_mitm", "contract": "services/nifm.json"},
+    {"service": "bsd:u", "mode": "passive_mitm", "contract": "services/bsd.json"},
+    {"service": "bsd:s", "mode": "passive_mitm", "contract": "services/bsd.json"},
+    {"service": "bsd:a", "mode": "passive_mitm", "contract": "services/bsd.json"},
+    {"service": "ssl", "mode": "passive_mitm", "contract": "services/ssl.json"},
+    {"service": "ssl:s", "mode": "passive_mitm", "contract": "services/ssl.json"},
+    {"service": "notif:s", "mode": "passive_mitm", "contract": "services/notif.json"},
+    {"service": "bsd:nu", "mode": "direct_probe", "contract": "services/network-interface.json"},
+    {"service": "eth:nd", "mode": "direct_probe", "contract": "services/network-interface.json"},
+    {"service": "wlan:nd", "mode": "direct_probe", "contract": "services/network-interface.json"}
+  ]
+}

@@ -1,20 +1,16 @@
-# Docs Workspace
+# Documentation
 
-This directory holds the publishable part of the reversing workspace: derived analysis, plans, methods, and setup documentation.
+This directory documents the public continuation surface for `net-probe`.
+The contracts describe only service targets that the probe intercepts or calls directly.
 
-Primary documents:
+## Start Here
 
-- [ROADMAP.md](/workspaces/nx-reversing.git/docs/20.5.0/ROADMAP.md:1)
-- [TRACE_SCHEMA.md](/workspaces/nx-reversing.git/docs/methods/TRACE_SCHEMA.md:1)
+- [`contracts/README.md`](contracts/README.md) explains the contract data and its JSON Schemas.
+- [`contracts/targets.json`](contracts/targets.json) lists every current target and its access mode.
+- [`contracts/trace-format.md`](contracts/trace-format.md) describes the versioned MITM trace format.
+- [`services/`](services/) explains the recovered service flows and their operational constraints.
 
-Initial target firmware:
+The JSON files under `contracts/services/` are the field-level contract records.
+Their companion Markdown files describe state, lifecycle, and confidence without duplicating field tables.
 
-- `20.5.0`
-
-Repository split:
-
-1. keep publishable notes and methodology in `docs/`
-2. keep local firmware inputs and all persistent reversing state under `workspace/`
-3. keep raw local captures under `traces/<version>/local/`
-
-When module identity is uncertain, preserve the original local filename under `workspace/` and document the mapping in the relevant note.
+All contracts apply to Horizon firmware `20.5.0` unless the file says otherwise.

@@ -4,22 +4,24 @@
 
 The compiled MITM target set is selected at boot through Atmosphère's `system_settings.ini`.
 
-Use the `[net-probe]` section.
+Use the `[net_probe]` section.
 
 Missing keys disable their target.
 
-For the Glue registration experiment, enable only `notif:s`:
+For the qLaunch early-boot `nifm:s` timing experiment, enable only `nifm:s`:
 
 ```ini
-[net-probe]
-enable_notif_s = u8!0x1
+[net_probe]
+enable_nifm_s = u8!0x1
 ```
 
 The currently compiled target keys are `enable_nifm_u`, `enable_nifm_s`, `enable_bsd_u`, `enable_bsd_s`, `enable_bsd_a`, `enable_ssl`, `enable_ssl_s`, and `enable_notif_s`.
 
 The setting is sampled once during net-probe startup.
 
-The `notif:s` trace records only command `8000`, `RegisterAppletResourceUserId`, plus its client identity, monotonic request and response timestamps, result, and duration.
+The compiled `nifm:s` target is qLaunch only.
+
+The `notif:s` trace remains available as a separate target and records only command `8000`, `RegisterAppletResourceUserId`, plus its client identity, monotonic request and response timestamps, result, and duration.
 
 Logs use the existing fixed-capacity in-memory queue and dedicated flush thread.
 

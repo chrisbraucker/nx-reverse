@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wgnx.dev/nx-reversing/target-registry.schema.json",
+  "title": "net-probe target registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema_version", "firmware", "owner", "targets"],
+  "properties": {
+    "$schema": {"const": "schema/target-registry.schema.json"},
+    "schema_version": {"const": 1},
+    "firmware": {"type": "string", "minLength": 1},
+    "owner": {"const": "net-probe"},
+    "targets": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/target"}}
+  },
+  "$defs": {
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "mode", "contract"],
+      "properties": {
+        "service": {"type": "string", "minLength": 1},
+        "mode": {"enum": ["passive_mitm", "direct_probe"]},
+        "contract": {"type": "string", "pattern": "^services/[a-z0-9-]+\\.json$"}
+      }
+    }
+  }
+}

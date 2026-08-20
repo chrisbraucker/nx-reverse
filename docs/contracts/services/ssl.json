@@ -1,0 +1,17 @@
+{
+  "$schema": "../schema/service-contract.schema.json",
+  "schema_version": 1,
+  "id": "ssl",
+  "title": "SSL MITM contract",
+  "firmware": [{"version": "20.5.0", "confidence": "confirmed"}],
+  "targets": ["ssl", "ssl:s"],
+  "access_modes": ["passive_mitm"],
+  "objects": [
+    {"id": "root", "path": "root", "name": "ISslService|ISslServiceForSystem", "operations": [{"id": 0, "name": "CreateContext", "request": {"fields": [{"name": "ssl_version", "type": "u32"}, {"name": "pid_placeholder", "type": "u64"}]}, "confidence": "confirmed"}, {"id": 5, "name": "SetInterfaceVersion", "request": {"fields": [{"name": "value", "type": "u32"}]}, "confidence": "observed"}, {"id": 6, "name": "FlushSessionCache", "confidence": "confirmed"}, {"id": 7, "name": "SetDebugOption", "confidence": "confirmed"}]},
+    {"id": "context", "path": "root.cmd0|root.cmd100", "name": "ISslContext", "operations": [{"id": 1, "name": "SetHostName", "request": {"buffers": [{"name": "hostname", "type": "buffer"}]}, "confidence": "observed"}]},
+    {"id": "connection", "path": "root.cmd2|root.cmd100.cmd2", "name": "ISslConnection", "operations": [{"id": 0, "name": "SetSocketDescriptor", "request": {"fields": [{"name": "sockfd", "type": "s32"}]}, "confidence": "observed"}, {"id": 28, "name": "SetPeerName", "request": {"fields": [{"name": "sockfd", "type": "s32"}], "buffers": [{"name": "peer", "type": "sockaddr"}]}, "confidence": "observed"}]}
+  ],
+  "workflows": [{"id": "passive-tls-observation", "kind": "passive", "purpose": "Observe TLS context and connection setup without weakening verification or replacing traffic.", "confidence": "confirmed", "sessions": [{"role": "client", "count": 1}], "steps": [{"id": "forward-root", "session": "client", "action": "Forward root-service context creation unchanged."}, {"id": "follow-objects", "session": "client", "action": "Follow context and connection objects returned by the client flow."}, {"id": "record", "session": "client", "action": "Record decoded hostname, socket descriptor, peer sockaddr, scalar settings, and buffer metadata only."}]}],
+  "constraints": ["Unknown SSL commands remain opaque records.", "The passive tracer must not alter peer verification, certificates, hostnames, payload bytes, or timing intentionally.", "ssl and ssl:s are distinct target names even where their decoded object flow overlaps."],
+  "provenance": [{"kind": "implemented_decoder", "reference": "net-probe/src/mitm_trace.cpp"}]
+}
